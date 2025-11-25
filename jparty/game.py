@@ -223,7 +223,7 @@ class Game(QObject):
         self.active_question = None
         self.accepting_responses = False
         self.answering_player = None
-        self.previous_answerer = None
+        self.previous_answerers = set()
         self.timer = None
         self.soliciting_player = False  # part of selecting who found a daily double
         
@@ -400,7 +400,7 @@ class Game(QObject):
         # (since if someone loses a buzzer race by .01 seconds, they were part of the phase
         # before responses were closed. And if someone loses a buzzer race because they buzzed
         # too soon, they were part of the next phase.)
-        BUZZER_PHASE_PADDING = 1.5
+        BUZZER_PHASE_PADDING = 1 # seconds
         # first phase starts at the question start time
         # subsequent phases start at the time responses were opened
         phase_start_times = [self._question_start_time] + self._open_responses_times[1:]
@@ -416,7 +416,6 @@ class Game(QObject):
                     min(successful_buzz_time + BUZZER_PHASE_PADDING, current_time)
                 )
             )
-        
         phases = []
         for phase_start_time, phase_end_time in phase_boundaries:
             current_phase = {
@@ -425,7 +424,7 @@ class Game(QObject):
                 "end_time": phase_end_time,
                 "buzz_attempts": [
                     asdict(b) for b in self._all_buzz_attempts 
-                    if b.timestamp >= phase_start_time and b.timestamp <= phase_end_time
+                    if b.timestamp >= phase_start_time and b.timestamp < phase_end_time
                 ]
             }
             phases.append(current_phase)
@@ -567,7 +566,7 @@ class Game(QObject):
             # and move on.
             self.dc.player_widget(player).buzz_hint()
             return
-        elif player is self.previous_answerer:
+        elif player in self.previous_answerers:
             # player cannot buzz again. Errant/illegal buzz. Ignore.
             return
 
@@ -580,9 +579,11 @@ class Game(QObject):
         # If there is an active question but responses are not open,
         # the player has buzzed too early.
         if not self.accepting_responses:
-            self.early_buzzes.add(i_player)
-            early_buzz = True
-            logging.info(f"Early buzz recorded: player {i_player}")
+            if not self.previous_answerers:
+                # early buzz -- no answer given yet
+                self.early_buzzes.add(i_player)
+                early_buzz = True
+                logging.info(f"Early buzz recorded: player {i_player}")
         # If the player previously buzzed too early and the penalt
         # period has not expired, the player is in timeout.
         elif (
@@ -597,7 +598,7 @@ class Game(QObject):
         else:
             self.accepting_responses = False
             self.timer.pause()
-            self.previous_answerer = player
+            self.previous_answerers.add(player)
             self.answering_player = player
             successful_buzz = True
             logging.info(f"Successful buzz recorded: player {i_player}")
@@ -605,6 +606,7 @@ class Game(QObject):
             self._update_lectern_for_player(player, buzzed=True)
             self.keystroke_manager.activate("CORRECT_ANSWER", "INCORRECT_ANSWER")
             self.dc.borders.lights(False)
+            self._successful_buzz_times.append(current_time)
         
         self._all_buzz_attempts.append(BuzzAttempt(
             player_index=i_player,
@@ -648,7 +650,7 @@ class Game(QObject):
         self.active_question.complete = True
         self.update_original_player_scores()
         self.active_question = None
-        self.previous_answerer = None
+        self.previous_answerers = set()
         self.early_buzzes = set()
         self.responses_open_time = None
         
