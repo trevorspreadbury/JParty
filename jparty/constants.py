@@ -10,4 +10,7 @@ SAVED_GAMES = REPO_ROOT / "jparty" / "data" / "saved_games"
 SAVED_GAMES.mkdir(parents=True, exist_ok=True)
 QUESTION_MEDIA = REPO_ROOT / "jparty" / "data" / "question_media"
 QUESTION_MEDIA.mkdir(parents=True, exist_ok=True)
+GAME_STATES_DIR = REPO_ROOT / "jparty" / "data" / "game_states"
+GAME_STATES_DIR.mkdir(parents=True, exist_ok=True)
 EARLY_BUZZ_PENALTY = 0.25
+DEBUG_MODE = True

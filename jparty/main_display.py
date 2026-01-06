@@ -61,7 +61,12 @@ class DisplayWindow(QMainWindow):
 
         self.setCentralWidget(self.newWidget)
 
-        monitor = QGuiApplication.screens()[self.monitor()].geometry()
+        monitor_index = self.monitor()
+        screens = QGuiApplication.screens()
+        # Clamp monitor index to available screens (for single monitor testing)
+        if monitor_index >= len(screens):
+            monitor_index = len(screens) - 1
+        monitor = screens[monitor_index].geometry()
 
         self.setGeometry(monitor)
 
