@@ -218,7 +218,6 @@ class Game(QObject):
 
         self.current_round = None
         self.players = []
-        self.original_players = {}
 
         self.active_question = None
         self.accepting_responses = False
@@ -627,16 +626,6 @@ class Game(QObject):
         if answering_player:
             self._update_lectern_for_player(answering_player, buzzed=False)
 
-    def update_original_player_scores(self):
-        buzzed_players = []
-        for player, score in self.active_question.actual_results:
-            if player not in self.original_players:
-                self.original_players[player] = [0 for _ in range(self.question_number)]
-            buzzed_players.append(player)
-            self.original_players[player].append(score + self.original_players[player][-1])
-        for player in self.original_players:
-            if player not in buzzed_players:
-                self.original_players[player].append(self.original_players[player][-1])
 
     def back_to_board(self):
         logging.info("back_to_board")
@@ -648,7 +637,6 @@ class Game(QObject):
         self.dc.hide_question()
         self.timer = None
         self.active_question.complete = True
-        self.update_original_player_scores()
         self.active_question = None
         self.previous_answerers = set()
         self.early_buzzes = set()
@@ -686,7 +674,6 @@ class Game(QObject):
         if isinstance(self.current_round, FinalBoard):
             self.dc.load_final(self.current_round.question)
             self.active_question = self.current_round.question
-            self.update_original_player_scores()
             self.start_final()
         else:
             self.dc.board_widget.load_round(self.current_round)
@@ -761,14 +748,12 @@ class Game(QObject):
     def final_correct_answer(self):
         ap = self.answering_player
         new_score = ap.score + ap.wager
-        ap.update_scores(self.question_number, new_score)
         self.set_score(ap, ap.score + ap.wager)
         self.final_judgement_given()
 
     def final_incorrect_answer(self):
         ap = self.answering_player
         new_score = ap.score - ap.wager
-        ap.update_scores(self.question_number, new_score)
         self.set_score(ap, new_score)
         self.final_judgement_given()
 
@@ -814,17 +799,160 @@ class Game(QObject):
         self.dc.load_final_graphs()
         self.keystroke_manager.activate("CLOSE_GAME")
 
+    def _load_question_history(self):
+        """Load and parse question_history.jsonl file."""
+        if not self._game_state_dir:
+            self._initialize_game_state_dir()
+        if not self._game_state_dir:
+            return []
+        
+        history_file = self._game_state_dir / "question_history.jsonl"
+        if not history_file.exists():
+            return []
+        
+        entries = []
+        try:
+            with open(history_file, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    entries.append(json.loads(line))
+        except Exception as e:
+            logging.error(f"Error loading question history: {e}")
+            return []
+        
+        return entries
+
+    def _reconstruct_score_history(self):
+        """Reconstruct player score histories from question_history.jsonl.
+        
+        Returns:
+            dict: Mapping of player_number -> list of scores after each question
+                  Scores start at 0 (before first question) and include score after each question
+        """
+        entries = self._load_question_history()
+        if not entries:
+            return {}
+        
+        # Sort by question_number to ensure correct order
+        entries.sort(key=lambda x: x.get("question_number", 0))
+        
+        # Track all players who have participated
+        all_players = set()
+        # Track score history for each player: [score_after_q0, score_after_q1, ...]
+        score_history = {}
+        
+        # Initialize all players with starting score of 0
+        for entry in entries:
+            for attempt in entry.get("answer_attempts", []):
+                player_index = attempt.get("player_index")
+                if player_index is not None:
+                    all_players.add(player_index)
+                    if player_index not in score_history:
+                        score_history[player_index] = [0]
+        
+        # Process each question in order
+        for entry in entries:
+            question_num = entry.get("question_number", 0)
+            if question_num == 0:
+                continue
+            answer_attempts = entry.get("answer_attempts", [])
+            
+            # Track the final score_after for each player in this question
+            # (multiple attempts can occur, we want the final one)
+            question_scores = {}
+            for attempt in answer_attempts:
+                player_index = attempt.get("player_index")
+                score_after = attempt.get("score_after", 0)
+                if player_index is not None:
+                    question_scores[player_index] = score_after
+            
+            # Update score history for all players
+            for player_index in all_players:
+                # Ensure we have enough entries (pad with last score if needed)
+                # We need question_num entries (for questions 1..question_num)
+                while len(score_history[player_index]) < question_num:
+                    last_score = score_history[player_index][-1] if score_history[player_index] else 0
+                    score_history[player_index].append(last_score)
+                
+                # Now set the score after this question
+                if player_index in question_scores:
+                    # Player answered: use their score_after
+                    score_after = question_scores[player_index]
+                    if len(score_history[player_index]) == question_num:
+                        score_history[player_index].append(score_after)
+                    else:
+                        score_history[player_index][question_num] = score_after
+                else:
+                    # Player didn't answer: maintain last score
+                    last_score = score_history[player_index][-1] if score_history[player_index] else 0
+                    if len(score_history[player_index]) == question_num:
+                        score_history[player_index].append(last_score)
+                    else:
+                        score_history[player_index][question_num] = last_score
+        
+        return score_history
+
+    def _load_general_state(self):
+        """Load general.json to get player information."""
+        if not self._game_state_dir:
+            self._initialize_game_state_dir()
+        if not self._game_state_dir:
+            return {}
+        
+        general_file = self._game_state_dir / "general.json"
+        if not general_file.exists():
+            return {}
+        
+        try:
+            with open(general_file, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            logging.error(f"Error loading general state: {e}")
+            return {}
+
     def generate_final_score_graph(self, players):
         """create an image of score by question number"""
-        current_player_data = {player.player_number : player.score_by_question for player in self.players}
-        if players == "original":
-            data = self.original_players
-        elif players == "current":
-            data = current_player_data
-        elif players == "all":
-            data = current_player_data | self.original_players
+        # Reconstruct score history from question_history.jsonl
+        all_score_history = self._reconstruct_score_history()
+        if not all_score_history:
+            logging.warning("No score history found to generate graph")
+            return
         
-        game_id = os.environ["JPARTY_GAME_ID"]
+        # Get player name mappings
+        general_state = self._load_general_state()
+        original_player_map = {
+            p.get("player_number"): p.get("name", f"Player {p.get('player_number')}")
+            for p in general_state.get("players", [])
+        }
+        current_player_map = {
+            p.player_number: p.name for p in self.players
+        }
+        
+        # Determine which players to include
+        if players == "original":
+            player_numbers = set(original_player_map.keys())
+        elif players == "current":
+            player_numbers = set(current_player_map.keys())
+        elif players == "all":
+            player_numbers = set(original_player_map.keys()) | set(current_player_map.keys())
+        else:
+            logging.error(f"Unknown player set: {players}")
+            return
+        
+        # Filter score history to requested players
+        data = {
+            pnum: all_score_history[pnum]
+            for pnum in player_numbers
+            if pnum in all_score_history
+        }
+        
+        if not data:
+            logging.warning(f"No score data found for player set: {players}")
+            return
+        
+        game_id = os.environ.get("JPARTY_GAME_ID", "unknown")
         
         # Isolate matplotlib operations to prevent interference with PyQt6
         fig = None
@@ -833,13 +961,16 @@ class Game(QObject):
             fig, ax = plt.subplots(figsize=(10, 6))
             
             # Plot each player's scores
-            for player, scores in data.items():
-                x_values = list(range(1, len(scores)+1))
-                ax.plot(x_values, scores, marker='o', label=str(player), linewidth=2, markersize=6)
+            for player_number, scores in data.items():
+                # Get player name, preferring current name if available
+                player_name = current_player_map.get(player_number) or original_player_map.get(player_number) or f"Player {player_number}"
+                # x_values: 1 = start, 2 = after q1, 3 = after q2, etc.
+                x_values = list(range(1, len(scores) + 1))
+                ax.plot(x_values, scores, marker='o', label=player_name, linewidth=2, markersize=6)
             
             ax.set_xlabel('Question Number', fontsize=12)
             ax.set_ylabel('Score', fontsize=12)
-            ax.set_title(f'Game {game_id}:Player Scores', fontsize=14, fontweight='bold')
+            ax.set_title(f'Game {game_id}: Player Scores', fontsize=14, fontweight='bold')
             ax.legend(loc='best')
             ax.grid(True, alpha=0.3)
             
@@ -872,7 +1003,6 @@ class Game(QObject):
                     except:
                         pass
         self.players = []
-        self.original_players = {}
         self.question_number = 1
         self.active_question = None
         self.current_round = None
@@ -968,7 +1098,6 @@ class Game(QObject):
                 "score_after": new_score,
             })
         
-        self.answering_player.update_scores(self.question_number, new_score)
         if self.timer:
             self.timer.cancel()
 
@@ -992,7 +1121,6 @@ class Game(QObject):
                 "score_before": old_score,
                 "score_after": new_score,
             })
-        self.answering_player.update_scores(self.question_number, new_score) 
         self.set_score(
             self.answering_player,
             new_score,
@@ -1041,7 +1169,6 @@ class Game(QObject):
         )
         if answered:
             self.set_score(player, new_score)
-        player.score_by_question[-1] = new_score
 
     def close(self):
         self.song_player.stop()
@@ -1052,8 +1179,6 @@ class Player(object):
     def __init__(self, name, waiter, player_number):
         self.name = name
         self.token = os.urandom(15)
-        # score at index 0 is start of game, 1 after first question
-        self.score_by_question = [0]
         self.score = 0
         self.waiter = waiter
         self.wager = None
@@ -1067,13 +1192,4 @@ class Player(object):
 
     def state(self):
         return {"page": self.page, "score": self.score}
-    
-    def update_scores(self, question_number, new_score):
-        """update players score"""
-        if (len(self.score_by_question)) == question_number:
-            self.score_by_question.append(new_score)
-        else:
-            for _ in range(question_number - len(self.score_by_question)):
-                self.score_by_question.append(self.score_by_question[-1])
-            self.score_by_question.append(new_score)
 
