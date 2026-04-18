@@ -47,55 +47,79 @@ Users also have the option to find images beforehand by going through the follow
 <img src="resources/question-media-labelling.png" height="300" />
 
 
-## Requirements:
+## Requirements
 ### For running the app (binary)
 - macOS, Windows or Linux
 - Two monitors
 - A device with web access for each player
 
 ### For compiling from source code
-- Python [>=3.9]
-- PyQt6
-- requests
-- simpleaudio
-- tornado
-- BeautifulSoup4
-- qrcode
-- pyinstaller [>=5.0]
+- Python [>=3.10]
+- `uv` is the preferred development workflow
+- `conda` is still supported as a fallback if you run into platform-specific Qt/audio issues
 
-To develop locally, install the package in editable mode:
+## Installation
+### Recommended: `uv`
+Create a virtual environment and install the project with test dependencies:
+
+```
+uv venv
+uv sync --extra test
+```
+
+Install the Playwright browser runtime if you want to run the browser smoke tests:
+
+```
+uv run playwright install chromium
+```
+
+### Fallback: `conda`
+If `uv` gives you trouble on your machine, especially around audio or Qt, you can still use conda:
 
 ```
 conda env create -f environment.yml
+conda activate JParty
 pip install -e .[test]
-jparty
+python -m playwright install chromium
 ```
 
-You can also launch the package module directly:
-
-```
-python -m jparty
-```
-
+## Development
 To keep downloads, saved state, logs, and graphs in a predictable repo-local location, create a `.env` file with:
 
 ```
 DATA_DIR=.jparty-data
 ```
 
-To download archived games into the local cache:
+Run the app with either:
 
 ```
-jparty download 4453 4454
+uv run jparty
 ```
 
-or from a text file with one game id per line:
+or:
 
 ```
-jparty download games.txt
+uv run python -m jparty
 ```
 
-To build from source, run
+Useful development commands:
+
+```
+uv run pytest tests -q
+uv run jparty download 4453 4454
+uv run jparty download games.txt
+```
+
+If you are using conda instead of `uv`, use the same commands without the `uv run` prefix.
+
+## Build
+To build from source, run:
+
+```
+uv run pyinstaller -y JParty.spec
+```
+
+If you are using conda, run:
 
 ```
 pyinstaller -y JParty.spec
