@@ -1,5 +1,8 @@
+import argparse
 import logging
 import sys
+import time
+from pathlib import Path
 
 import requests
 from simpleaudio._simpleaudio import SimpleaudioError
@@ -8,7 +11,9 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from jparty.app.config import DEBUG_MODE, PORT
 from jparty.app.logging import qt_exception_hook
+from jparty.app.paths import SAVED_GAMES
 from jparty.domain.game_engine import Game
+from jparty.services.archive_client import get_game_html, process_game_board_from_html
 from jparty.ui.styles import JPartyStyle
 from jparty.ui.widgets.common import resource_path
 from jparty.ui.windows.display import DisplayWindow, HostDisplayWindow
@@ -69,7 +74,60 @@ def check_second_monitor():
         sys.exit(1)
 
 
-def main():
+def expand_game_id_inputs(inputs):
+    game_ids = []
+    for raw_input in inputs:
+        candidate = Path(raw_input)
+        if candidate.exists() and candidate.is_file():
+            for line in candidate.read_text(encoding="utf-8").splitlines():
+                game_id = line.strip()
+                if game_id and not game_id.startswith("#"):
+                    game_ids.append(game_id)
+        else:
+            game_ids.append(raw_input)
+    return game_ids
+
+
+def download_games(inputs, delay_seconds=5):
+    downloaded = []
+    for game_id in expand_game_id_inputs(inputs):
+        print(f"Working on {game_id}")
+        saved_path = SAVED_GAMES / f"{game_id}.html"
+        if saved_path.exists():
+            print("Game already saved")
+            continue
+
+        game_html = get_game_html(game_id)
+        game_obj = process_game_board_from_html(game_html, game_id)
+        if game_obj is None:
+            print(f"Skipping {game_id}: downloaded game is invalid or incomplete")
+            continue
+
+        with saved_path.open("w", encoding="utf-8") as file_obj:
+            file_obj.write(game_html)
+        downloaded.append(game_id)
+        time.sleep(delay_seconds)
+    return downloaded
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="jparty")
+    subparsers = parser.add_subparsers(dest="command")
+
+    download_parser = subparsers.add_parser(
+        "download",
+        help="download archived games into the local saved-games cache",
+    )
+    download_parser.add_argument(
+        "inputs",
+        nargs="+",
+        help="game ids or text files containing one game id per line",
+    )
+    return parser
+
+
+def launch_gui():
+    logging.info("Starting JParty")
 
     QApplication.setStyle(JPartyStyle())
     app = QApplication(sys.argv)
@@ -117,3 +175,14 @@ def main():
             song_player.stop()
 
         sys.exit(r)
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.command == "download":
+        download_games(args.inputs)
+        return 0
+
+    launch_gui()

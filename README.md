@@ -77,6 +77,18 @@ You can also launch the package module directly:
 python -m jparty
 ```
 
+To download archived games into the local cache:
+
+```
+jparty download 4453 4454
+```
+
+or from a text file with one game id per line:
+
+```
+jparty download games.txt
+```
+
 To build from source, run
 
 ```
