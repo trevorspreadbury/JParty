@@ -16,6 +16,7 @@ dependencies = [
     "BeautifulSoup4==4.11.1",
     "pyinstaller==5.13.1",
     "qrcode==7.3.1",
+    "python-dotenv",
     "matplotlib",
 ]
 

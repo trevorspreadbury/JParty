@@ -8,6 +8,7 @@ dependencies:
       - pyinstaller==6.6.0
       - pyqt6==6.4.0
       - qrcode==7.3.1
+      - python-dotenv
       - simpleaudio==1.0.4
       - pytest
       - pytest-qt

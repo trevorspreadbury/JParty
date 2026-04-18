@@ -77,6 +77,12 @@ You can also launch the package module directly:
 python -m jparty
 ```
 
+To keep downloads, saved state, logs, and graphs in a predictable repo-local location, create a `.env` file with:
+
+```
+DATA_DIR=.jparty-data
+```
+
 To download archived games into the local cache:
 
 ```

@@ -45,6 +45,36 @@ def test_module_import_works_from_non_repo_cwd(temp_dir):
     assert completed.stdout.strip() == "ok"
 
 
+def test_data_dir_can_be_loaded_from_dotenv(temp_dir):
+    src_dir = Path(__file__).resolve().parents[2] / "src"
+    data_dir = temp_dir / "custom-data"
+    (temp_dir / ".env").write_text(f"DATA_DIR={data_dir}\n", encoding="utf-8")
+    script = (
+        "import os, sys; "
+        f"os.chdir(r'{temp_dir}'); "
+        f"sys.path.insert(0, r'{src_dir}'); "
+        "import jparty.app.paths as paths; "
+        "print(os.environ['DATA_DIR']); "
+        "print(paths.USER_DATA_ROOT)"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={
+            key: value
+            for key, value in {**os.environ, "QT_QPA_PLATFORM": "offscreen"}.items()
+            if key not in {"DATA_DIR", "JPARTY_DATA_DIR"}
+        },
+    )
+
+    lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    assert Path(lines[0]) == data_dir
+    assert Path(lines[1]) == data_dir
+
+
 def test_expand_game_id_inputs_supports_ids_and_text_files(temp_dir):
     game_ids_file = temp_dir / "games.txt"
     game_ids_file.write_text("4453\n# comment\n4454\n\n4455\n", encoding="utf-8")

@@ -18,6 +18,7 @@ PROJECT_TEMP_ROOT.mkdir(exist_ok=True)
 TEST_TEMP_DIR = PROJECT_TEMP_ROOT / f"pytest-runtime-{os.getpid()}"
 TEST_TEMP_DIR.mkdir(exist_ok=True)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("DATA_DIR", str(TEST_TEMP_DIR / "user_data"))
 os.environ.setdefault("JPARTY_DATA_DIR", str(TEST_TEMP_DIR / "user_data"))
 os.environ["TMP"] = str(TEST_TEMP_DIR)
 os.environ["TEMP"] = str(TEST_TEMP_DIR)

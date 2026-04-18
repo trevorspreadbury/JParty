@@ -2,13 +2,17 @@ import os
 from importlib import resources
 from pathlib import Path
 
+from dotenv import find_dotenv, load_dotenv
+
 from .config import APP_NAME
 
 REQUIRED_SUBDIRS = ("saved_games", "question_media", "game_states", "game_scores")
 
+load_dotenv(find_dotenv(usecwd=True), override=False)
+
 
 def _candidate_user_data_roots():
-    override = os.environ.get("JPARTY_DATA_DIR")
+    override = os.environ.get("DATA_DIR") or os.environ.get("JPARTY_DATA_DIR")
     if override:
         yield Path(override)
 
