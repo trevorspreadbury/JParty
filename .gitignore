@@ -4,3 +4,11 @@ latest.log
 dist**
 .idea/**
 jparty/data/**
+.pytest_cache/
+__pycache__/
+*.py[cod]
+pytest-cache-files-*/
+tests/.tmp/
+tests/.runtime_tmp/
+tests/.runtime_tmp_*/
+tests/pytest-cache-files-*/

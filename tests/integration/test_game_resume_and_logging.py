@@ -1,0 +1,137 @@
+import json
+
+import pytest
+
+from jparty.game import Player
+from jparty.game import FinalBoard
+
+
+pytestmark = pytest.mark.integration
+
+
+class DummyWaiter:
+    def send(self, message, text=""):
+        return None
+
+    def close(self):
+        return None
+
+
+def test_question_history_logging_writes_buzz_phases_and_attempts(game_with_players, time_controller):
+    game = game_with_players
+    question = game.current_round.get_question(0, 0)
+
+    game.load_question(question)
+    time_controller.advance(1.0)
+    game.buzz(0)
+    game.open_responses()
+    time_controller.advance(0.1)
+    game.buzz(1)
+    time_controller.advance(0.2)
+    game.correct_answer()
+
+    history_file = game._game_state_dir / "question_history.jsonl"
+    entry = json.loads(history_file.read_text().splitlines()[0])
+
+    assert entry["question_number"] == 1
+    assert entry["answer_attempts"][0]["player_index"] == 1
+    assert entry["buzz_phases"]
+    assert entry["buzz_phases"][0]["buzz_attempts"][0]["player_index"] == 0
+
+
+def test_prepare_and_resume_saved_game_restores_round_scores_and_questions(game, monkeypatch, sample_saved_game_dir):
+    from jparty import retrieve
+
+    restored_data = game.data
+    monkeypatch.setattr(retrieve, "get_game", lambda game_id: restored_data)
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+
+    game.prepare_resume_from_dir(sample_saved_game_dir)
+    game.start_game()
+
+    assert game.current_round is game.data.rounds[0]
+    assert not isinstance(game.current_round, FinalBoard)
+    assert game.question_number == 4
+    assert game.players[0].score == 0
+    assert game.players[1].score == 400
+    assert game.current_round.get_question(0, 0).complete is True
+    assert game.current_round.get_question(1, 0).complete is True
+    assert game.current_round.get_question(2, 0).complete is True
+    assert game.current_round.get_question(3, 0).complete is False
+
+
+def test_resume_into_final_starts_final_flow(game, monkeypatch, temp_dir):
+    from jparty import retrieve
+
+    restored_data = game.data
+    monkeypatch.setattr(retrieve, "get_game", lambda game_id: restored_data)
+
+    saved_dir = temp_dir / "saved"
+    saved_dir.mkdir()
+    with open(saved_dir / "general.json", "w") as f:
+        json.dump(
+            {
+                "game_id": "4453",
+                "players": [
+                    {"name": "Alice", "player_number": 0},
+                    {"name": "Bob", "player_number": 1},
+                ],
+                "started_at": 1700000000.0,
+                "last_updated": 1700000300.0,
+            },
+            f,
+        )
+
+    history_entries = []
+    question_number = 1
+    for round_index, round_data in enumerate(restored_data.rounds[:2]):
+        for question in round_data.questions:
+            history_entries.append(
+                {
+                    "question_index": [round_index, list(question.index)],
+                    "question_number": question_number,
+                    "round_index": round_index,
+                    "category": question.category,
+                    "value": question.value,
+                    "is_daily_double": question.dd,
+                    "buzz_phases": [],
+                    "answer_attempts": [],
+                    "completed_at": 1700000000.0 + question_number,
+                }
+            )
+            question_number += 1
+    with open(saved_dir / "question_history.jsonl", "w") as f:
+        for entry in history_entries:
+            json.dump(entry, f)
+            f.write("\n")
+
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+
+    game.prepare_resume_from_dir(saved_dir)
+    game.start_game()
+
+    assert isinstance(game.current_round, FinalBoard)
+    assert game.active_question is game.current_round.question
+    assert game.buzzer_controller.open_wagers_calls
+
+
+def test_close_game_resets_state(game_with_players):
+    game = game_with_players
+    game.active_question = game.current_round.get_question(0, 0)
+    game.answering_player = game.players[0]
+    game.early_buzzes.add(0)
+
+    game.close_game()
+
+    assert game.players == []
+    assert game.active_question is None
+    assert game.current_round is None
+    assert game.question_number == 1
+    assert game.buzzer_controller.restart_calls == 1
+    assert game.dc.restart_calls == 1
