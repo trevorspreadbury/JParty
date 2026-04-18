@@ -20,6 +20,9 @@ from PyQt6.QtCore import Qt, QUrl, QTimer, QObject, QEvent
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 import requests
 from pathlib import Path
+from uuid import uuid4
+
+from jparty.app.paths import QUESTION_MEDIA
 from jparty.services.image_lookup import search_wikimedia_image
 from jparty.ui.styles import CARDPAL, MyLabel
 
@@ -32,15 +35,22 @@ class QuestionWidget(QWidget):
         text_only_question = self.isQuestionTypeTextOnly()
 
         self.main_layout = QVBoxLayout()
-        self.question_label = MyLabel(
-            question.text.upper() if text_only_question else self.question.image_url,
-            self.startFontSize,
-            self,
-            not text_only_question
-        )
+        self.question_label = MyLabel(question.text.upper(), self.startFontSize, self)
 
         self.question_label.setFont(QFont("ITC_ Korinna"))
         self.main_layout.addWidget(self.question_label)
+        if not text_only_question:
+            self.image_label = MyLabel(
+                self.question.image_url,
+                self.startFontSize,
+                self,
+                True,
+            )
+            self.main_layout.addWidget(self.image_label)
+            self.main_layout.setStretchFactor(self.question_label, 2)
+            self.main_layout.setStretchFactor(self.image_label, 5)
+        else:
+            self.image_label = None
         self.setLayout(self.main_layout)
 
         self.setPalette(CARDPAL)
@@ -256,12 +266,30 @@ class HostImageQuestionWidget(QWidget):
     def on_accept_image_clicked(self):
         """Handle accept image button click."""
         self.question.image = True
-        self.question.image_url = self.image_url
+        self.question.image_url = self._store_accepted_image()
         self.game.accept_image()
 
     def on_no_image_needed_clicked(self):
         """Handle reject image button click."""
         self.game.no_image_needed()
+
+    def _store_accepted_image(self):
+        """Persist the approved image locally so contestant displays use a stable file."""
+        if not self.current_pixmap or self.current_pixmap.isNull():
+            return self.image_url
+
+        reviewed_dir = QUESTION_MEDIA / "reviewed"
+        reviewed_dir.mkdir(parents=True, exist_ok=True)
+
+        game_id = self.game.current_game_id() or "custom"
+        question_index = "-".join(str(part) for part in self.question.index)
+        filename = f"{game_id}-{question_index}-{uuid4().hex[:8]}.png"
+        saved_path = reviewed_dir / filename
+
+        if self.current_pixmap.save(str(saved_path), "PNG"):
+            return str(saved_path)
+
+        return self.image_url
 
 class DailyDoubleWidget(QuestionWidget):
     def __init__(self, question, parent=None):
