@@ -51,7 +51,7 @@ def test_get_current_game_state_uses_started_at_and_players(game, players, monke
 
 
 def test_classify_buzz_phases_splits_main_and_rebound(game):
-    from jparty.game import BuzzAttempt
+    from jparty.domain.models import BuzzAttempt
 
     game._question_start_time = 100.0
     game._open_responses_times = [105.0, 112.0]

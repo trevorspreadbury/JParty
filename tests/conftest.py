@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,9 +8,12 @@ from uuid import uuid4
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
 TEST_TEMP_DIR = Path(__file__).parent / f".runtime_tmp_{os.getpid()}"
 TEST_TEMP_DIR.mkdir(exist_ok=True)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("JPARTY_DATA_DIR", str(TEST_TEMP_DIR / "user_data"))
 os.environ["TMP"] = str(TEST_TEMP_DIR)
 os.environ["TEMP"] = str(TEST_TEMP_DIR)
 os.environ["TMPDIR"] = str(TEST_TEMP_DIR)
@@ -17,7 +21,7 @@ tempfile.tempdir = str(TEST_TEMP_DIR)
 
 from PyQt6.QtWidgets import QApplication
 
-from jparty.game import Board, FinalBoard, Game, GameData, Player, Question
+from jparty.domain import Board, FinalBoard, Game, GameData, Player, Question
 
 
 class FakeWave:
@@ -373,7 +377,7 @@ def time_controller():
 
 @pytest.fixture()
 def game(monkeypatch, temp_dir, time_controller, qapp):
-    import jparty.game as game_module
+    import jparty.domain.game_engine as game_module
 
     FakeTimer.instances = []
     wave = FakeWave()

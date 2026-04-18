@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from jparty import retrieve
+from jparty.services import archive_client as retrieve
 
 
 pytestmark = pytest.mark.unit
@@ -51,7 +51,7 @@ def test_list_to_game_parses_custom_game_csv(sample_custom_game_csv_text):
 
 
 def test_process_game_board_from_saved_html_parses_real_fixture():
-    html = (Path("jparty") / "data" / "saved_games" / "4453.html").read_text(encoding="utf-8")
+    html = (Path("src") / "jparty" / "assets" / "data" / "saved_games" / "4453.html").read_text(encoding="utf-8")
 
     game = retrieve.process_game_board_from_html(html, 4453)
 

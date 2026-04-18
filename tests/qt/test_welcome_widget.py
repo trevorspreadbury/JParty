@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-from jparty.welcome_widget import Welcome
+from jparty.ui.widgets.welcome import Welcome
 
 
 pytestmark = pytest.mark.qt

@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jparty"
+version = "2.0.2"
+description = "The Jeopardy party game"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PyQt6~=6.7.0",
+    "requests==2.32.0",
+    "simpleaudio==1.0.4",
+    "tornado==6.3.3",
+    "BeautifulSoup4==4.11.1",
+    "pyinstaller==5.13.1",
+    "qrcode==7.3.1",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "pytest-qt",
+    "pytest-mock",
+    "requests-mock",
+    "pytest-cov",
+    "playwright",
+]
+
+[project.scripts]
+jparty = "jparty.app.bootstrap:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+jparty = [
+    "assets/data/*",
+    "assets/data/saved_games/*",
+    "assets/buzzer/templates/*",
+    "assets/buzzer/static/*",
+]

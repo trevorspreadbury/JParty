@@ -10,9 +10,8 @@ import tornado.ioloop
 import tornado.netutil
 from playwright.sync_api import sync_playwright
 
-import jparty.controller as controller_module
-from jparty.controller import Application
-from jparty.game import Player
+from jparty.domain.models import Player
+from jparty.web.app import Application
 
 
 pytestmark = pytest.mark.e2e
@@ -95,8 +94,6 @@ class LiveBrowserServer:
 @pytest.fixture
 def live_browser_server():
     controller = BrowserSmokeController()
-    original_root = controller_module.root
-    controller_module.root = "jparty"
     app = Application(controller)
     sockets = tornado.netutil.bind_sockets(0, address="127.0.0.1")
     port = sockets[0].getsockname()[1]
@@ -133,7 +130,6 @@ def live_browser_server():
         live_server.thread.join(timeout=5)
         for sock in sockets:
             sock.close()
-        controller_module.root = original_root
 
 
 @pytest.fixture

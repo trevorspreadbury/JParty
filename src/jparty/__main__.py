@@ -1,0 +1,5 @@
+from jparty.app.bootstrap import main
+
+
+if __name__ == "__main__":
+    main()

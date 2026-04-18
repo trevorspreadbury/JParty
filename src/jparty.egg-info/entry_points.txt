@@ -1,0 +1,2 @@
+[console_scripts]
+jparty = jparty.app.bootstrap:main

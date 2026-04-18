@@ -1,6 +1,6 @@
 import pytest
 
-from jparty import main
+from jparty.app import bootstrap as main
 
 
 pytestmark = pytest.mark.integration
