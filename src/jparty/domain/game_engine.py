@@ -3,6 +3,7 @@ import logging
 import os
 import time
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 
 import matplotlib
@@ -325,8 +326,12 @@ class Game(QObject):
         game_id = self.current_game_id()
         if not game_id:
             return
-        self._game_state_dir = GAME_STATES_DIR / str(game_id)
+        self._game_state_dir = GAME_STATES_DIR / self._game_state_dir_name(game_id)
         self._game_state_dir.mkdir(parents=True, exist_ok=True)
+
+    def _game_state_dir_name(self, game_id):
+        timestamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M")
+        return f"{game_id}-{timestamp}"
 
     def current_game_id(self):
         return os.environ.get("JPARTY_GAME_ID", "")

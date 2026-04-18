@@ -1,6 +1,5 @@
 import json
 import os
-
 import pytest
 
 
@@ -48,6 +47,30 @@ def test_get_current_game_state_uses_started_at_and_players(game, players, monke
     assert state["started_at"] == 1234.0
     assert state["last_updated"] == 2000.0
     assert [player["name"] for player in state["players"]] == ["Alice", "Bob", "Cara"]
+
+
+def test_initialize_game_state_dir_uses_game_id_and_local_timestamp(game, monkeypatch):
+    monkeypatch.setenv("JPARTY_GAME_ID", "9999")
+
+    class FakeNow:
+        def astimezone(self):
+            return self
+
+        def strftime(self, fmt):
+            assert fmt == "%Y%m%dT%H%M"
+            return "20260418T1435"
+
+    class FixedDatetime:
+        @classmethod
+        def now(cls):
+            return FakeNow()
+
+    monkeypatch.setattr("jparty.domain.game_engine.datetime", FixedDatetime)
+
+    game._initialize_game_state_dir()
+
+    assert game._game_state_dir.name == "9999-20260418T1435"
+    assert game._game_state_dir.exists()
 
 
 def test_classify_buzz_phases_splits_main_and_rebound(game):
