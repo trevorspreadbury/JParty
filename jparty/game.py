@@ -316,14 +316,71 @@ class Game(QObject):
         self._open_responses_times = []  # List of times when open_responses() was called
         self._successful_buzz_times = []  # List of times when successful buzzes occurred
         self._game_started_at = None
+        self._resume_state = None
 
     def startable(self):
-        return self.valid_game() and len(self.buzzer_controller.connected_players) > 0
+        if not self.valid_game():
+            return False
+
+        connected_players = len(self.buzzer_controller.connected_players)
+        if connected_players == 0:
+            return False
+
+        expected_player_count = self.expected_player_count()
+        if expected_player_count is not None and connected_players != expected_player_count:
+            return False
+
+        return True
+
+    def expected_player_count(self):
+        if self._resume_state is None:
+            return None
+        return self._resume_state.get("player_count")
+
+    def clear_resume_state(self):
+        self._resume_state = None
+
+    def prepare_resume_from_dir(self, saved_game_dir):
+        from jparty.retrieve import get_game
+
+        saved_game_path = Path(saved_game_dir)
+        general_file = saved_game_path / "general.json"
+        if not general_file.exists():
+            raise FileNotFoundError("Saved game folder must contain general.json")
+
+        try:
+            with open(general_file, "r") as f:
+                general_state = json.load(f)
+        except Exception as e:
+            raise ValueError(f"Could not load saved game metadata: {e}") from e
+
+        game_id = str(general_state.get("game_id", "")).strip()
+        saved_players = general_state.get("players", [])
+        if not game_id:
+            raise ValueError("Saved game metadata is missing a game_id")
+        if not saved_players:
+            raise ValueError("Saved game metadata is missing player information")
+
+        self.data = get_game(game_id)
+        if not self.valid_game():
+            raise ValueError("Saved game points to an invalid or incomplete game")
+
+        self._resume_state = {
+            "path": saved_game_path,
+            "game_id": game_id,
+            "general_state": general_state,
+            "player_count": len(saved_players),
+        }
+        return self._resume_state
 
     def begin(self):
         self.song_player.play(repeat=True)
 
     def start_game(self):
+        if self._resume_state:
+            self._start_resumed_game()
+            return
+
         self.current_round = self.data.rounds[0]
         self.dc.hide_welcome_widgets()
         self.dc.board_widget.load_round(self.current_round)
@@ -331,6 +388,90 @@ class Game(QObject):
         self.song_player.stop()
         self._game_started_at = time.time()
         self._initialize_game_state_dir()
+        self._save_general_state()
+
+    def _mark_completed_questions(self, question_history):
+        for entry in question_history:
+            round_index = entry.get("round_index")
+            question_index = entry.get("question_index")
+            if (
+                round_index is None
+                or question_index is None
+                or len(question_index) < 2
+                or round_index >= len(self.data.rounds)
+            ):
+                continue
+
+            question_coords = question_index[1]
+            if not isinstance(question_coords, (list, tuple)) or len(question_coords) != 2:
+                continue
+
+            question = self.data.rounds[round_index].get_question(*question_coords)
+            if question is not None:
+                question.complete = True
+
+    def _restore_player_scores(self):
+        score_history = self._reconstruct_score_history()
+        for player in self.players:
+            player_scores = score_history.get(player.player_number, [0])
+            player.score = player_scores[-1] if player_scores else 0
+
+    def _round_is_complete(self, round_data):
+        if isinstance(round_data, FinalBoard):
+            return round_data.question.complete
+        return all(question.complete for question in round_data.questions)
+
+    def _get_resume_round(self):
+        for round_data in self.data.rounds[:-1]:
+            if not self._round_is_complete(round_data):
+                return round_data
+        return self.data.rounds[-1]
+
+    def _start_resumed_game(self):
+        resume_state = self._resume_state
+        self._game_state_dir = resume_state["path"]
+        self._game_started_at = resume_state["general_state"].get("started_at") or time.time()
+
+        self.players = self.buzzer_controller.connected_players
+        self._update_player_numbers()
+
+        question_history = self._load_question_history()
+        question_history.sort(key=lambda entry: entry.get("question_number", 0))
+        self._mark_completed_questions(question_history)
+        self._restore_player_scores()
+
+        if question_history:
+            self.question_number = max(
+                entry.get("question_number", 0) for entry in question_history
+            ) + 1
+        else:
+            self.question_number = 1
+
+        self.current_round = self._get_resume_round()
+        self.active_question = None
+        self.answering_player = None
+        self.previous_answerers = set()
+        self.early_buzzes = set()
+        self.responses_open_time = None
+        self.timer = None
+
+        self.dc.hide_welcome_widgets()
+        self.buzzer_controller.accepting_players = False
+        self.song_player.stop()
+        self.dc.scoreboard.refresh_players()
+        for player in self.players:
+            self.dc.player_widget(player).update_score()
+
+        if isinstance(self.current_round, FinalBoard):
+            self.dc.load_final(self.current_round.question)
+            self.active_question = self.current_round.question
+            self.start_final()
+        else:
+            self.dc.board_widget.load_round(self.current_round)
+
+        for player in self.players:
+            self._update_lectern_for_player(player)
+
         self._save_general_state()
 
     def setDisplays(self, host_display, main_display):
