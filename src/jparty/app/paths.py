@@ -4,26 +4,53 @@ from pathlib import Path
 
 from .config import APP_NAME
 
+REQUIRED_SUBDIRS = ("saved_games", "question_media", "game_states", "game_scores")
+
+
+def _candidate_user_data_roots():
+    override = os.environ.get("JPARTY_DATA_DIR")
+    if override:
+        yield Path(override)
+
+    if os.name == "nt":
+        for env_name in ("LOCALAPPDATA", "APPDATA"):
+            base = os.environ.get(env_name)
+            if base:
+                yield Path(base) / APP_NAME
+        yield Path.home() / f".{APP_NAME.lower()}"
+        yield Path.cwd() / ".jparty-data"
+        return
+
+    yield Path.home() / ".local" / "share" / APP_NAME
+    yield Path.home() / f".{APP_NAME.lower()}"
+    yield Path.cwd() / ".jparty-data"
+
+
+def _prepare_user_data_root(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    for subdir in REQUIRED_SUBDIRS:
+        (path / subdir).mkdir(parents=True, exist_ok=True)
+    return path
+
 
 def _default_user_data_root() -> Path:
-    if os.name == "nt":
-        base = os.environ.get("APPDATA")
-        if base:
-            return Path(base) / APP_NAME
-    return Path.home() / ".local" / "share" / APP_NAME
+    last_error = None
+    for candidate in _candidate_user_data_roots():
+        try:
+            return _prepare_user_data_root(candidate)
+        except OSError as exc:
+            last_error = exc
+            continue
+    raise RuntimeError("Could not create a writable JParty data directory") from last_error
 
 
-USER_DATA_ROOT = Path(os.environ.get("JPARTY_DATA_DIR", _default_user_data_root()))
-USER_DATA_ROOT.mkdir(parents=True, exist_ok=True)
+USER_DATA_ROOT = _default_user_data_root()
 
 SAVED_GAMES = USER_DATA_ROOT / "saved_games"
 QUESTION_MEDIA = USER_DATA_ROOT / "question_media"
 GAME_STATES_DIR = USER_DATA_ROOT / "game_states"
 GAME_SCORES_DIR = USER_DATA_ROOT / "game_scores"
 LOG_FILE = USER_DATA_ROOT / "latest.log"
-
-for directory in (SAVED_GAMES, QUESTION_MEDIA, GAME_STATES_DIR, GAME_SCORES_DIR):
-    directory.mkdir(parents=True, exist_ok=True)
 
 
 def package_root() -> Path:

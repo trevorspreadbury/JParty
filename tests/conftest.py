@@ -1,7 +1,10 @@
+import atexit
 import json
 import os
+import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -10,7 +13,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-TEST_TEMP_DIR = Path(__file__).parent / f".runtime_tmp_{os.getpid()}"
+PROJECT_TEMP_ROOT = Path(__file__).resolve().parents[1] / ".tmp"
+PROJECT_TEMP_ROOT.mkdir(exist_ok=True)
+TEST_TEMP_DIR = PROJECT_TEMP_ROOT / f"pytest-runtime-{os.getpid()}"
 TEST_TEMP_DIR.mkdir(exist_ok=True)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("JPARTY_DATA_DIR", str(TEST_TEMP_DIR / "user_data"))
@@ -18,6 +23,17 @@ os.environ["TMP"] = str(TEST_TEMP_DIR)
 os.environ["TEMP"] = str(TEST_TEMP_DIR)
 os.environ["TMPDIR"] = str(TEST_TEMP_DIR)
 tempfile.tempdir = str(TEST_TEMP_DIR)
+
+
+def _cleanup_test_temp_dir():
+    for _ in range(5):
+        shutil.rmtree(TEST_TEMP_DIR, ignore_errors=True)
+        if not TEST_TEMP_DIR.exists():
+            break
+        time.sleep(0.1)
+
+
+atexit.register(_cleanup_test_temp_dir)
 
 from PyQt6.QtWidgets import QApplication
 
@@ -440,3 +456,7 @@ def sample_saved_game_dir(temp_dir, sample_general_state, sample_question_histor
             json.dump(line, f)
             f.write("\n")
     return saved_dir
+
+
+def pytest_sessionfinish(session, exitstatus):
+    _cleanup_test_temp_dir()

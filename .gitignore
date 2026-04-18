@@ -7,6 +7,7 @@ jparty/data/**
 .pytest_cache/
 __pycache__/
 *.py[cod]
+.tmp/
 pytest-cache-files-*/
 tests/.tmp/
 tests/.runtime_tmp/

@@ -12,10 +12,13 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from jparty import __version__
 from jparty.app.paths import LOG_FILE
 
+LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+LOG_FILE.touch(exist_ok=True)
 logging.basicConfig(
-    filename=LOG_FILE, encoding="utf-8", level=logging.DEBUG, filemode="w"
+    filename=LOG_FILE, encoding="utf-8", level=logging.DEBUG, filemode="w", force=True
 )
 log = logging.getLogger(__name__)
+log.info("Logging initialized at %s", LOG_FILE)
 
 
 def mailto(recipients, subject, body):
