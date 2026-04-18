@@ -1,0 +1,15 @@
+{
+  "game_id": "4453",
+  "players": [
+    {
+      "name": "Alice",
+      "player_number": 0
+    },
+    {
+      "name": "Bob",
+      "player_number": 1
+    }
+  ],
+  "started_at": 1700000000.0,
+  "last_updated": 1700000300.0
+}

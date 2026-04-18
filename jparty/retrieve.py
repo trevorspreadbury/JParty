@@ -134,13 +134,17 @@ def get_actual_player_final(clue: BeautifulSoup) -> list[list[str]]:
 def process_game_board_from_html(html, game_id) -> GameData:
     """Given j-archive html, produce a game data object"""
     soup = BeautifulSoup(html, "html.parser")
+    title_nodes = soup.select("#game_title > h1")
+    comment_nodes = soup.select("#game_comments")
+    if not title_nodes or not comment_nodes:
+        return None
     datesearch = re.search(
-        r"- \w+, (.*?)$", soup.select("#game_title > h1")[0].text
+        r"- \w+, (.*?)$", title_nodes[0].text
     )
     if datesearch is None:
         return None
     date = datesearch.groups()[0]
-    comments = soup.select("#game_comments")[0].contents
+    comments = comment_nodes[0].contents
     comments = comments[0] if len(comments) > 0 else ""
 
     # Normal Rounds
@@ -197,7 +201,10 @@ def process_game_board_from_html(html, game_id) -> GameData:
         boards.append(Board(categories, questions, dj=(i == 1)))
 
     # Final Jeopardy
-    final_round_obj = soup.find_all(class_="final_round")[0]
+    final_rounds = soup.find_all(class_="final_round")
+    if not final_rounds:
+        return None
+    final_round_obj = final_rounds[0]
     category_obj = final_round_obj.find_all(class_="category")[0]
     category = category_obj.find(class_="category_name").text
     clue = final_round_obj.find_all(class_="clue")[0]
