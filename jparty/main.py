@@ -13,7 +13,7 @@ from jparty.main_display import DisplayWindow, HostDisplayWindow
 from jparty.style import JPartyStyle
 from jparty.utils import resource_path
 from jparty.logger import qt_exception_hook
-from jparty.constants import PORT
+from jparty.constants import PORT, DEBUG_MODE
 
 
 def check_internet():
@@ -53,6 +53,11 @@ def audio_error():
     )
 
 def check_second_monitor():
+    # Allow bypassing the check for testing with environment variable
+    if DEBUG_MODE:
+        logging.warning("Single monitor mode enabled (DEBUG_MODE)")
+        return
+    
     if len(QApplication.instance().screens()) < 2:
         logging.error("No two monitors")
         QMessageBox.critical(

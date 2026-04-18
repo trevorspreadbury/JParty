@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QMessageBox,
     QLabel,
+    QFileDialog,
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QTimer
 
@@ -89,6 +90,8 @@ class Welcome(StartWidget):
     def __init__(self, game, parent=None):
         super().__init__(parent)
         self.game = game
+        self.resume_path = None
+        self._base_summary_text = ""
 
         main_layout = QVBoxLayout()
         main_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
@@ -130,10 +133,15 @@ class Welcome(StartWidget):
         self.start_button.clicked.connect(self.game.start_game)
         self.start_button.setEnabled(False)
 
+        self.resume_button = DynamicButton("Load Saved", self)
+        self.resume_button.clicked.connect(self.load_saved_game)
+
         self.rand_button = DynamicButton("Random", self)
         self.rand_button.clicked.connect(self.random)
 
         button_layout.addWidget(self.start_button, 10)
+        button_layout.addStretch(1)
+        button_layout.addWidget(self.resume_button, 10)
         button_layout.addStretch(1)
         button_layout.addWidget(self.rand_button, 10)
 
@@ -205,6 +213,8 @@ class Welcome(StartWidget):
 
     def __random(self):
         try:
+            self.resume_path = None
+            self.game.clear_resume_state()
             while True:
                 game_id = get_random_game()
                 logging.info(f"GAMEID {game_id}")
@@ -229,6 +239,8 @@ class Welcome(StartWidget):
     def __show_summary(self):
         game_id = self.textbox.text()
         try:
+            self.resume_path = None
+            self.game.clear_resume_state()
             self.game.data = get_game(game_id)
             if self.game.valid_game():
                 self.summary_trigger.emit(
@@ -244,6 +256,7 @@ class Welcome(StartWidget):
         self.check_start()
 
     def set_summary(self, text):
+        self._base_summary_text = text
         self.summary_label.setText(text)
 
     def set_gameid(self, text):
@@ -251,6 +264,10 @@ class Welcome(StartWidget):
 
     def start_debounce_timer(self, text):
         """Start the debounce timer whenever the text changes."""
+        if self.resume_path is not None:
+            self.resume_path = None
+            self.game.clear_resume_state()
+            self.start_button.setText("Start!")
         self.debounce_timer.start(2000)  # Adjust debounce delay (in milliseconds) as needed
 
     def debounced_show_summary(self):
@@ -264,13 +281,56 @@ class Welcome(StartWidget):
 
         self.check_start()
 
+    def load_saved_game(self, checked=False):
+        selected_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Select Saved Game Folder",
+            "",
+        )
+        if not selected_dir:
+            return
+
+        try:
+            resume_state = self.game.prepare_resume_from_dir(selected_dir)
+        except Exception as e:
+            logging.error(e)
+            QMessageBox.warning(self, "Saved Game Error", str(e))
+            return
+
+        self.resume_path = selected_dir
+        self.start_button.setText("Resume!")
+        saved_players = resume_state["general_state"].get("players", [])
+        self._base_summary_text = "\n".join([
+            f"Resume game {resume_state['game_id']} from:",
+            selected_dir,
+            "",
+            self.game.data.date,
+            self.game.data.comments,
+            "",
+            f"Saved players: {len(saved_players)}",
+        ])
+        self.summary_label.setText(self._base_summary_text)
+        self.check_start()
+
     def check_start(self):
         if self.game.startable():
             self.start_button.setEnabled(True)
         else:
             self.start_button.setEnabled(False)
+            expected_player_count = self.game.expected_player_count()
+            if expected_player_count is not None:
+                connected_players = len(self.game.buzzer_controller.connected_players)
+                self.summary_label.setText(
+                    self._base_summary_text
+                    + f"\n\nConnect exactly {expected_player_count} players to resume."
+                    + f"\nCurrently connected: {connected_players}"
+                )
 
     def restart(self):
+        self.resume_path = None
+        self._base_summary_text = ""
+        self.game.clear_resume_state()
+        self.start_button.setText("Start!")
         self.show_summary(self)
 
 
