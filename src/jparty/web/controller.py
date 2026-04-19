@@ -5,16 +5,24 @@ player interfaces. The controller starts the Tornado server, tracks connected
 players and lecterns, and translates websocket events into game actions.
 """
 
+from __future__ import annotations
+
 import logging
 import socket
 from threading import Thread
+from typing import TYPE_CHECKING, Iterable, TypedDict
 
 import tornado.escape
 import tornado.ioloop
 from tornado.options import define, options
 
 from jparty.app.config import PORT
+from jparty.domain.models import Player
 from jparty.web.app import Application
+
+if TYPE_CHECKING:
+    from jparty.domain.game_engine import Game
+    from jparty.web.handlers import LecternSocketHandler
 
 define("port", default=PORT, help="run on the given port", type=int)
 
@@ -22,10 +30,29 @@ MAX_PORT_TRIES = 10
 DEFAULT_HTTP_PORT = 80
 
 
+class PlayerStateDict(TypedDict):
+    """Typed payload describing lectern-visible player state."""
+
+    name: str
+    score: int
+    player_number: int
+    active: bool
+    buzzed: bool
+    finalanswer: str | None
+
+
 class BuzzerController:
     """Manage player, lectern, and websocket interactions for the game."""
 
-    def __init__(self, game: object) -> None:
+    thread: Thread | None
+    game: Game
+    app: Application
+    port: int
+    connected_players: list[Player]
+    accepting_players: bool
+    lectern_connections: dict[int, LecternSocketHandler]
+
+    def __init__(self, game: Game) -> None:
         """Initialize the buzzer controller and its Tornado application.
 
         Args:
@@ -44,7 +71,7 @@ class BuzzerController:
         self.accepting_players = True
         self.lectern_connections = {}
 
-    def start(self, threaded: object = True, tries: object = 0) -> None:
+    def start(self, threaded: bool = True, tries: int = 0) -> None:
         """Start the Tornado server, retrying with higher ports if needed.
 
         Args:
@@ -84,7 +111,7 @@ class BuzzerController:
         self.connected_players = []
         self.accepting_players = True
 
-    def buzz(self, player: object) -> None:
+    def buzz(self, player: Player) -> None:
         """Forward a player's buzz event into the game engine.
 
         Args:
@@ -100,7 +127,7 @@ class BuzzerController:
             i_player = self.connected_players.index(player)
             self.game.buzz_hint_trigger.emit(i_player)
 
-    def wager(self, player: object, amount: object) -> None:
+    def wager(self, player: Player, amount: int) -> None:
         """Forward a player's Final Jeopardy wager into the game engine.
 
         Args:
@@ -113,7 +140,7 @@ class BuzzerController:
         i_player = self.game.players.index(player)
         self.game.wager_trigger.emit(i_player, amount)
 
-    def answer(self, player: object, guess: object) -> None:
+    def answer(self, player: Player, guess: str) -> None:
         """Forward a player's Final Jeopardy response into the game engine.
 
         Args:
@@ -127,7 +154,7 @@ class BuzzerController:
             self.game.answer(player, guess)
             player.page = "null"
 
-    def new_player(self, player: object) -> None:
+    def new_player(self, player: Player) -> None:
         """Register a newly connected player and notify the game.
 
         Args:
@@ -140,7 +167,7 @@ class BuzzerController:
         self.game.new_player_trigger.emit()
 
     @classmethod
-    def localip(cls) -> object:
+    def localip(cls) -> str:
         """Return the machine's outward-facing local IP address.
 
         Returns:
@@ -162,7 +189,7 @@ class BuzzerController:
         else:
             return f"{localip}:{self.port}"
 
-    def player_with_token(self, token: object) -> object:
+    def player_with_token(self, token: str) -> Player | None:
         """Look up a connected player by their reconnect token.
 
         Args:
@@ -178,7 +205,7 @@ class BuzzerController:
                 return p
         return None
 
-    def open_wagers(self, players: object = None) -> None:
+    def open_wagers(self, players: Iterable[Player] | None = None) -> None:
         """Prompt one or more players to enter Final Jeopardy wagers.
 
         Args:
@@ -213,7 +240,7 @@ class BuzzerController:
         for p in self.connected_players:
             p.waiter.send("TOOLATE")
 
-    def get_player_by_number(self, player_number: object) -> object:
+    def get_player_by_number(self, player_number: int) -> Player | None:
         """Return the current game player assigned to a lectern slot.
 
         Args:
@@ -226,7 +253,7 @@ class BuzzerController:
             return self.game.players[player_number]
         return None
 
-    def get_player_state_dict(self, player: object) -> object:
+    def get_player_state_dict(self, player: Player) -> PlayerStateDict:
         """Build the serialized lectern state for a player.
 
         Args:
@@ -244,7 +271,9 @@ class BuzzerController:
             "finalanswer": getattr(player, "finalanswer", None),
         }
 
-    def broadcast_to_lecterns(self, player_number: object, state_dict: object) -> None:
+    def broadcast_to_lecterns(
+        self, player_number: int, state_dict: PlayerStateDict
+    ) -> None:
         """Send an updated state payload to a specific lectern connection.
 
         Args:

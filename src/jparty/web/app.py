@@ -5,6 +5,10 @@ layer. It registers the HTTP and websocket routes that power player buzzers,
 host-facing lecterns, and the landing page served to connected devices.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import tornado.web
 
 from jparty.app.paths import web_asset_path
@@ -16,11 +20,16 @@ from jparty.web.handlers import (
     WelcomeHandler,
 )
 
+if TYPE_CHECKING:
+    from jparty.web.controller import BuzzerController
+
 
 class Application(tornado.web.Application):
     """Configure the Tornado app used by the buzzer web server."""
 
-    def __init__(self, controller: object) -> None:
+    controller: BuzzerController
+
+    def __init__(self, controller: BuzzerController) -> None:
         """Initialize the Tornado application and route table.
 
         Args:

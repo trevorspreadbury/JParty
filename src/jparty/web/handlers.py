@@ -6,7 +6,10 @@ displays. Together they form the network-facing interface of JParty's web
 layer.
 """
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING, Any
 
 import tornado.escape
 import tornado.web
@@ -14,6 +17,10 @@ import tornado.websocket
 
 from jparty.app.config import MAXPLAYERS
 from jparty.domain.models import Player
+
+if TYPE_CHECKING:
+    from jparty.web.app import Application
+    from jparty.web.controller import BuzzerController
 
 
 class WelcomeHandler(tornado.web.RequestHandler):
@@ -48,7 +55,11 @@ class BuzzerHandler(tornado.web.RequestHandler):
 class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
     """Handle live websocket traffic for player buzzer clients."""
 
-    cache = []
+    application: Application
+    controller: BuzzerController
+    player: Player | None
+
+    cache: list[dict[str, str]] = []
     cache_size = 400
 
     def initialize(self) -> None:
@@ -60,7 +71,7 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         self.controller = self.application.controller
         self.player = None
 
-    def get_compression_options(self) -> object:
+    def get_compression_options(self) -> dict[str, Any]:
         """Enable default websocket compression support.
 
         Returns:
@@ -76,7 +87,7 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         """
         self.set_nodelay(True)
 
-    def send(self, msg: object, text: object = "") -> None:
+    def send(self, msg: str, text: str = "") -> None:
         """Send a structured websocket message to the player client.
 
         Args:
@@ -93,7 +104,7 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         except Exception:
             logging.error("Error sending message %s", msg, exc_info=True)
 
-    def check_if_exists(self, token: object) -> None:
+    def check_if_exists(self, token: str) -> None:
         """Reconnect a player if the supplied token matches an existing player.
 
         Args:
@@ -112,7 +123,7 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         player.waiter = self
         self.send("EXISTS", tornado.escape.json_encode(player.state()))
 
-    def on_message(self, message: object) -> None:
+    def on_message(self, message: str) -> None:
         """Dispatch an inbound websocket message from a player client.
 
         Args:
@@ -138,7 +149,7 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         else:
             raise Exception("Unknown message")
 
-    def init_player(self, name: object) -> None:
+    def init_player(self, name: str) -> None:
         """Create and register a player from the submitted display name.
 
         Args:
@@ -166,7 +177,7 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         """
         self.application.controller.buzz(self.player)
 
-    def wager(self, text: object) -> None:
+    def wager(self, text: str) -> None:
         """Parse and forward a wager from the connected player.
 
         Args:
@@ -211,6 +222,10 @@ class LecternHandler(tornado.web.RequestHandler):
 class LecternSocketHandler(tornado.websocket.WebSocketHandler):
     """Handle live websocket traffic for host-side lectern displays."""
 
+    application: Application
+    controller: BuzzerController
+    player_number: int | None
+
     def initialize(self) -> None:
         """Attach controller references for this lectern websocket.
 
@@ -220,7 +235,7 @@ class LecternSocketHandler(tornado.websocket.WebSocketHandler):
         self.controller = self.application.controller
         self.player_number = None
 
-    def get_compression_options(self) -> object:
+    def get_compression_options(self) -> dict[str, Any]:
         """Enable default websocket compression support.
 
         Returns:
@@ -245,7 +260,7 @@ class LecternSocketHandler(tornado.websocket.WebSocketHandler):
             logging.error("Invalid player number for lectern: %s", exc)
             self.close()
 
-    def send(self, msg: object, text: object = "") -> None:
+    def send(self, msg: str, text: str = "") -> None:
         """Send a structured websocket message to the lectern client.
 
         Args:
@@ -278,7 +293,7 @@ class LecternSocketHandler(tornado.websocket.WebSocketHandler):
         else:
             self.send("NO_PLAYER", "")
 
-    def on_message(self, message: object) -> None:
+    def on_message(self, message: str) -> None:
         """Ignore inbound lectern websocket messages.
 
         Args:
