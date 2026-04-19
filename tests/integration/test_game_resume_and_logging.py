@@ -1,7 +1,6 @@
 """Test game resume and logging module."""
 
 import json
-
 import pytest
 from jparty.domain.models import FinalBoard, Player
 
@@ -136,3 +135,20 @@ def test_close_game_resets_state(game_with_players: object) -> None:
     assert game.question_number == 1
     assert game.buzzer_controller.restart_calls == 1
     assert game.dc.restart_calls == 1
+
+
+def test_start_game_saves_html_when_play_begins(
+    game: object, monkeypatch: object
+) -> None:
+    """Test test start game saves html when play begins."""
+    from jparty.services import archive_client
+
+    saved_game_ids = []
+    monkeypatch.setattr(
+        archive_client, "save_game_html", lambda game_id: saved_game_ids.append(game_id)
+    )
+    monkeypatch.setenv("JPARTY_GAME_ID", "4453")
+    game.start_game()
+    assert saved_game_ids == ["4453"]
+    assert game.current_round is game.data.rounds[0]
+    assert game.dc.hidden_welcome == 1

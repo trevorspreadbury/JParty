@@ -263,6 +263,7 @@ class Game(QObject):
         if self._resume_state:
             self._start_resumed_game()
             return
+        self._save_played_game_html()
         self.current_round = self.data.rounds[0]
         self.dc.hide_welcome_widgets()
         self.dc.board_widget.load_round(self.current_round)
@@ -271,6 +272,25 @@ class Game(QObject):
         self._game_started_at = time.time()
         self._initialize_game_state_dir()
         self._save_general_state()
+
+    def _save_played_game_html(self) -> None:
+        """Persist the current J-Archive game's HTML once play actually begins.
+
+        Returns:
+            ``None``.
+        """
+        from jparty.services.archive_client import (
+            GOOGLE_SHEETS_ID_LENGTH,
+            save_game_html,
+        )
+
+        game_id = self.current_game_id()
+        if not game_id or len(game_id) >= GOOGLE_SHEETS_ID_LENGTH:
+            return
+        try:
+            save_game_html(game_id)
+        except Exception:
+            logging.error("Could not save game HTML for %s", game_id, exc_info=True)
 
     def _mark_completed_questions(self, question_history: object) -> None:
         """Mark previously played clues as complete from saved history.
