@@ -1,3 +1,5 @@
+"""Game loader module."""
+
 from .archive_client import (
     find_question_media,
     get_game,

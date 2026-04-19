@@ -1,3 +1,5 @@
+"""Persistence module."""
+
 from jparty.domain.state import (
     classify_buzz_phases,
     get_current_game_state,

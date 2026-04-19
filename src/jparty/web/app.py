@@ -1,3 +1,5 @@
+"""App module."""
+
 import tornado.web
 
 from jparty.app.paths import web_asset_path
@@ -11,20 +13,23 @@ from jparty.web.handlers import (
 
 
 class Application(tornado.web.Application):
-    def __init__(self, controller):
+    """Represent application."""
+
+    def __init__(self, controller: object) -> None:
+        """Initialize the instance."""
         handlers = [
-            (r"/", WelcomeHandler),
-            (r"/play", BuzzerHandler),
-            (r"/buzzersocket", BuzzerSocketHandler),
-            (r"/lectern", LecternHandler),
-            (r"/lecternsocket", LecternSocketHandler),
+            ("/", WelcomeHandler),
+            ("/play", BuzzerHandler),
+            ("/buzzersocket", BuzzerSocketHandler),
+            ("/lectern", LecternHandler),
+            ("/lecternsocket", LecternSocketHandler),
         ]
-        settings = dict(
-            cookie_secret="",
-            template_path=str(web_asset_path("templates")),
-            static_path=str(web_asset_path("static")),
-            xsrf_cookies=False,
-            websocket_ping_interval=0.19,
-        )
+        settings = {
+            "cookie_secret": "",
+            "template_path": str(web_asset_path("templates")),
+            "static_path": str(web_asset_path("static")),
+            "xsrf_cookies": False,
+            "websocket_ping_interval": 0.19,
+        }
         super().__init__(handlers, **settings)
         self.controller = controller

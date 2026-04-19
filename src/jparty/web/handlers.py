@@ -1,3 +1,5 @@
+"""Handlers module."""
+
 import logging
 
 import tornado.escape
@@ -9,12 +11,18 @@ from jparty.domain.models import Player
 
 
 class WelcomeHandler(tornado.web.RequestHandler):
-    def get(self):
+    """Represent welcomehandler."""
+
+    def get(self) -> None:
+        """Run get."""
         self.render("index.html", messages=BuzzerSocketHandler.cache)
 
 
 class BuzzerHandler(tornado.web.RequestHandler):
-    def post(self):
+    """Represent buzzerhandler."""
+
+    def post(self) -> None:
+        """Run post."""
         if not self.get_cookie("test"):
             self.set_cookie("test", "test_val")
             logging.info("set cookie")
@@ -24,20 +32,26 @@ class BuzzerHandler(tornado.web.RequestHandler):
 
 
 class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
+    """Represent buzzersockethandler."""
+
     cache = []
     cache_size = 400
 
-    def initialize(self):
+    def initialize(self) -> None:
+        """Run initialize."""
         self.controller = self.application.controller
         self.player = None
 
-    def get_compression_options(self):
+    def get_compression_options(self) -> object:
+        """Run get compression options."""
         return {}
 
-    def open(self):
+    def open(self) -> None:
+        """Run open."""
         self.set_nodelay(True)
 
-    def send(self, msg, text=""):
+    def send(self, msg: object, text: object = "") -> None:
+        """Run send."""
         data = {"message": msg, "text": text}
         try:
             self.write_message(data)
@@ -45,7 +59,8 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         except Exception:
             logging.error("Error sending message %s", msg, exc_info=True)
 
-    def check_if_exists(self, token):
+    def check_if_exists(self, token: object) -> None:
+        """Run check if exists."""
         player = self.controller.player_with_token(token)
         if player is None:
             self.send("NEW")
@@ -56,7 +71,8 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         player.waiter = self
         self.send("EXISTS", tornado.escape.json_encode(player.state()))
 
-    def on_message(self, message):
+    def on_message(self, message: object) -> None:
+        """Run on message."""
         if "BUZZ" in message:
             self.buzz()
             return
@@ -74,7 +90,8 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         else:
             raise Exception("Unknown message")
 
-    def init_player(self, name):
+    def init_player(self, name: object) -> None:
+        """Run init player."""
         if not self.controller.accepting_players:
             self.send("GAMESTARTED")
             return
@@ -86,35 +103,47 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         self.application.controller.new_player(self.player)
         self.send("TOKEN", self.player.token.hex())
 
-    def buzz(self):
+    def buzz(self) -> None:
+        """Run buzz."""
         self.application.controller.buzz(self.player)
 
-    def wager(self, text):
+    def wager(self, text: object) -> None:
+        """Run wager."""
         self.application.controller.wager(self.player, int(text))
         self.player.page = "null"
 
-    def toolate(self):
+    def toolate(self) -> None:
+        """Run toolate."""
         self.send("TOOLATE")
 
-    def on_close(self):
+    def on_close(self) -> None:
+        """Run on close."""
         return None
 
 
 class LecternHandler(tornado.web.RequestHandler):
-    def get(self):
+    """Represent lecternhandler."""
+
+    def get(self) -> None:
+        """Run get."""
         player_number = self.get_argument("player", "0")
         self.render("lectern.html", player_number=player_number)
 
 
 class LecternSocketHandler(tornado.websocket.WebSocketHandler):
-    def initialize(self):
+    """Represent lecternsockethandler."""
+
+    def initialize(self) -> None:
+        """Run initialize."""
         self.controller = self.application.controller
         self.player_number = None
 
-    def get_compression_options(self):
+    def get_compression_options(self) -> object:
+        """Run get compression options."""
         return {}
 
-    def open(self):
+    def open(self) -> None:
+        """Run open."""
         self.set_nodelay(True)
         try:
             self.player_number = int(self.get_argument("player", "0"))
@@ -126,7 +155,8 @@ class LecternSocketHandler(tornado.websocket.WebSocketHandler):
             logging.error("Invalid player number for lectern: %s", exc)
             self.close()
 
-    def send(self, msg, text=""):
+    def send(self, msg: object, text: object = "") -> None:
+        """Run send."""
         data = {"message": msg, "text": text}
         try:
             self.write_message(data)
@@ -135,7 +165,8 @@ class LecternSocketHandler(tornado.websocket.WebSocketHandler):
                 "Error sending message to lectern %s", self.player_number, exc_info=True
             )
 
-    def send_initial_state(self):
+    def send_initial_state(self) -> None:
+        """Run send initial state."""
         if self.player_number is None or not self.controller.game:
             return
         player = self.controller.get_player_by_number(self.player_number)
@@ -145,9 +176,11 @@ class LecternSocketHandler(tornado.websocket.WebSocketHandler):
         else:
             self.send("NO_PLAYER", "")
 
-    def on_message(self, message):
+    def on_message(self, message: object) -> None:
+        """Run on message."""
         return None
 
-    def on_close(self):
+    def on_close(self) -> None:
+        """Run on close."""
         if self.player_number in self.controller.lectern_connections:
             del self.controller.lectern_connections[self.player_number]

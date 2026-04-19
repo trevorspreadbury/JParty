@@ -1,26 +1,31 @@
+"""Test game resume and logging module."""
+
 import json
 
 import pytest
-
 from jparty.domain.models import FinalBoard, Player
 
 pytestmark = pytest.mark.integration
 
 
 class DummyWaiter:
-    def send(self, message, text=""):
+    """Test helper for dummywaiter."""
+
+    def send(self, message: object, text: object = "") -> None:
+        """Test send."""
         return None
 
-    def close(self):
+    def close(self) -> None:
+        """Test close."""
         return None
 
 
 def test_question_history_logging_writes_buzz_phases_and_attempts(
-    game_with_players, time_controller
-):
+    game_with_players: object, time_controller: object
+) -> None:
+    """Test test question history logging writes buzz phases and attempts."""
     game = game_with_players
     question = game.current_round.get_question(0, 0)
-
     game.load_question(question)
     time_controller.advance(1.0)
     game.buzz(0)
@@ -29,10 +34,8 @@ def test_question_history_logging_writes_buzz_phases_and_attempts(
     game.buzz(1)
     time_controller.advance(0.2)
     game.correct_answer()
-
     history_file = game._game_state_dir / "question_history.jsonl"
     entry = json.loads(history_file.read_text().splitlines()[0])
-
     assert entry["question_number"] == 1
     assert entry["answer_attempts"][0]["player_index"] == 1
     assert entry["buzz_phases"]
@@ -40,8 +43,9 @@ def test_question_history_logging_writes_buzz_phases_and_attempts(
 
 
 def test_prepare_and_resume_saved_game_restores_round_scores_and_questions(
-    game, monkeypatch, sample_saved_game_dir
-):
+    game: object, monkeypatch: object, sample_saved_game_dir: object
+) -> None:
+    """Test test prepare and resume saved game restores round scores and questions."""
     from jparty.services import game_loader
 
     restored_data = game.data
@@ -50,10 +54,8 @@ def test_prepare_and_resume_saved_game_restores_round_scores_and_questions(
     game.buzzer_controller.connected_players = players
     game.players = players
     game.dc.scoreboard.refresh_players()
-
     game.prepare_resume_from_dir(sample_saved_game_dir)
     game.start_game()
-
     assert game.current_round is game.data.rounds[0]
     assert not isinstance(game.current_round, FinalBoard)
     assert game.question_number == 4
@@ -65,15 +67,17 @@ def test_prepare_and_resume_saved_game_restores_round_scores_and_questions(
     assert game.current_round.get_question(3, 0).complete is False
 
 
-def test_resume_into_final_starts_final_flow(game, monkeypatch, temp_dir):
+def test_resume_into_final_starts_final_flow(
+    game: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """Test test resume into final starts final flow."""
     from jparty.services import game_loader
 
     restored_data = game.data
     monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
-
     saved_dir = temp_dir / "saved"
     saved_dir.mkdir()
-    with open(saved_dir / "general.json", "w") as f:
+    with (saved_dir / "general.json").open("w") as f:
         json.dump(
             {
                 "game_id": "4453",
@@ -86,7 +90,6 @@ def test_resume_into_final_starts_final_flow(game, monkeypatch, temp_dir):
             },
             f,
         )
-
     history_entries = []
     question_number = 1
     for round_index, round_data in enumerate(restored_data.rounds[:2]):
@@ -105,32 +108,28 @@ def test_resume_into_final_starts_final_flow(game, monkeypatch, temp_dir):
                 }
             )
             question_number += 1
-    with open(saved_dir / "question_history.jsonl", "w") as f:
+    with (saved_dir / "question_history.jsonl").open("w") as f:
         for entry in history_entries:
             json.dump(entry, f)
             f.write("\n")
-
     players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
     game.buzzer_controller.connected_players = players
     game.players = players
     game.dc.scoreboard.refresh_players()
-
     game.prepare_resume_from_dir(saved_dir)
     game.start_game()
-
     assert isinstance(game.current_round, FinalBoard)
     assert game.active_question is game.current_round.question
     assert game.buzzer_controller.open_wagers_calls
 
 
-def test_close_game_resets_state(game_with_players):
+def test_close_game_resets_state(game_with_players: object) -> None:
+    """Test test close game resets state."""
     game = game_with_players
     game.active_question = game.current_round.get_question(0, 0)
     game.answering_player = game.players[0]
     game.early_buzzes.add(0)
-
     game.close_game()
-
     assert game.players == []
     assert game.active_question is None
     assert game.current_round is None

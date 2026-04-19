@@ -1,12 +1,18 @@
+"""Models module."""
+
 import os
 import sys
 from dataclasses import dataclass
 
 from jparty.domain.input import index_to_key
 
+BOARD_QUESTION_COUNT = 30
+
 
 @dataclass
 class Question:
+    """Represent question."""
+
     index: tuple
     text: str
     answer: str
@@ -21,6 +27,8 @@ class Question:
 
 @dataclass
 class BuzzAttempt:
+    """Represent buzzattempt."""
+
     player_index: int
     question_index: tuple
     timestamp: float
@@ -31,44 +39,60 @@ class BuzzAttempt:
 
 
 class Board:
+    """Represent board."""
+
     size = (6, 5)
 
-    def __init__(self, categories, questions, dj=False):
+    def __init__(
+        self, categories: object, questions: object, dj: object = False
+    ) -> None:
+        """Initialize the instance."""
         self.categories = categories
         self.dj = dj
         self.questions = questions or []
 
-    def get_question(self, i, j):
+    def get_question(self, i: object, j: object) -> object:
+        """Run get question."""
         for question in self.questions:
             if question.index == (i, j):
                 return question
         return None
 
-    def complete(self):
-        return len(self.questions) == 30
+    def complete(self) -> object:
+        """Run complete."""
+        return len(self.questions) == BOARD_QUESTION_COUNT
 
 
 class FinalBoard(Board):
+    """Represent finalboard."""
+
     size = (1, 1)
 
-    def __init__(self, category, question):
+    def __init__(self, category: object, question: object) -> None:
+        """Initialize the instance."""
         super().__init__([category], [question], dj=False)
         self.category = category
         self.question = question
 
-    def complete(self):
+    def complete(self) -> object:
+        """Run complete."""
         return len(self.questions) == 1
 
 
 @dataclass
 class GameData:
+    """Represent gamedata."""
+
     rounds: list
     date: str
     comments: str
 
 
 class Player:
-    def __init__(self, name, waiter, player_number):
+    """Represent player."""
+
+    def __init__(self, name: object, waiter: object, player_number: object) -> None:
+        """Initialize the instance."""
         self.name = name
         self.token = os.urandom(15)
         self.score = 0
@@ -79,8 +103,10 @@ class Player:
         self.player_number = player_number
         self.key = index_to_key[player_number]
 
-    def __hash__(self):
+    def __hash__(self) -> object:
+        """Return hash."""
         return int.from_bytes(self.token, sys.byteorder)
 
-    def state(self):
+    def state(self) -> object:
+        """Run state."""
         return {"page": self.page, "score": self.score}

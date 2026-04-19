@@ -1,19 +1,23 @@
+"""Test websocket system module."""
+
 import json
 from types import SimpleNamespace
 
 import pytest
+from jparty.web.app import Application
 from tornado.testing import AsyncHTTPTestCase as TornadoAsyncHTTPTestCase
 from tornado.testing import gen_test
 from tornado.websocket import websocket_connect
-
-from jparty.web.app import Application
 
 pytestmark = pytest.mark.e2e
 TornadoAsyncHTTPTestCase.__test__ = False
 
 
 class FakeController:
-    def __init__(self):
+    """Test helper for fakecontroller."""
+
+    def __init__(self) -> None:
+        """Test init."""
         self.connected_players = []
         self.accepting_players = True
         self.lectern_connections = {}
@@ -24,31 +28,38 @@ class FakeController:
             new_player_trigger=SimpleNamespace(emit=lambda: None),
         )
 
-    def new_player(self, player):
+    def new_player(self, player: object) -> None:
+        """Test new player."""
         self.connected_players.append(player)
         self.game.players.append(player)
 
-    def buzz(self, player):
+    def buzz(self, player: object) -> None:
+        """Test buzz."""
         return None
 
-    def wager(self, player, amount):
+    def wager(self, player: object, amount: object) -> None:
+        """Test wager."""
         return None
 
-    def answer(self, player, guess):
+    def answer(self, player: object, guess: object) -> None:
+        """Test answer."""
         return None
 
-    def player_with_token(self, token):
+    def player_with_token(self, token: object) -> object:
+        """Test player with token."""
         for player in self.connected_players:
             if player.token.hex() == token:
                 return player
         return None
 
-    def get_player_by_number(self, player_number):
+    def get_player_by_number(self, player_number: object) -> object:
+        """Test get player by number."""
         if player_number < len(self.game.players):
             return self.game.players[player_number]
         return None
 
-    def get_player_state_dict(self, player):
+    def get_player_state_dict(self, player: object) -> object:
+        """Test get player state dict."""
         return {
             "name": player.name,
             "score": player.score,
@@ -58,22 +69,28 @@ class FakeController:
             "finalanswer": player.finalanswer,
         }
 
-    def broadcast_to_lecterns(self, player_number, state_dict):
+    def broadcast_to_lecterns(self, player_number: object, state_dict: object) -> None:
+        """Test broadcast to lecterns."""
         return None
 
 
 class TestBuzzerSocketSystem(TornadoAsyncHTTPTestCase):
+    """Test helper for testbuzzersocketsystem."""
+
     __test__ = True
 
-    def runTest(self):
+    def runTest(self) -> None:
+        """Test runTest."""
         return None
 
-    def get_app(self):
+    def get_app(self) -> object:
+        """Test get app."""
         self.controller = FakeController()
         return Application(self.controller)
 
     @gen_test
-    async def test_player_can_join_and_reconnect_by_token(self):
+    async def test_player_can_join_and_reconnect_by_token(self) -> None:
+        """Test test player can join and reconnect by token."""
         ws = await websocket_connect(
             self.get_url("/buzzersocket").replace("http", "ws")
         )
@@ -82,7 +99,6 @@ class TestBuzzerSocketSystem(TornadoAsyncHTTPTestCase):
         assert first_message["message"] == "TOKEN"
         token = first_message["text"]
         ws.close()
-
         ws2 = await websocket_connect(
             self.get_url("/buzzersocket").replace("http", "ws")
         )
@@ -92,13 +108,13 @@ class TestBuzzerSocketSystem(TornadoAsyncHTTPTestCase):
         ws2.close()
 
     @gen_test
-    async def test_lectern_socket_receives_initial_player_state(self):
+    async def test_lectern_socket_receives_initial_player_state(self) -> None:
+        """Test test lectern socket receives initial player state."""
         ws = await websocket_connect(
             self.get_url("/buzzersocket").replace("http", "ws")
         )
         ws.write_message(json.dumps({"message": "NAME", "text": "Alice"}))
         await ws.read_message()
-
         lectern = await websocket_connect(
             self.get_url("/lecternsocket?player=0").replace("http", "ws")
         )

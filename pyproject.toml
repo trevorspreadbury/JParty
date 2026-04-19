@@ -73,10 +73,11 @@ extend-select = [
 ]
 
 ignore = [
-  "D",      # Temporary: docstring enforcement is deferred while we adopt Ruff on the existing codebase.
   "D415",   # allow first line of doctstrings to end without punctuation
   "ANN002", # missing type on *args
   "ANN003", # missing type on **kwargs
+  "ANN101", # deprecated, but still emitted by the older Ruff version used in pre-commit.
+  "ANN102", # deprecated, but still emitted by the older Ruff version used in pre-commit.
   "B905",   # won't work on python <3.10
   "S608"    # not worried about sql injection for local database
 ]
@@ -86,3 +87,6 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "PLR2004", "S603"]
+"tests/conftest.py" = [
+  "E402", # Test bootstrap needs to add the src/ path before importing the package.
+]

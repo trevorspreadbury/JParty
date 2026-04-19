@@ -1,11 +1,15 @@
+"""State module."""
+
 import json
 import logging
 import time
 from dataclasses import asdict
 from itertools import zip_longest
+from pathlib import Path
 
 
-def get_current_game_state(game):
+def get_current_game_state(game: object) -> object:
+    """Run get current game state."""
     game_id = game.current_game_id()
     current_time = time.time()
     return {
@@ -18,35 +22,33 @@ def get_current_game_state(game):
     }
 
 
-def save_general_state(game):
+def save_general_state(game: object) -> None:
+    """Run save general state."""
     if not game._game_state_dir:
         game._initialize_game_state_dir()
     if not game._game_state_dir:
         return
-
     state = get_current_game_state(game)
     general_file = game._game_state_dir / "general.json"
     try:
-        with open(general_file, "w") as file_obj:
+        with Path(general_file).open("w") as file_obj:
             json.dump(state, file_obj, indent=2)
     except Exception as exc:
         logging.error("Error saving general state: %s", exc)
 
 
-def classify_buzz_phases(game):
+def classify_buzz_phases(game: object) -> object:
+    """Run classify buzz phases."""
     if not game._all_buzz_attempts:
         return []
     if not game._open_responses_times:
         logging.error("No open responses times found after question completed.")
         return []
-
     current_time = time.time()
     phase_start_times = [game._question_start_time] + game._open_responses_times[1:]
     phase_boundaries = []
     for phase_start_time, successful_buzz_time in zip_longest(
-        phase_start_times,
-        game._successful_buzz_times,
-        fillvalue=current_time,
+        phase_start_times, game._successful_buzz_times, fillvalue=current_time
     ):
         phase_boundaries.append(
             (
@@ -54,7 +56,6 @@ def classify_buzz_phases(game):
                 min(successful_buzz_time + 1, current_time),
             )
         )
-
     phases = []
     for phase_start_time, phase_end_time in phase_boundaries:
         phases.append(
@@ -74,19 +75,18 @@ def classify_buzz_phases(game):
     return phases
 
 
-def load_question_history(game):
+def load_question_history(game: object) -> object:
+    """Run load question history."""
     if not game._game_state_dir:
         game._initialize_game_state_dir()
     if not game._game_state_dir:
         return []
-
     history_file = game._game_state_dir / "question_history.jsonl"
     if not history_file.exists():
         return []
-
     entries = []
     try:
-        with open(history_file) as file_obj:
+        with Path(history_file).open() as file_obj:
             for line in file_obj:
                 line = line.strip()
                 if line:
@@ -97,11 +97,11 @@ def load_question_history(game):
     return entries
 
 
-def reconstruct_score_history(game):
+def reconstruct_score_history(game: object) -> object:
+    """Run reconstruct score history."""
     entries = load_question_history(game)
     if not entries:
         return {}
-
     entries.sort(key=lambda entry: entry.get("question_number", 0))
     all_players = set()
     score_history = {}
@@ -111,7 +111,6 @@ def reconstruct_score_history(game):
             if player_index is not None:
                 all_players.add(player_index)
                 score_history.setdefault(player_index, [0])
-
     for entry in entries:
         question_num = entry.get("question_number", 0)
         if question_num == 0:
@@ -122,7 +121,6 @@ def reconstruct_score_history(game):
             score_after = attempt.get("score_after", 0)
             if player_index is not None:
                 question_scores[player_index] = score_after
-
         for player_index in all_players:
             while len(score_history[player_index]) < question_num:
                 score_history[player_index].append(score_history[player_index][-1])
@@ -141,17 +139,17 @@ def reconstruct_score_history(game):
     return score_history
 
 
-def load_general_state(game):
+def load_general_state(game: object) -> object:
+    """Run load general state."""
     if not game._game_state_dir:
         game._initialize_game_state_dir()
     if not game._game_state_dir:
         return {}
-
     general_file = game._game_state_dir / "general.json"
     if not general_file.exists():
         return {}
     try:
-        with open(general_file) as file_obj:
+        with Path(general_file).open() as file_obj:
             return json.load(file_obj)
     except Exception as exc:
         logging.error("Error loading general state: %s", exc)

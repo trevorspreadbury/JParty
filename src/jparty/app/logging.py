@@ -1,3 +1,5 @@
+"""Logging module."""
+
 import logging
 import platform
 import sys
@@ -20,13 +22,14 @@ log = logging.getLogger(__name__)
 log.info("Logging initialized at %s", LOG_FILE)
 
 
-def mailto(recipients, subject, body):
-    "recipients: string with comma-separated emails (no spaces!)"
+def mailto(recipients: object, subject: object, body: object) -> None:
+    """recipients: string with comma-separated emails (no spaces!)"""
     webbrowser.open(f"mailto:{recipients}?subject={quote(subject)}&body={quote(body)}")
 
 
-def show_exception_box(log_msg):
-    """Checks if a QApplication instance is available and shows a messagebox with the exception message.
+def show_exception_box(log_msg: object) -> None:
+    """Check whether a QApplication instance is available and show the exception box.
+
     If unavailable (non-console application), log an additional notice.
     """
     if QApplication.instance() is not None:
@@ -38,42 +41,33 @@ def show_exception_box(log_msg):
             defaultButton=QMessageBox.StandardButton.Yes,
         )
         if button is QMessageBox.StandardButton.Yes:
-            with open(LOG_FILE) as f:
+            with LOG_FILE.open() as f:
                 logdata = f.read()
-            message = f"""JPARTY ERROR REPORT:
-
-Version: {__version__}
-Platform: {platform.platform()}
-
-===LOGS===
-
-
-{logdata}
-"""
-
+            message = f"JPARTY ERROR REPORT:\n\nVersion: {__version__}\nPlatform: {platform.platform()}\n\n===LOGS===\n\n\n{logdata}\n"
             mailto("me@stuartthomas.us", "JParty Error Report", message)
     else:
         log.debug("No QApplication instance available.")
 
 
 class UncaughtHook(QObject):
+    """Represent uncaughthook."""
+
     _exception_caught = pyqtSignal(object)
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialize the instance."""
         super().__init__(*args, **kwargs)
-
-        # this registers the exception_hook() function as hook with the Python interpreter
         sys.excepthook = self.exception_hook
-
-        # connect signal to execute the message box function always on main thread
         self._exception_caught.connect(show_exception_box)
 
-    def exception_hook(self, exc_type, exc_value, exc_traceback):
-        """Function handling uncaught exceptions.
+    def exception_hook(
+        self, exc_type: object, exc_value: object, exc_traceback: object
+    ) -> None:
+        """Handle uncaught exceptions.
+
         It is triggered each time an uncaught exception occurs.
         """
         if issubclass(exc_type, KeyboardInterrupt):
-            # ignore keyboard interrupt to support console applications
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
         else:
             exc_info = (exc_type, exc_value, exc_traceback)
@@ -84,10 +78,7 @@ class UncaughtHook(QObject):
                 ]
             )
             log.critical(f"Uncaught exception:\n {log_msg}", exc_info=exc_info)
-
-            # trigger message box show
             self._exception_caught.emit(log_msg)
 
 
-# create a global instance of our class to register the hook
 qt_exception_hook = UncaughtHook()

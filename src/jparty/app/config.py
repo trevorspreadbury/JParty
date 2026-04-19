@@ -1,3 +1,5 @@
+"""Config module."""
+
 from pathlib import Path
 
 APP_NAME = "JParty"
@@ -8,5 +10,4 @@ MAXPLAYERS = 8
 PORT = 8080
 EARLY_BUZZ_PENALTY = 0.25
 DEBUG_MODE = True
-
 PROJECT_ROOT = Path(__file__).resolve().parents[3]

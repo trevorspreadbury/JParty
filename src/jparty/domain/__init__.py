@@ -1,3 +1,5 @@
+"""Domain package."""
+
 from .game_engine import Game
 from .models import Board, BuzzAttempt, FinalBoard, GameData, Player, Question
 

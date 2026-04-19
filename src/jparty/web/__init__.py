@@ -1,3 +1,5 @@
+"""Web package."""
+
 from .app import Application
 from .controller import BuzzerController
 

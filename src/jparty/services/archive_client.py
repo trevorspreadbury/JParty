@@ -1,3 +1,5 @@
+"""Archive client module."""
+
 import csv
 import json
 import logging
@@ -12,13 +14,17 @@ from jparty.app.config import MONIES
 from jparty.app.paths import QUESTION_MEDIA, SAVED_GAMES
 from jparty.domain.models import Board, FinalBoard, GameData, Question
 
+REQUEST_TIMEOUT_SECONDS = 10
+DOUBLE_JEOPARDY_START_ROW = 14
+GOOGLE_SHEETS_ID_LENGTH = 7
+STANDARD_AND_FINAL_ROUND_COUNT = 3
 
-def list_to_game(s):
-    # Template link: https://docs.google.com/spreadsheets/d/1_vBBsWn-EVc7npamLnOKHs34Mc2iAmd9hOGSzxHQX0Y/edit?usp=sharing
-    alpha = "BCDEFG"  # columns
+
+def list_to_game(s: object) -> object:
+    """Run list to game."""
+    alpha = "BCDEFG"
     boards = []
-    # gets single and double jeopardy rounds
-    for n1 in [1, 14]:
+    for n1 in [1, DOUBLE_JEOPARDY_START_ROW]:
         categories = s[n1 - 1][1:7]
         questions = []
         for row in range(5):
@@ -30,10 +36,7 @@ def list_to_game(s):
                 value = int(s[row + n1][0])
                 dd = address in s[n1 - 1][-1]
                 questions.append(Question(index, text, answer, cat, value, dd))
-
-        boards.append(Board(categories, questions, dj=(n1 == 14)))
-
-    # gets final jeopardy round
+        boards.append(Board(categories, questions, dj=n1 == DOUBLE_JEOPARDY_START_ROW))
     fj = s[-1]
     index = (0, 0)
     text = fj[2]
@@ -46,15 +49,17 @@ def list_to_game(s):
     return GameData(boards, date, comments)
 
 
-def get_Gsheet_game(file_id):
+def get_Gsheet_game(file_id: object) -> object:
+    """Run get gsheet game."""
     csv_url = f"https://docs.google.com/spreadsheet/ccc?key={file_id}&output=csv"
-    with requests.get(csv_url, stream=True) as r:
+    with requests.get(csv_url, stream=True, timeout=REQUEST_TIMEOUT_SECONDS) as r:
         lines = (line.decode("utf-8") for line in r.iter_lines())
         r3 = csv.reader(lines)
         return list_to_game(list(r3))
 
 
-def get_game_html(game_id):
+def get_game_html(game_id: object) -> object:
+    """Run get game html."""
     saved_game_path = SAVED_GAMES / f"{game_id}.html"
     if saved_game_path.exists():
         print("game is saved, try using saved game")
@@ -74,22 +79,25 @@ def get_game_html(game_id):
     return game_html
 
 
-def get_game(game_id):
+def get_game(game_id: object) -> object:
+    """Run get game."""
     os.environ["JPARTY_GAME_ID"] = str(game_id)
-    if len(str(game_id)) < 7:
+    if len(str(game_id)) < GOOGLE_SHEETS_ID_LENGTH:
         game_html = get_game_html(game_id)
         return process_game_board_from_html(game_html, game_id)
     else:
         return get_Gsheet_game(str(game_id))
 
 
-def findanswer(clue):
-    return re.findall(r'correct_response">(.*?)</em', unescape(str(clue)))[0]
+def findanswer(clue: object) -> object:
+    """Run findanswer."""
+    return re.findall('correct_response">(.*?)</em', unescape(str(clue)))[0]
 
 
-def get_jarchive_game_html(game_id):
+def get_jarchive_game_html(game_id: object) -> object:
+    """Run get jarchive game html."""
     game_url = f"http://www.j-archive.com/showgame.php?game_id={game_id}"
-    r = requests.get(game_url)
+    r = requests.get(game_url, timeout=REQUEST_TIMEOUT_SECONDS)
     return r.text
 
 
@@ -110,7 +118,7 @@ def find_question_media(game_id: int, round: int, index: tuple) -> str:
     return False
 
 
-def get_actual_player_results(clue: BeautifulSoup, value: int):
+def get_actual_player_results(clue: BeautifulSoup, value: int) -> object:
     """Get the results from the actual jeopardy contestants"""
     dd_value = clue.find(class_="clue_value_daily_double")
     if dd_value is not None:
@@ -128,6 +136,7 @@ def get_actual_player_results(clue: BeautifulSoup, value: int):
 
 
 def get_actual_player_final(clue: BeautifulSoup) -> list[list[str]]:
+    """Run get actual player final."""
     answers = []
     wrong_players = clue.find_all("td", {"class": "wrong"})
     for player_answer in wrong_players:
@@ -148,25 +157,22 @@ def get_actual_player_final(clue: BeautifulSoup) -> list[list[str]]:
     return answers
 
 
-def process_game_board_from_html(html, game_id) -> GameData:
+def process_game_board_from_html(html: object, game_id: object) -> GameData:
     """Given j-archive html, produce a game data object"""
     soup = BeautifulSoup(html, "html.parser")
     title_nodes = soup.select("#game_title > h1")
     comment_nodes = soup.select("#game_comments")
     if not title_nodes or not comment_nodes:
         return None
-    datesearch = re.search(r"- \w+, (.*?)$", title_nodes[0].text)
+    datesearch = re.search("- \\w+, (.*?)$", title_nodes[0].text)
     if datesearch is None:
         return None
     date = datesearch.groups()[0]
     comments = comment_nodes[0].contents
     comments = comments[0] if len(comments) > 0 else ""
-
-    # Normal Rounds
     boards = []
     rounds = soup.find_all(class_="round")
-    # Use only Double and Triple Jeopardy for Celebrity Jeopardy
-    if len(rounds) == 3:
+    if len(rounds) == STANDARD_AND_FINAL_ROUND_COUNT:
         rounds = rounds[:2]
     for i, ro in enumerate(rounds):
         categories_objs = ro.find_all(class_="category")
@@ -182,12 +188,8 @@ def process_game_board_from_html(html, game_id) -> GameData:
             image_likely = text_obj.find("a")
             image_url = None
             text = text_obj.text
-            # get actual player results
             index_key = text_obj["id"]
-            index = (
-                int(index_key[-3]) - 1,
-                int(index_key[-1]) - 1,
-            )  # get index from id string
+            index = (int(index_key[-3]) - 1, int(index_key[-1]) - 1)
             dd = clue.find(class_="clue_value_daily_double") is not None
             if dd:
                 dds += 1
@@ -213,9 +215,7 @@ def process_game_board_from_html(html, game_id) -> GameData:
                     actual_results=actual_results,
                 )
             )
-        boards.append(Board(categories, questions, dj=(i == 1)))
-
-    # Final Jeopardy
+        boards.append(Board(categories, questions, dj=i == 1))
     final_rounds = soup.find_all(class_="final_round")
     if not final_rounds:
         return None
@@ -228,54 +228,46 @@ def process_game_board_from_html(html, game_id) -> GameData:
     if text_obj is None:
         logging.info("this game is incomplete")
         return None
-
     text = text_obj.text
     answer = findanswer(final_round_obj)
     question = Question((0, 0), text, answer, category, actual_results=actual_results)
-
     boards.append(FinalBoard(category, question))
-
     return GameData(boards, date, comments)
 
 
-def get_wayback_game_html(game_id):
-    # kudos to Abhi Kumbar: https://medium.com/analytics-vidhya/the-wayback-machine-scraper-63238f6abb66
-    # this query's the wayback cdx api for possible instances of the saved jarchive page with the specified game id & returns the latest one
-    JArchive_url = f"j-archive.com/showgame.php?game_id={str(game_id)}"  # use the url w/o the http:// or https:// to include both in query
-    url = f"http://web.archive.org/cdx/search/cdx?url={JArchive_url}&collapse=digest&limit=-2&fastLatest=true&output=json"  # for some reason, using limit=-1 does not work
-    urls = requests.get(url).text
-    parse_url = json.loads(urls)  # parses the JSON from urls.
-    if len(parse_url) == 0:  # if no results, return None
+def get_wayback_game_html(game_id: object) -> object:
+    """Run get wayback game html."""
+    JArchive_url = f"j-archive.com/showgame.php?game_id={str(game_id)}"
+    url = f"http://web.archive.org/cdx/search/cdx?url={JArchive_url}&collapse=digest&limit=-2&fastLatest=true&output=json"
+    urls = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS).text
+    parse_url = json.loads(urls)
+    if len(parse_url) == 0:
         logging.info("no games found in wayback")
-        # alternative: use fallback to get game from scraping j-archive directly
         raise Exception("no games found in wayback")
-
-    ## Extracts timestamp and original columns from urls and compiles a url list.
     url_list = []
-    for i in range(1, len(parse_url)):  # gets the wayback url
+    for i in range(1, len(parse_url)):
         orig_url = parse_url[i][2]
         tstamp = parse_url[i][1]
         waylink = tstamp + "/" + orig_url
         final_url = f"http://web.archive.org/web/{waylink}"
         url_list.append(final_url)
     latest_url = url_list[-1]
-    r = requests.get(latest_url)
+    r = requests.get(latest_url, timeout=REQUEST_TIMEOUT_SECONDS)
     return r.text
 
 
-def get_game_sum(soup):
+def get_game_sum(soup: object) -> object:
+    """Run get game sum."""
     date = re.search(
-        r"- \w+, (.*?)$", soup.select("#game_title > h1")[0].contents[0]
+        "- \\w+, (.*?)$", soup.select("#game_title > h1")[0].contents[0]
     ).groups()[0]
     comments = soup.select("#game_comments")[0].contents
+    return (date, comments)
 
-    return date, comments
 
-
-def get_random_game():
+def get_random_game() -> object:
     """Use j-archive's random game feature to get a random game id"""
-    r = requests.get("http://j-archive.com/")
+    r = requests.get("http://j-archive.com/", timeout=REQUEST_TIMEOUT_SECONDS)
     soup = BeautifulSoup(r.text, "html.parser")
-
     link = soup.find_all(class_="splash_clue_footer")[1].find("a")["href"]
     return int(link[21:])
