@@ -1,4 +1,10 @@
-"""Input module."""
+"""Keyboard input and timer primitives for gameplay flow.
+
+This module contains the low-level domain helpers that map keyboard keys to
+players, schedule clue timing callbacks, and manage the activation state of
+host-side keystroke events. The game engine builds on these utilities to drive
+buzzing, adjudication, and navigation through a match.
+"""
 
 import logging
 import threading
@@ -20,12 +26,26 @@ index_to_key = {
 
 
 class QuestionTimer:
-    """Represent questiontimer."""
+    """Run a delayed callback that can be paused and resumed.
+
+    The timer tracks elapsed time so clue countdowns can stop and continue
+    without losing the remaining duration.
+    """
 
     def __init__(
         self, interval: object, callback: object, *args: object, **kwargs: object
     ) -> None:
-        """Initialize the instance."""
+        """Initialize a timer for a delayed callback.
+
+        Args:
+            interval: Total delay, in seconds, before the callback should run.
+            callback: Callable invoked when the timer completes.
+            *args: Positional arguments forwarded to ``callback``.
+            **kwargs: Keyword arguments forwarded to ``callback``.
+
+        Returns:
+            ``None``.
+        """
         self.callback = callback
         self.args = args
         self.kwargs = kwargs
@@ -35,27 +55,50 @@ class QuestionTimer:
         self._elapsed_time = 0
 
     def run(self, interval: object) -> None:
-        """Run run."""
+        """Sleep for the remaining interval and invoke the callback if active.
+
+        Args:
+            interval: Number of seconds to wait before firing the callback.
+
+        Returns:
+            ``None``.
+        """
         thread = self._thread
         time.sleep(interval)
         if thread == self._thread:
             self.callback(*self.args, **self.kwargs)
 
     def start(self) -> None:
-        """Run start."""
+        """Start the timer from its current elapsed state.
+
+        Returns:
+            ``None``.
+        """
         self.resume()
 
     def cancel(self) -> None:
-        """Run cancel."""
+        """Cancel the timer by delegating to ``pause()``.
+
+        Returns:
+            ``None``.
+        """
         self.pause()
 
     def pause(self) -> None:
-        """Run pause."""
+        """Pause the timer and accumulate elapsed time.
+
+        Returns:
+            ``None``.
+        """
         self._thread = None
         self._elapsed_time += time.time() - self._start_time
 
     def resume(self) -> None:
-        """Run resume."""
+        """Resume the timer using the remaining duration.
+
+        Returns:
+            ``None``.
+        """
         self._thread = threading.Thread(
             target=self.run, args=(self.interval - self._elapsed_time,)
         )
@@ -65,7 +108,7 @@ class QuestionTimer:
 
 @dataclass
 class KeystrokeEvent:
-    """Represent keystrokeevent."""
+    """Describe a single keyboard-triggered game action."""
 
     key: int
     func: callable
@@ -76,10 +119,14 @@ class KeystrokeEvent:
 
 
 class KeystrokeManager:
-    """Represent keystrokemanager."""
+    """Register, activate, and dispatch keyboard-driven game events."""
 
     def __init__(self) -> None:
-        """Initialize the instance."""
+        """Initialize an empty keystroke registry.
+
+        Returns:
+            ``None``.
+        """
         self._events = {}
         self._KeystrokeManager__events = self._events
 
@@ -93,13 +140,34 @@ class KeystrokeManager:
         persistent: object = False,
         func_args: object = None,
     ) -> None:
-        """Run addevent."""
+        """Register a keyboard event under an identifier.
+
+        Args:
+            ident: Unique name used to activate or deactivate the event.
+            key: Qt key constant that should trigger the event.
+            func: Callable to execute when the event fires.
+            hint_setter: Optional callable that updates UI hint state when the
+                event is activated or deactivated.
+            active: Whether the event starts in the active state.
+            persistent: Whether the event should remain active after firing.
+            func_args: Optional single argument passed to ``func`` when invoked.
+
+        Returns:
+            ``None``.
+        """
         self._events[ident] = KeystrokeEvent(
             key, func, hint_setter, active, persistent, func_args
         )
 
     def call(self, key: object) -> None:
-        """Run call."""
+        """Dispatch all active events bound to a pressed key.
+
+        Args:
+            key: Qt key constant received from input handling.
+
+        Returns:
+            ``None``.
+        """
         events_to_call = []
         for ident, event in self._events.items():
             if event.active and event.key == key:
@@ -114,7 +182,14 @@ class KeystrokeManager:
                 event.func()
 
     def _activate(self, ident: object) -> None:
-        """Return activate."""
+        """Activate a registered event and update any associated hint UI.
+
+        Args:
+            ident: Identifier of the event to activate.
+
+        Returns:
+            ``None``.
+        """
         logging.info("Activating %s", ident)
         event = self._events[ident]
         event.active = True
@@ -122,14 +197,28 @@ class KeystrokeManager:
             event.hint_setter(True)
 
     def _deactivate(self, ident: object) -> None:
-        """Return deactivate."""
+        """Deactivate a registered event and update any associated hint UI.
+
+        Args:
+            ident: Identifier of the event to deactivate.
+
+        Returns:
+            ``None``.
+        """
         event = self._events[ident]
         event.active = False
         if event.hint_setter:
             event.hint_setter(False)
 
     def activate(self, *idents: object) -> None:
-        """Run activate."""
+        """Activate one or more registered events.
+
+        Args:
+            *idents: Event identifiers to activate.
+
+        Returns:
+            ``None``.
+        """
         if isinstance(idents, Iterable):
             for ident in idents:
                 self._activate(ident)
@@ -137,7 +226,14 @@ class KeystrokeManager:
             self._activate(idents)
 
     def deactivate(self, *idents: object) -> None:
-        """Run deactivate."""
+        """Deactivate one or more registered events.
+
+        Args:
+            *idents: Event identifiers to deactivate.
+
+        Returns:
+            ``None``.
+        """
         if isinstance(idents, Iterable):
             for ident in idents:
                 self._deactivate(ident)

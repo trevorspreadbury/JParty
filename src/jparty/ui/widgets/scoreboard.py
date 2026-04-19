@@ -1,4 +1,8 @@
-"""Scoreboard module."""
+"""Scoreboard and podium widgets for connected players.
+
+This module renders player nameplates, scores, podium backgrounds, and the
+host-only controls used to remove or reorder players during the lobby.
+"""
 
 import time
 from base64 import urlsafe_b64decode
@@ -14,12 +18,20 @@ from jparty.ui.widgets.common import resource_path
 
 
 class NameLabel(MyLabel):
-    """Represent namelabel."""
+    """Display a player's name or handwritten signature image."""
 
     name_aspect_ratio = 1.3422
 
     def __init__(self, name: object, parent: object) -> None:
-        """Initialize the instance."""
+        """Initialize a name label from plain text or embedded signature data.
+
+        Args:
+            name: Player name text or data-URL encoded signature image.
+            parent: Parent widget.
+
+        Returns:
+            ``None``.
+        """
         self.signature = None
         super().__init__("", self.startNameFontSize, parent)
         if name[:21] == "data:image/png;base64":
@@ -32,11 +44,22 @@ class NameLabel(MyLabel):
         self.setAutosizeMargins(0.05)
 
     def startNameFontSize(self) -> object:
-        """Run startnamefontsize."""
+        """Return the starting font size for player names.
+
+        Returns:
+            A font size derived from the current widget height.
+        """
         return self.height() * 1
 
     def resizeEvent(self, event: object) -> None:
-        """Run resizeevent."""
+        """Rescale signature images whenever the label changes size.
+
+        Args:
+            event: Qt resize event object.
+
+        Returns:
+            ``None``.
+        """
         super().resizeEvent(event)
         if self.signature is not None:
             self.setPixmap(
@@ -49,13 +72,22 @@ class NameLabel(MyLabel):
 
 
 class PlayerWidget(QWidget):
-    """Represent playerwidget."""
+    """Render one player's podium, score, and buzz animations."""
 
     aspect_ratio = 0.732
     margin = 0.05
 
     def __init__(self, game: object, player: object, parent: object = None) -> None:
-        """Initialize the instance."""
+        """Initialize a podium widget for a player.
+
+        Args:
+            game: Active game instance controlling interactions.
+            player: Player object displayed by the widget.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(parent)
         self.player = player
         self.game = game
@@ -84,25 +116,51 @@ class PlayerWidget(QWidget):
         self.show()
 
     def sizeHint(self) -> object:
-        """Run sizehint."""
+        """Return the preferred podium size based on current height.
+
+        Returns:
+            Preferred ``QSize`` for the podium aspect ratio.
+        """
         h = self.height()
         return QSize(int(h * PlayerWidget.aspect_ratio), h)
 
     def minimumSizeHint(self) -> object:
-        """Run minimumsizehint."""
+        """Return the minimum preferred podium size.
+
+        Returns:
+            An empty ``QSize``.
+        """
         return QSize()
 
     def startScoreFontSize(self) -> object:
-        """Run startscorefontsize."""
+        """Return the starting font size for score text.
+
+        Returns:
+            A font size derived from the current widget height.
+        """
         return self.height() * 0.2
 
     def resizeEvent(self, event: object) -> None:
-        """Run resizeevent."""
+        """Adjust podium content margins when the widget is resized.
+
+        Args:
+            event: Qt resize event object.
+
+        Returns:
+            ``None``.
+        """
         m = int(PlayerWidget.margin * self.width())
         self.setContentsMargins(m, 0, m, 0)
 
     def set_lights(self, val: object) -> None:
-        """Run set lights."""
+        """Toggle the podium's active-lit background.
+
+        Args:
+            val: Boolean-like value indicating whether lights should show.
+
+        Returns:
+            ``None``.
+        """
         self.background = self.active_background if val else self.main_background
         self.update()
 
@@ -113,12 +171,20 @@ class PlayerWidget(QWidget):
         self.set_lights(False)
 
     def buzz_hint(self) -> None:
-        """Run buzz hint."""
+        """Flash the podium briefly as a buzz feedback hint.
+
+        Returns:
+            ``None``.
+        """
         self.__buzz_hint_thread = Thread(target=self.__buzz_hint, name="buzz_hint")
         self.__buzz_hint_thread.start()
 
     def update_score(self) -> None:
-        """Run update score."""
+        """Refresh the displayed score text and color.
+
+        Returns:
+            ``None``.
+        """
         score = self.player.score
         palette = self.score_label.palette()
         if score < 0:
@@ -129,12 +195,20 @@ class PlayerWidget(QWidget):
         self.score_label.setText(f"{score:,}")
 
     def run_lights(self) -> None:
-        """Run run lights."""
+        """Start the animated buzz-winning light sequence.
+
+        Returns:
+            ``None``.
+        """
         self.__light_thread = Thread(target=self.__lights, name="lights")
         self.__light_thread.start()
 
     def stop_lights(self) -> None:
-        """Run stop lights."""
+        """Stop any running light animation and restore the base state.
+
+        Returns:
+            ``None``.
+        """
         self.__light_thread = None
         self.set_lights(False)
         self.update()
@@ -151,35 +225,72 @@ class PlayerWidget(QWidget):
         self.update()
 
     def mousePressEvent(self, event: object) -> None:
-        """Run mousepressevent."""
+        """Handle host clicks for score edits or Daily Double player choice.
+
+        Args:
+            event: Qt mouse event object.
+
+        Returns:
+            ``None``.
+        """
         if self.game.soliciting_player:
             self.game.get_dd_wager(self.player)
             return None
         self.game.adjust_score(self.player)
 
     def paintEvent(self, event: object) -> None:
-        """Run paintevent."""
+        """Paint the current podium background image.
+
+        Args:
+            event: Qt paint event object.
+
+        Returns:
+            ``None``.
+        """
         qp = QPainter()
         qp.begin(self)
         qp.drawPixmap(self.rect(), self.background)
         qp.end()
 
     def leaveEvent(self, event: object) -> None:
-        """Run leaveevent."""
+        """Clear hover lighting when leaving a Daily Double selection state.
+
+        Args:
+            event: Qt enter/leave event object.
+
+        Returns:
+            ``None``.
+        """
         if self.game.soliciting_player:
             self.set_lights(False)
 
     def enterEvent(self, event: object) -> None:
-        """Run enterevent."""
+        """Light the podium on hover during Daily Double player selection.
+
+        Args:
+            event: Qt enter/leave event object.
+
+        Returns:
+            ``None``.
+        """
         if self.game.soliciting_player:
             self.set_lights(True)
 
 
 class HostPlayerWidget(PlayerWidget):
-    """Represent hostplayerwidget."""
+    """Player podium widget with host-only removal and reorder controls."""
 
     def __init__(self, game: object, player: object, parent: object = None) -> None:
-        """Initialize the instance."""
+        """Initialize a host podium widget with extra controls.
+
+        Args:
+            game: Active game instance controlling interactions.
+            player: Player object displayed by the widget.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
         self.remove_button = None
         self.up_button = None
         self.down_button = None
@@ -202,7 +313,14 @@ class HostPlayerWidget(PlayerWidget):
         self.down_button.show()
 
     def resizeEvent(self, event: object) -> None:
-        """Run resizeevent."""
+        """Position the host control buttons when the podium is resized.
+
+        Args:
+            event: Qt resize event object.
+
+        Returns:
+            ``None``.
+        """
         super().resizeEvent(event)
         if self.remove_button is not None:
             self.remove_button.move(QPoint(0, 0))
@@ -222,10 +340,18 @@ class HostPlayerWidget(PlayerWidget):
 
 
 class ScoreBoard(QWidget):
-    """Represent scoreboard."""
+    """Lay out the podium widgets for all connected players."""
 
     def __init__(self, game: object, parent: object = None) -> None:
-        """Initialize the instance."""
+        """Initialize a scoreboard for the active game.
+
+        Args:
+            game: Active game instance whose players are displayed.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(parent)
         self.game = game
         self.player_widgets = []
@@ -235,11 +361,19 @@ class ScoreBoard(QWidget):
         self.show()
 
     def minimumHeight(self) -> object:
-        """Run minimumheight."""
+        """Return a heuristic minimum height for the scoreboard.
+
+        Returns:
+            Height value based on the scoreboard width.
+        """
         return 0.2 * self.width()
 
     def refresh_players(self) -> None:
-        """Run refresh players."""
+        """Synchronize podium widgets with the current connected players.
+
+        Returns:
+            ``None``.
+        """
         for pw in list(self.player_widgets):
             if pw.player not in self.game.players:
                 i = self.player_layout.indexOf(pw)
@@ -268,11 +402,25 @@ class ScoreBoard(QWidget):
         self.update()
 
     def create_player_widget(self, player: object) -> object:
-        """Run create player widget."""
+        """Create a podium widget for one player.
+
+        Args:
+            player: Player object to display.
+
+        Returns:
+            A ``PlayerWidget`` instance.
+        """
         return PlayerWidget(self.game, player, self)
 
     def paintEvent(self, event: object) -> None:
-        """Run paintevent."""
+        """Paint the scoreboard podium background.
+
+        Args:
+            event: Qt paint event object.
+
+        Returns:
+            ``None``.
+        """
         qp = QPainter()
         qp.begin(self)
         qp.drawPixmap(self.rect(), QPixmap(resource_path("podium.png")))
@@ -280,14 +428,25 @@ class ScoreBoard(QWidget):
 
 
 class HostScoreBoard(ScoreBoard):
-    """Represent hostscoreboard."""
+    """Scoreboard variant that uses host-specific player widgets."""
 
     def create_player_widget(self, player: object) -> object:
-        """Run create player widget."""
+        """Create a host podium widget for one player.
+
+        Args:
+            player: Player object to display.
+
+        Returns:
+            A ``HostPlayerWidget`` instance.
+        """
         return HostPlayerWidget(self.game, player, self)
 
     def hide_close_buttons(self) -> None:
-        """Run hide close buttons."""
+        """Hide player removal and reorder controls after the game starts.
+
+        Returns:
+            ``None``.
+        """
         for pw in self.player_widgets:
             pw.remove_button.setVisible(False)
             pw.remove_button.setEnabled(False)

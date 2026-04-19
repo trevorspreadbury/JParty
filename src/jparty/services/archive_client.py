@@ -1,4 +1,11 @@
-"""Archive client module."""
+"""Load and normalize Jeopardy game data from remote and cached sources.
+
+This module is the service layer responsible for fetching game content from
+J-Archive, the Wayback Machine, or Google Sheets exports and transforming those
+inputs into the domain models used throughout the application. It also exposes
+helpers for locating downloaded clue media and for extracting contestant result
+data from archived HTML.
+"""
 
 import csv
 import json
@@ -21,7 +28,16 @@ STANDARD_AND_FINAL_ROUND_COUNT = 3
 
 
 def list_to_game(s: object) -> object:
-    """Run list to game."""
+    """Convert a Google Sheets CSV matrix into a ``GameData`` instance.
+
+    Args:
+        s: Two-dimensional sequence of sheet cell values laid out in the
+            expected JParty archive format.
+
+    Returns:
+        A populated ``GameData`` object containing standard rounds and the
+        final round parsed from the sheet data.
+    """
     alpha = "BCDEFG"
     boards = []
     for n1 in [1, DOUBLE_JEOPARDY_START_ROW]:
@@ -50,7 +66,15 @@ def list_to_game(s: object) -> object:
 
 
 def get_Gsheet_game(file_id: object) -> object:
-    """Run get gsheet game."""
+    """Fetch a Google Sheets game export and parse it into ``GameData``.
+
+    Args:
+        file_id: Google Sheets document identifier used to build the CSV export
+            URL.
+
+    Returns:
+        The parsed ``GameData`` object for the referenced sheet.
+    """
     csv_url = f"https://docs.google.com/spreadsheet/ccc?key={file_id}&output=csv"
     with requests.get(csv_url, stream=True, timeout=REQUEST_TIMEOUT_SECONDS) as r:
         lines = (line.decode("utf-8") for line in r.iter_lines())
@@ -59,7 +83,15 @@ def get_Gsheet_game(file_id: object) -> object:
 
 
 def get_game_html(game_id: object) -> object:
-    """Run get game html."""
+    """Load archived game HTML from disk cache or remote archive sources.
+
+    Args:
+        game_id: Numeric J-Archive game identifier used to locate cached or
+            remote HTML.
+
+    Returns:
+        The raw HTML string for the requested game.
+    """
     saved_game_path = SAVED_GAMES / f"{game_id}.html"
     if saved_game_path.exists():
         print("game is saved, try using saved game")
@@ -80,7 +112,19 @@ def get_game_html(game_id: object) -> object:
 
 
 def get_game(game_id: object) -> object:
-    """Run get game."""
+    """Load a game from the appropriate backing source.
+
+    Short numeric identifiers are treated as J-Archive game ids, while longer
+    identifiers are treated as Google Sheets ids.
+
+    Args:
+        game_id: Game identifier to load from J-Archive-style HTML or a Google
+            Sheets export.
+
+    Returns:
+        A ``GameData`` instance when the game can be parsed successfully,
+        otherwise ``None`` for incomplete or malformed archived games.
+    """
     os.environ["JPARTY_GAME_ID"] = str(game_id)
     if len(str(game_id)) < GOOGLE_SHEETS_ID_LENGTH:
         game_html = get_game_html(game_id)
@@ -90,24 +134,44 @@ def get_game(game_id: object) -> object:
 
 
 def findanswer(clue: object) -> object:
-    """Run findanswer."""
+    """Extract the correct response text from a clue HTML fragment.
+
+    Args:
+        clue: HTML fragment or object containing the rendered clue markup from
+            J-Archive.
+
+    Returns:
+        The unescaped correct response text embedded in the clue markup.
+    """
     return re.findall('correct_response">(.*?)</em', unescape(str(clue)))[0]
 
 
 def get_jarchive_game_html(game_id: object) -> object:
-    """Run get jarchive game html."""
+    """Fetch raw game HTML directly from J-Archive.
+
+    Args:
+        game_id: Numeric J-Archive game identifier.
+
+    Returns:
+        The HTML response body returned by J-Archive for the game.
+    """
     game_url = f"http://www.j-archive.com/showgame.php?game_id={game_id}"
     r = requests.get(game_url, timeout=REQUEST_TIMEOUT_SECONDS)
     return r.text
 
 
 def find_question_media(game_id: int, round: int, index: tuple) -> str:
-    """Return path to question media or False if none exist
+    """Locate downloaded media associated with a clue.
 
     Args:
-        game_id: game id
-        round: round number, 1-jeopardy, 2-double jeopardy
-        index: (category, question) index, from top left 0-indexed
+        game_id: Numeric game id used to select the media directory.
+        round: Zero-based round number for the clue within the archived game.
+        index: ``(category, clue)`` tuple identifying the clue position from
+            the top-left corner of the board.
+
+    Returns:
+        The string path to the matching media file when one exists, otherwise
+        ``False``.
     """
     game_media_path = QUESTION_MEDIA / str(game_id)
     if game_media_path.exists():
@@ -119,7 +183,17 @@ def find_question_media(game_id: int, round: int, index: tuple) -> str:
 
 
 def get_actual_player_results(clue: BeautifulSoup, value: int) -> object:
-    """Get the results from the actual jeopardy contestants"""
+    """Extract contestant scoring outcomes for a standard clue.
+
+    Args:
+        clue: Parsed clue node from J-Archive containing player result rows.
+        value: Dollar value of the clue before any Daily Double override is
+            applied.
+
+    Returns:
+        A list of ``[player_name, score_delta]`` pairs describing who answered
+        correctly or incorrectly.
+    """
     dd_value = clue.find(class_="clue_value_daily_double")
     if dd_value is not None:
         value = int(dd_value.text[5:].replace(",", ""))
@@ -136,7 +210,16 @@ def get_actual_player_results(clue: BeautifulSoup, value: int) -> object:
 
 
 def get_actual_player_final(clue: BeautifulSoup) -> list[list[str]]:
-    """Run get actual player final."""
+    """Extract contestant scoring outcomes for Final Jeopardy.
+
+    Args:
+        clue: Parsed Final Jeopardy clue node containing player wager and
+            result rows.
+
+    Returns:
+        A list of ``[player_name, score_delta]`` pairs for Final Jeopardy
+        outcomes.
+    """
     answers = []
     wrong_players = clue.find_all("td", {"class": "wrong"})
     for player_answer in wrong_players:
@@ -158,7 +241,17 @@ def get_actual_player_final(clue: BeautifulSoup) -> list[list[str]]:
 
 
 def process_game_board_from_html(html: object, game_id: object) -> GameData:
-    """Given j-archive html, produce a game data object"""
+    """Parse archived game HTML into domain models.
+
+    Args:
+        html: Raw HTML document for a J-Archive game page.
+        game_id: Identifier for the game being parsed, used for logging and
+            associated media lookups.
+
+    Returns:
+        A ``GameData`` object for complete games, or ``None`` when required
+        sections are missing or incomplete.
+    """
     soup = BeautifulSoup(html, "html.parser")
     title_nodes = soup.select("#game_title > h1")
     comment_nodes = soup.select("#game_comments")
@@ -236,7 +329,17 @@ def process_game_board_from_html(html: object, game_id: object) -> GameData:
 
 
 def get_wayback_game_html(game_id: object) -> object:
-    """Run get wayback game html."""
+    """Fetch the most recent Wayback Machine snapshot for a game page.
+
+    Args:
+        game_id: Numeric J-Archive game identifier.
+
+    Returns:
+        The archived HTML string from the latest available Wayback snapshot.
+
+    Raises:
+        Exception: If no snapshots are available for the requested game.
+    """
     JArchive_url = f"j-archive.com/showgame.php?game_id={str(game_id)}"
     url = f"http://web.archive.org/cdx/search/cdx?url={JArchive_url}&collapse=digest&limit=-2&fastLatest=true&output=json"
     urls = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS).text
@@ -257,7 +360,15 @@ def get_wayback_game_html(game_id: object) -> object:
 
 
 def get_game_sum(soup: object) -> object:
-    """Run get game sum."""
+    """Extract summary metadata from a parsed game page.
+
+    Args:
+        soup: Parsed BeautifulSoup document for a game page.
+
+    Returns:
+        A ``(date, comments)`` tuple containing the broadcast date and game
+        comments section content.
+    """
     date = re.search(
         "- \\w+, (.*?)$", soup.select("#game_title > h1")[0].contents[0]
     ).groups()[0]
@@ -266,7 +377,11 @@ def get_game_sum(soup: object) -> object:
 
 
 def get_random_game() -> object:
-    """Use j-archive's random game feature to get a random game id"""
+    """Return a random J-Archive game id discovered from the homepage.
+
+    Returns:
+        An integer game id scraped from J-Archive's random game link.
+    """
     r = requests.get("http://j-archive.com/", timeout=REQUEST_TIMEOUT_SECONDS)
     soup = BeautifulSoup(r.text, "html.parser")
     link = soup.find_all(class_="splash_clue_footer")[1].find("a")["href"]

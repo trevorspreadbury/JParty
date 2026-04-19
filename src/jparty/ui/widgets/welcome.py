@@ -1,4 +1,9 @@
-"""Welcome module."""
+"""Lobby and startup widgets for game selection and buzzer joining.
+
+This module contains the welcome-screen widgets used to choose or resume a
+game, plus the QR-code display shown on the audience screen so players can join
+the buzzer web app.
+"""
 
 import logging
 import time
@@ -31,10 +36,19 @@ from jparty.ui.widgets.common import (
 
 
 class Image(qrcode.image.base.BaseImage):
-    """QR code image widget"""
+    """Adapter that renders QR codes into Qt image objects."""
 
     def __init__(self, border: object, width: object, box_size: object) -> None:
-        """Initialize the instance."""
+        """Initialize the QR image buffer.
+
+        Args:
+            border: QR-code border width in modules.
+            width: QR-code width in modules.
+            box_size: Pixel size of each QR module.
+
+        Returns:
+            ``None``.
+        """
         self.border = border
         self.width = width
         self.box_size = box_size
@@ -43,11 +57,23 @@ class Image(qrcode.image.base.BaseImage):
         self._image.fill(WINDOWPAL.color(QPalette.ColorRole.Window))
 
     def pixmap(self) -> object:
-        """Run pixmap."""
+        """Return the rendered QR code as a ``QPixmap``.
+
+        Returns:
+            ``QPixmap`` representation of the QR code image.
+        """
         return QPixmap.fromImage(self._image)
 
     def drawrect(self, row: object, col: object) -> None:
-        """Run drawrect."""
+        """Fill one QR module rectangle.
+
+        Args:
+            row: Row index of the QR module to fill.
+            col: Column index of the QR module to fill.
+
+        Returns:
+            ``None``.
+        """
         painter = QPainter(self._image)
         painter.fillRect(
             (col + self.border) * self.box_size,
@@ -58,15 +84,30 @@ class Image(qrcode.image.base.BaseImage):
         )
 
     def save(self, stream: object, kind: object = None) -> None:
-        """Run save."""
+        """Satisfy the qrcode image interface without saving to disk.
+
+        Args:
+            stream: Ignored output stream parameter required by the interface.
+            kind: Ignored output kind parameter required by the interface.
+
+        Returns:
+            ``None``.
+        """
         pass
 
 
 class StartWidget(QWidget):
-    """Represent startwidget."""
+    """Base widget for startup screens with the shared JParty logo area."""
 
     def __init__(self, parent: object = None) -> None:
-        """Initialize the instance."""
+        """Initialize shared startup-screen visuals.
+
+        Args:
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(parent)
         self.icon = QPixmap(resource_path("icon.png"))
         self.icon_label = DynamicLabel("", 0, self)
@@ -78,14 +119,28 @@ class StartWidget(QWidget):
         self.icon_layout.addStretch()
 
     def paintEvent(self, event: object) -> None:
-        """Run paintevent."""
+        """Paint the startup widget background.
+
+        Args:
+            event: Qt paint event object.
+
+        Returns:
+            ``None``.
+        """
         qp = QPainter()
         qp.begin(self)
         qp.setBrush(QBrush(WINDOWPAL.color(QPalette.ColorRole.Window)))
         qp.drawRect(self.rect())
 
     def resizeEvent(self, event: object) -> None:
-        """Run resizeevent."""
+        """Scale the startup icon to match the current layout.
+
+        Args:
+            event: Qt resize event object.
+
+        Returns:
+            ``None``.
+        """
         icon_size = self.icon_label.height()
         self.icon_label.setPixmap(
             self.icon.scaled(
@@ -98,13 +153,21 @@ class StartWidget(QWidget):
 
 
 class Welcome(StartWidget):
-    """Represent welcome."""
+    """Host-side lobby screen for choosing, previewing, and resuming games."""
 
     gameid_trigger = pyqtSignal(str)
     summary_trigger = pyqtSignal(str)
 
     def __init__(self, game: object, parent: object = None) -> None:
-        """Initialize the instance."""
+        """Initialize the welcome screen and its lobby controls.
+
+        Args:
+            game: Active game instance being configured.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(parent)
         self.game = game
         self.resume_path = None
@@ -188,7 +251,11 @@ class Welcome(StartWidget):
         self.show()
 
     def show_help(self) -> None:
-        """Run show help."""
+        """Show the built-in help dialog.
+
+        Returns:
+            ``None``.
+        """
         logging.info("Showing help")
         msgbox = QMessageBox(
             QMessageBox.Icon.NoIcon,
@@ -200,7 +267,14 @@ class Welcome(StartWidget):
         msgbox.exec()
 
     def resizeEvent(self, event: object) -> None:
-        """Run resizeevent."""
+        """Resize the game-id textbox to match the current layout.
+
+        Args:
+            event: Qt resize event object.
+
+        Returns:
+            ``None``.
+        """
         super().resizeEvent(event)
         textbox_height = int(self.gameid_label.height() * 0.8)
         self.textbox.setMinimumSize(QSize(0, textbox_height))
@@ -230,7 +304,14 @@ class Welcome(StartWidget):
             self.summary_trigger.emit("Cannot get game")
 
     def random(self, checked: object) -> None:
-        """Run random."""
+        """Begin asynchronously loading a random game.
+
+        Args:
+            checked: Button checked state supplied by Qt and otherwise ignored.
+
+        Returns:
+            ``None``.
+        """
         self.summary_trigger.emit("Loading...")
         t = Thread(target=self.__random)
         t.start()
@@ -254,12 +335,26 @@ class Welcome(StartWidget):
         self.check_start()
 
     def set_summary(self, text: object) -> None:
-        """Run set summary."""
+        """Update the summary text shown on the welcome screen.
+
+        Args:
+            text: Summary text to display.
+
+        Returns:
+            ``None``.
+        """
         self._base_summary_text = text
         self.summary_label.setText(text)
 
     def set_gameid(self, text: object) -> None:
-        """Run set gameid."""
+        """Update the game-id input field.
+
+        Args:
+            text: New game-id text.
+
+        Returns:
+            ``None``.
+        """
         self.textbox.setText(text)
 
     def start_debounce_timer(self, text: object) -> None:
@@ -275,14 +370,29 @@ class Welcome(StartWidget):
         self.show_summary(self.textbox.text())
 
     def show_summary(self, text: object = None) -> None:
-        """Run show summary."""
+        """Begin asynchronously loading the current game's summary information.
+
+        Args:
+            text: Optional text value from the signal connection; ignored
+                because the textbox state is read directly.
+
+        Returns:
+            ``None``.
+        """
         self.summary_trigger.emit("Loading...")
         t = Thread(target=self.__show_summary)
         t.start()
         self.check_start()
 
     def load_saved_game(self, checked: object = False) -> None:
-        """Run load saved game."""
+        """Prompt for and prepare a saved game session to resume.
+
+        Args:
+            checked: Button checked state supplied by Qt and otherwise ignored.
+
+        Returns:
+            ``None``.
+        """
         selected_dir = QFileDialog.getExistingDirectory(
             self, "Select Saved Game Folder", ""
         )
@@ -312,7 +422,11 @@ class Welcome(StartWidget):
         self.check_start()
 
     def check_start(self) -> None:
-        """Run check start."""
+        """Enable or disable the start button based on current readiness.
+
+        Returns:
+            ``None``.
+        """
         if self.game.startable():
             self.start_button.setEnabled(True)
         else:
@@ -327,7 +441,11 @@ class Welcome(StartWidget):
                 )
 
     def restart(self) -> None:
-        """Run restart."""
+        """Reset the welcome screen to its initial fresh-game state.
+
+        Returns:
+            ``None``.
+        """
         self.resume_path = None
         self._base_summary_text = ""
         self.game.clear_resume_state()
@@ -336,10 +454,18 @@ class Welcome(StartWidget):
 
 
 class QRWidget(StartWidget):
-    """Represent qrwidget."""
+    """Audience-side startup screen that shows the buzzer join QR code."""
 
     def __init__(self, host: object, parent: object = None) -> None:
-        """Initialize the instance."""
+        """Initialize the QR join screen.
+
+        Args:
+            host: Hostname or address players should visit to join.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(parent)
         self.font = QFont()
         self.font.setPointSize(30)
@@ -363,11 +489,22 @@ class QRWidget(StartWidget):
         self.show()
 
     def start_fontsize(self) -> object:
-        """Run start fontsize."""
+        """Return the starting font size for QR-screen labels.
+
+        Returns:
+            A font size derived from the current widget width.
+        """
         return 0.1 * self.width()
 
     def resizeEvent(self, event: object) -> None:
-        """Run resizeevent."""
+        """Regenerate the QR code pixmap to fit the current widget size.
+
+        Args:
+            event: Qt resize event object.
+
+        Returns:
+            ``None``.
+        """
         super().resizeEvent(event)
         self.qrlabel.setPixmap(
             qrcode.make(
@@ -376,5 +513,9 @@ class QRWidget(StartWidget):
         )
 
     def restart(self) -> None:
-        """Run restart."""
+        """Reset the QR screen state when returning to the lobby.
+
+        Returns:
+            ``None``.
+        """
         pass

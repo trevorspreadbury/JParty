@@ -1,4 +1,9 @@
-"""Logging module."""
+"""Configure logging and present crash reporting prompts.
+
+This module initializes the application's log file, exposes helpers for opening
+prefilled error-report emails, and installs a Qt-aware uncaught exception hook
+so unexpected crashes can be logged and surfaced to the user gracefully.
+"""
 
 import logging
 import platform
@@ -23,14 +28,31 @@ log.info("Logging initialized at %s", LOG_FILE)
 
 
 def mailto(recipients: object, subject: object, body: object) -> None:
-    """recipients: string with comma-separated emails (no spaces!)"""
+    """Open the user's mail client with a prefilled message.
+
+    Args:
+        recipients: Comma-separated recipient email addresses without spaces.
+        subject: Email subject line to URL-encode into the mailto link.
+        body: Email body text to URL-encode into the mailto link.
+
+    Returns:
+        ``None``.
+    """
     webbrowser.open(f"mailto:{recipients}?subject={quote(subject)}&body={quote(body)}")
 
 
 def show_exception_box(log_msg: object) -> None:
-    """Check whether a QApplication instance is available and show the exception box.
+    """Show a crash dialog when a Qt application instance is available.
 
-    If unavailable (non-console application), log an additional notice.
+    Args:
+        log_msg: Formatted exception summary string for the crash that was
+            logged.
+
+    Returns:
+        ``None``.
+
+    If no ``QApplication`` instance is available, the function logs that the
+    dialog could not be shown instead of attempting to display it.
     """
     if QApplication.instance() is not None:
         button = QMessageBox.critical(
@@ -50,12 +72,24 @@ def show_exception_box(log_msg: object) -> None:
 
 
 class UncaughtHook(QObject):
-    """Represent uncaughthook."""
+    """Install a Qt-compatible handler for otherwise uncaught exceptions.
+
+    The hook forwards crash information to the application logger and emits a
+    Qt signal so the UI thread can present a crash dialog safely.
+    """
 
     _exception_caught = pyqtSignal(object)
 
     def __init__(self, *args: object, **kwargs: object) -> None:
-        """Initialize the instance."""
+        """Initialize the exception hook object and register it globally.
+
+        Args:
+            *args: Positional arguments forwarded to ``QObject``.
+            **kwargs: Keyword arguments forwarded to ``QObject``.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(*args, **kwargs)
         sys.excepthook = self.exception_hook
         self._exception_caught.connect(show_exception_box)
@@ -64,6 +98,14 @@ class UncaughtHook(QObject):
         self, exc_type: object, exc_value: object, exc_traceback: object
     ) -> None:
         """Handle uncaught exceptions.
+
+        Args:
+            exc_type: Exception class for the uncaught exception.
+            exc_value: Exception instance that was raised.
+            exc_traceback: Traceback object associated with the exception.
+
+        Returns:
+            ``None``.
 
         It is triggered each time an uncaught exception occurs.
         """

@@ -1,4 +1,9 @@
-"""Common module."""
+"""Shared UI utilities, mixins, and media helpers.
+
+This module provides reusable presentation-layer helpers such as the audio song
+player, a compound proxy for mirrored host/audience calls, drop-shadow styling,
+and auto-sizing label and button mixins used throughout the widget layer.
+"""
 
 import re
 from threading import Thread
@@ -16,15 +21,26 @@ MIN_AUTOFIT_FONT_SIZE = 2
 
 
 def resource_path(relative_path: object) -> object:
-    """Run resource path."""
+    """Resolve a packaged data asset path to a string path.
+
+    Args:
+        relative_path: Asset path relative to the packaged data directory.
+
+    Returns:
+        A string filesystem path for the requested asset.
+    """
     return str(data_asset_path(relative_path))
 
 
 class SongPlayer:
-    """Represent songplayer."""
+    """Play looping intro or Final Jeopardy music clips."""
 
     def __init__(self) -> None:
-        """Initialize the instance."""
+        """Load the audio clips used by the application.
+
+        Returns:
+            ``None``.
+        """
         super().__init__()
         self.__wave_obj = sa.WaveObject.from_wave_file(resource_path("intro.wav"))
         self.__final = sa.WaveObject.from_wave_file(resource_path("final.wav"))
@@ -33,7 +49,14 @@ class SongPlayer:
         self.__repeat_thread = None
 
     def play(self, repeat: object = False) -> None:
-        """Run play."""
+        """Play the intro music clip.
+
+        Args:
+            repeat: Whether playback should loop until stopped.
+
+        Returns:
+            ``None``.
+        """
         self.__repeating = repeat
         self.__play_obj = self.__wave_obj.play()
         if repeat:
@@ -41,7 +64,14 @@ class SongPlayer:
             self.__repeat_thread.start()
 
     def final(self, repeat: object = False) -> None:
-        """Run final."""
+        """Play the Final Jeopardy music clip.
+
+        Args:
+            repeat: Whether playback should loop until stopped.
+
+        Returns:
+            ``None``.
+        """
         self.__repeating = repeat
         self.__play_obj = self.__final.play()
         if repeat:
@@ -49,12 +79,20 @@ class SongPlayer:
             self.__repeat_thread.start()
 
     def stop(self) -> None:
-        """Run stop."""
+        """Stop playback and prevent further looping.
+
+        Returns:
+            ``None``.
+        """
         self.__repeating = False
         self.__play_obj.stop()
 
     def __repeat(self) -> None:
-        """Return repeat."""
+        """Loop playback while repeating is enabled.
+
+        Returns:
+            ``None``.
+        """
         while True:
             self.__play_obj.wait_done()
             if not self.__repeating:
@@ -63,14 +101,29 @@ class SongPlayer:
 
 
 class CompoundObject:
-    """Represent compoundobject."""
+    """Proxy attribute access and calls across multiple objects at once."""
 
     def __init__(self, *objs: object) -> None:
-        """Initialize the instance."""
+        """Initialize the proxy with one or more target objects.
+
+        Args:
+            *objs: Objects that should receive forwarded operations.
+
+        Returns:
+            ``None``.
+        """
         self.__objs = list(objs)
 
     def __setattr__(self, name: object, value: object) -> None:
-        """Return setattr."""
+        """Set an attribute on all proxied objects.
+
+        Args:
+            name: Attribute name to set.
+            value: Value to assign.
+
+        Returns:
+            ``None``.
+        """
         if name[0] == "_":
             self.__dict__[name] = value
         else:
@@ -78,21 +131,47 @@ class CompoundObject:
                 setattr(obj, name, value)
 
     def __getattr__(self, name: object) -> object:
-        """Return getattr."""
+        """Return a proxy over the named attribute from each target object.
+
+        Args:
+            name: Attribute name to retrieve.
+
+        Returns:
+            A new ``CompoundObject`` wrapping the retrieved attributes.
+        """
         ret = CompoundObject(*[getattr(obj, name) for obj in self.__objs])
         return ret
 
     def __iadd__(self, display: object) -> object:
-        """Return iadd."""
+        """Append another proxied object.
+
+        Args:
+            display: Object to add to the proxy set.
+
+        Returns:
+            The updated ``CompoundObject`` instance.
+        """
         self.__objs.append(display)
         return self
 
     def __call__(self, *args: object, **kwargs: object) -> object:
-        """Return call."""
+        """Call each proxied callable and wrap the results.
+
+        Args:
+            *args: Positional arguments forwarded to each proxied callable.
+            **kwargs: Keyword arguments forwarded to each proxied callable.
+
+        Returns:
+            A new ``CompoundObject`` wrapping the call results.
+        """
         return CompoundObject(*[obj(*args, **kwargs) for obj in self.__objs])
 
     def __repr__(self) -> str:
-        """Return repr."""
+        """Return a debug representation of the proxied objects.
+
+        Returns:
+            String representation of the compound proxy.
+        """
         return "CompoundObject(" + ", ".join([repr(o) for o in self.__objs]) + ")"
 
 
@@ -100,7 +179,16 @@ class CompoundObject:
 
 
 def add_shadow(widget: object, radius: object = 0.1, offset: object = 3) -> None:
-    """Run add shadow."""
+    """Apply a black drop shadow effect to a widget.
+
+    Args:
+        widget: Widget that should receive the shadow effect.
+        radius: Unused retained argument for historical API compatibility.
+        offset: Shadow offset in pixels.
+
+    Returns:
+        ``None``.
+    """
     shadow = QGraphicsDropShadowEffect(widget)
     shadow.setBlurRadius(widget.height())
     shadow.setColor(QColor("black"))
@@ -109,32 +197,66 @@ def add_shadow(widget: object, radius: object = 0.1, offset: object = 3) -> None
 
 
 class AutosizeWidget:
-    """This class is a mixin which must be inherited with a QWidget with a `text()` method."""
+    """Mixin that auto-sizes font content to fit the widget bounds."""
 
     def __init__(self, *args: object, **kwargs: object) -> None:
-        """Initialize the instance."""
+        """Initialize auto-sizing margins and size policy.
+
+        Args:
+            *args: Unused positional arguments accepted for mixin compatibility.
+            **kwargs: Unused keyword arguments accepted for mixin compatibility.
+
+        Returns:
+            ``None``.
+        """
         self.autosize_margins = (0.0, 0.0, 0.0, 0.0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.autoresize()
 
     def sizeHint(self) -> object:
-        """Run sizehint."""
+        """Return a flexible preferred size.
+
+        Returns:
+            An empty ``QSize``.
+        """
         return QSize()
 
     def minimumSizeHint(self) -> object:
-        """Run minimumsizehint."""
+        """Return a minimal preferred size.
+
+        Returns:
+            An empty ``QSize``.
+        """
         return QSize()
 
     def heightForWidth(self, w: object) -> int:
-        """Run heightforwidth."""
+        """Report that the widget does not provide a custom height-for-width.
+
+        Args:
+            w: Width being queried.
+
+        Returns:
+            ``-1`` to defer to default Qt behavior.
+        """
         return -1
 
     def resizeEvent(self, event: object) -> None:
-        """Run resizeevent."""
+        """Trigger font auto-resizing after widget size changes.
+
+        Args:
+            event: Qt resize event object.
+
+        Returns:
+            ``None``.
+        """
         self.autoresize()
 
     def autoresize(self) -> None:
-        """Run autoresize."""
+        """Recompute and apply a font size that fits the current bounds.
+
+        Returns:
+            ``None``.
+        """
         if self.size().height() == 0 or self.text() == "":
             return None
         fontsize = self.autofitsize()
@@ -143,7 +265,11 @@ class AutosizeWidget:
         self.setFont(font)
 
     def plaintext(self) -> object:
-        """Run plaintext."""
+        """Return the widget text stripped of simple HTML formatting.
+
+        Returns:
+            Plain-text version of the widget's current text.
+        """
         text = self.text()
         text = re.sub("<br>", "\n", text)
         text = re.sub("<[^>]*>", "", text)
@@ -167,7 +293,14 @@ class AutosizeWidget:
             raise Exception("Need 1, 2, or 4 arguments")
 
     def autofitsize(self, stepsize: object = 1) -> object:
-        """Run autofitsize."""
+        """Compute the largest font size that fits inside the margins.
+
+        Args:
+            stepsize: Pixel decrement used while searching for a fitting size.
+
+        Returns:
+            The chosen font pixel size.
+        """
         font = self.font()
         (ml, mt, mr, md) = self.autosize_margins
         rect = self.rect().adjusted(
@@ -197,17 +330,30 @@ class AutosizeWidget:
 
 
 class DynamicLabel(QLabel, AutosizeWidget):
-    """Represent dynamiclabel."""
+    """Label widget that auto-sizes text to fit available space."""
 
     def __init__(
         self, text: object, initialSize: object, parent: object = None
     ) -> None:
-        """Initialize the instance."""
+        """Initialize an auto-sizing label.
+
+        Args:
+            text: Initial label text.
+            initialSize: Starting font-size callback or value.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
         self.__initialSize = initialSize
         super().__init__(text, parent)
 
     def flags(self) -> object:
-        """Run flags."""
+        """Return Qt text-layout flags used for font fitting.
+
+        Returns:
+            Combination of alignment and word-wrap flags.
+        """
         flags = 0
         if self.wordWrap():
             flags |= Qt.TextFlag.TextWordWrap
@@ -215,16 +361,34 @@ class DynamicLabel(QLabel, AutosizeWidget):
         return flags
 
     def resizeEvent(self, event: object) -> None:
-        """Run resizeevent."""
+        """Trigger auto-resizing when the label changes size.
+
+        Args:
+            event: Qt resize event object.
+
+        Returns:
+            ``None``.
+        """
         AutosizeWidget.resizeEvent(self, event)
 
     def setText(self, text: object) -> None:
-        """Run settext."""
+        """Update text and immediately recompute the fitted font size.
+
+        Args:
+            text: New label text.
+
+        Returns:
+            ``None``.
+        """
         super().setText(text)
         self.autoresize()
 
     def initialSize(self) -> object:
-        """Run initialsize."""
+        """Return the configured starting font size value.
+
+        Returns:
+            Numeric starting font size from the configured value or callback.
+        """
         if callable(self.__initialSize):
             return self.__initialSize()
         else:
@@ -232,25 +396,55 @@ class DynamicLabel(QLabel, AutosizeWidget):
 
 
 class DynamicButton(QPushButton, AutosizeWidget):
-    """Represent dynamicbutton."""
+    """Push button widget with auto-sized label text."""
 
     def __init__(self, text: object, parent: object = None) -> None:
-        """Initialize the instance."""
+        """Initialize an auto-sizing button.
+
+        Args:
+            text: Initial button text.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(text, parent)
 
     def resizeEvent(self, event: object) -> None:
-        """Run resizeevent."""
+        """Trigger auto-resizing when the button changes size.
+
+        Args:
+            event: Qt resize event object.
+
+        Returns:
+            ``None``.
+        """
         AutosizeWidget.resizeEvent(self, event)
 
     def setText(self, text: object) -> None:
-        """Run settext."""
+        """Update button text and refit the font size.
+
+        Args:
+            text: New button text.
+
+        Returns:
+            ``None``.
+        """
         super().setText(text)
         self.autoresize()
 
     def initialSize(self) -> object:
-        """Run initialsize."""
+        """Return the starting font size for the button text.
+
+        Returns:
+            A font size derived from the current button height.
+        """
         return self.height() * 0.5
 
     def flags(self) -> int:
-        """Run flags."""
+        """Return the text-layout flags used for font fitting.
+
+        Returns:
+            ``0`` because buttons do not need extra text flags here.
+        """
         return 0

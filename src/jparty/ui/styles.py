@@ -1,4 +1,10 @@
-"""Styles module."""
+"""Shared UI styling helpers, palettes, and custom labels.
+
+This module defines the application's Qt style tweaks, reusable color palettes,
+and a specialized label widget that can render either auto-sized text or clue
+images. These helpers are imported broadly across the UI layer so widgets share
+consistent visual behavior.
+"""
 
 from pathlib import Path
 
@@ -13,7 +19,7 @@ REQUEST_TIMEOUT_SECONDS = 10
 
 
 class JPartyStyle(QCommonStyle):
-    """Represent jpartystyle."""
+    """Provide application-wide Qt style overrides for spacing and focus."""
 
     PM_dict = {
         QStyle.PixelMetric.PM_LayoutBottomMargin: 0,
@@ -26,11 +32,33 @@ class JPartyStyle(QCommonStyle):
     SH_dict = {QStyle.StyleHint.SH_Button_FocusPolicy: 0}
 
     def pixelMetric(self, key: object, *args: object, **kwargs: object) -> object:
-        """Run pixelmetric."""
+        """Return overridden layout pixel metrics when JParty customizes them.
+
+        Args:
+            key: Qt pixel metric being requested.
+            *args: Additional arguments forwarded to ``QCommonStyle``.
+            **kwargs: Additional keyword arguments forwarded to
+                ``QCommonStyle``.
+
+        Returns:
+            The overridden metric value when present, otherwise the base style's
+            value.
+        """
         return JPartyStyle.PM_dict.get(key, super().pixelMetric(key, *args, **kwargs))
 
     def styleHint(self, key: object, *args: object, **kwargs: object) -> object:
-        """Run stylehint."""
+        """Return overridden Qt style hints when JParty customizes them.
+
+        Args:
+            key: Qt style hint being requested.
+            *args: Additional arguments forwarded to ``QCommonStyle``.
+            **kwargs: Additional keyword arguments forwarded to
+                ``QCommonStyle``.
+
+        Returns:
+            The overridden hint value when present, otherwise the base style's
+            value.
+        """
         return JPartyStyle.SH_dict.get(key, super().styleHint(key, *args, **kwargs))
 
 
@@ -49,7 +77,7 @@ def fetch_image_from_url(url: str) -> QPixmap:
 
 
 class MyLabel(DynamicLabel):
-    """Represent mylabel."""
+    """Render auto-sized clue text or a scaled image with JParty styling."""
 
     def __init__(
         self,
@@ -58,7 +86,17 @@ class MyLabel(DynamicLabel):
         parent: object = None,
         image: object = False,
     ) -> None:
-        """Initialize the instance."""
+        """Initialize a styled label for text or image content.
+
+        Args:
+            text: Display text or image path/URL to show in the label.
+            initialSize: Starting font-size callback or value for auto-sizing.
+            parent: Optional parent widget.
+            image: Whether ``text`` should be interpreted as image content.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(text, initialSize, parent)
         if not image:
             self.font().setBold(True)
@@ -83,7 +121,14 @@ class MyLabel(DynamicLabel):
         self.show()
 
     def resizeEvent(self, event: object) -> None:
-        """Override the resize event to rescale the image."""
+        """Rescale the loaded image whenever the label is resized.
+
+        Args:
+            event: Qt resize event object.
+
+        Returns:
+            ``None``.
+        """
         super().resizeEvent(event)
         if hasattr(self, "question_image_pixmap") and self.question_image_pixmap:
             scaled_pixmap = self.question_image_pixmap.scaled(

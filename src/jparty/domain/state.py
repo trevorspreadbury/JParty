@@ -1,4 +1,10 @@
-"""State module."""
+"""Persist and reconstruct game-state snapshots and analytics data.
+
+This module contains the domain-level helpers used to serialize high-level game
+state, append per-question history, and rebuild score or buzz-phase summaries
+from saved sessions. The game engine delegates persistence work here to keep
+state-shaping logic separate from live gameplay orchestration.
+"""
 
 import json
 import logging
@@ -9,7 +15,15 @@ from pathlib import Path
 
 
 def get_current_game_state(game: object) -> object:
-    """Run get current game state."""
+    """Build a serializable summary of the current game session.
+
+    Args:
+        game: Active ``Game`` instance providing the session state to capture.
+
+    Returns:
+        A dictionary containing the game id, player list, and session
+        timestamps.
+    """
     game_id = game.current_game_id()
     current_time = time.time()
     return {
@@ -23,7 +37,14 @@ def get_current_game_state(game: object) -> object:
 
 
 def save_general_state(game: object) -> None:
-    """Run save general state."""
+    """Write the current high-level game session metadata to disk.
+
+    Args:
+        game: Active ``Game`` instance whose metadata should be persisted.
+
+    Returns:
+        ``None``.
+    """
     if not game._game_state_dir:
         game._initialize_game_state_dir()
     if not game._game_state_dir:
@@ -38,7 +59,16 @@ def save_general_state(game: object) -> None:
 
 
 def classify_buzz_phases(game: object) -> object:
-    """Run classify buzz phases."""
+    """Group recorded buzz attempts into main and rebound response windows.
+
+    Args:
+        game: Active ``Game`` instance containing recorded buzz timing data for
+            the current clue.
+
+    Returns:
+        A list of dictionaries describing each buzz phase and the attempts that
+        occurred within it.
+    """
     if not game._all_buzz_attempts:
         return []
     if not game._open_responses_times:
@@ -76,7 +106,14 @@ def classify_buzz_phases(game: object) -> object:
 
 
 def load_question_history(game: object) -> object:
-    """Run load question history."""
+    """Load the saved per-question history entries for a game session.
+
+    Args:
+        game: Active or resumed ``Game`` instance with a state directory.
+
+    Returns:
+        A list of decoded JSON history entries ordered as stored on disk.
+    """
     if not game._game_state_dir:
         game._initialize_game_state_dir()
     if not game._game_state_dir:
@@ -98,7 +135,14 @@ def load_question_history(game: object) -> object:
 
 
 def reconstruct_score_history(game: object) -> object:
-    """Run reconstruct score history."""
+    """Rebuild cumulative score progressions from question history records.
+
+    Args:
+        game: Active or resumed ``Game`` instance whose history should be read.
+
+    Returns:
+        A mapping from player index to a list of scores by question number.
+    """
     entries = load_question_history(game)
     if not entries:
         return {}
@@ -140,7 +184,15 @@ def reconstruct_score_history(game: object) -> object:
 
 
 def load_general_state(game: object) -> object:
-    """Run load general state."""
+    """Load the saved high-level metadata for a game session.
+
+    Args:
+        game: Active or resumed ``Game`` instance with a state directory.
+
+    Returns:
+        A dictionary of saved general state data, or an empty dictionary when no
+        metadata file is available.
+    """
     if not game._game_state_dir:
         game._initialize_game_state_dir()
     if not game._game_state_dir:

@@ -1,4 +1,8 @@
-"""Final module."""
+"""Widgets used during Final Jeopardy and score-graph presentation.
+
+This module provides the final-round answer display widgets and the end-of-game
+graph viewer shown after results have been adjudicated.
+"""
 
 import os
 
@@ -11,10 +15,17 @@ from jparty.ui.widgets.scoreboard import NameLabel
 
 
 class GraphDisplay(QWidget):
-    """Represent graphdisplay."""
+    """Display the saved end-of-game score graph image."""
 
     def __init__(self, parent: object) -> None:
-        """Initialize the instance."""
+        """Initialize the graph display widget.
+
+        Args:
+            parent: Parent display widget.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(parent)
         self.main_layout = QVBoxLayout()
         self.question_label = MyLabel(
@@ -30,10 +41,18 @@ class GraphDisplay(QWidget):
 
 
 class FinalDisplay(QWidget):
-    """Represent finaldisplay."""
+    """Container widget for Final Jeopardy answer adjudication."""
 
     def __init__(self, game: object, parent: object) -> None:
-        """Initialize the instance."""
+        """Initialize the Final Jeopardy display container.
+
+        Args:
+            game: Active game instance driving Final Jeopardy flow.
+            parent: Parent display widget.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(parent)
         self.setGeometry(parent.rect())
         self.answer_widget = FinalAnswerWidget(game, self)
@@ -46,10 +65,18 @@ class FinalDisplay(QWidget):
 
 
 class FinalAnswerWidget(QWidget):
-    """Represent finalanswerwidget."""
+    """Show Final Jeopardy guesses, wagers, and winner announcements."""
 
     def __init__(self, game: object, parent: object) -> None:
-        """Initialize the instance."""
+        """Initialize the final answer widget.
+
+        Args:
+            game: Active game instance driving Final Jeopardy flow.
+            parent: Parent widget.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(parent)
         self.game = game
         self.winner_label = None
@@ -67,17 +94,32 @@ class FinalAnswerWidget(QWidget):
         self.show()
 
     def startFontSize(self) -> object:
-        """Run startfontsize."""
+        """Return the starting font size for final-round labels.
+
+        Returns:
+            A font size derived from the current widget height.
+        """
         return self.height() * 0.2
 
     def show_winner(self, winner: object) -> None:
-        """Run show winner."""
+        """Replace wager text with a winner announcement.
+
+        Args:
+            winner: Winning player object.
+
+        Returns:
+            ``None``.
+        """
         self.guess_label.setText("We have a winner!")
         self.wager_label.setText("")
         self.winner_label = NameLabel(winner.name, self)
         self.main_layout.replaceWidget(self.wager_label, self.winner_label)
 
     def show_tie(self) -> None:
-        """Run show tie."""
+        """Show a tie announcement in the final-round UI.
+
+        Returns:
+            ``None``.
+        """
         self.guess_label.setText("We have a tie!")
         self.wager_label.setText("")

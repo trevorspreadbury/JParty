@@ -1,4 +1,9 @@
-"""Question module."""
+"""Widgets for showing clues, image review, Daily Doubles, and Final Jeopardy.
+
+This module contains the question presentation widgets used on the host and
+audience displays, including specialized flows for image-based clues, Daily
+Double prompts, and Final Jeopardy category and answer screens.
+"""
 
 from pathlib import Path
 from uuid import uuid4
@@ -22,10 +27,18 @@ from jparty.ui.styles import CARDPAL, MyLabel
 
 
 class QuestionWidget(QWidget):
-    """Represent questionwidget."""
+    """Display a clue for the audience or non-host view."""
 
     def __init__(self, question: object, parent: object = None) -> None:
-        """Initialize the instance."""
+        """Initialize a question display widget.
+
+        Args:
+            question: Question object to render.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(parent)
         self.question = question
         self.setAutoFillBackground(True)
@@ -48,7 +61,11 @@ class QuestionWidget(QWidget):
         self.show()
 
     def startFontSize(self) -> object:
-        """Run startfontsize."""
+        """Return the starting font size for clue text.
+
+        Returns:
+            A font size derived from the current widget width.
+        """
         return self.width() * 0.05
 
     def isQuestionTypeTextOnly(self) -> bool:
@@ -60,10 +77,18 @@ class QuestionWidget(QWidget):
 
 
 class HostQuestionWidget(QuestionWidget):
-    """Represent hostquestionwidget."""
+    """Host-side clue widget that also shows the correct response."""
 
     def __init__(self, question: object, parent: object = None) -> None:
-        """Initialize the instance."""
+        """Initialize a host clue widget with answer text.
+
+        Args:
+            question: Question object to render.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(question, parent)
         self.question_label.setText(question.text)
         self.main_layout.setStretchFactor(self.question_label, 6)
@@ -73,7 +98,14 @@ class HostQuestionWidget(QuestionWidget):
         self.main_layout.addWidget(self.answer_label, 1)
 
     def paintEvent(self, event: object) -> None:
-        """Run paintevent."""
+        """Draw a separator line between clue and answer text.
+
+        Args:
+            event: Qt paint event object.
+
+        Returns:
+            ``None``.
+        """
         qp = QPainter()
         qp.begin(self)
         qp.setPen(QPen(QColor("white")))
@@ -279,21 +311,37 @@ class HostImageQuestionWidget(QWidget):
 
 
 class DailyDoubleWidget(QuestionWidget):
-    """Represent dailydoublewidget."""
+    """Question widget that first shows a Daily Double splash screen."""
 
     def __init__(self, question: object, parent: object = None) -> None:
-        """Initialize the instance."""
+        """Initialize the Daily Double reveal widget.
+
+        Args:
+            question: Daily Double question object.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(question, parent)
         self.question_label.setVisible(False)
         self.dd_label = MyLabel("DAILY<br/>DOUBLE!", self.startDDFontSize, self)
         self.main_layout.replaceWidget(self.question_label, self.dd_label)
 
     def startDDFontSize(self) -> object:
-        """Run startddfontsize."""
+        """Return the starting font size for the Daily Double splash text.
+
+        Returns:
+            A font size derived from the current widget width.
+        """
         return self.width() * 0.2
 
     def show_question(self) -> None:
-        """Run show question."""
+        """Replace the Daily Double splash with the actual clue.
+
+        Returns:
+            ``None``.
+        """
         self.main_layout.replaceWidget(self.dd_label, self.question_label)
         self.dd_label.deleteLater()
         self.dd_label = None
@@ -301,10 +349,18 @@ class DailyDoubleWidget(QuestionWidget):
 
 
 class HostDailyDoubleWidget(HostQuestionWidget, DailyDoubleWidget):
-    """Represent hostdailydoublewidget."""
+    """Host-side Daily Double widget with player-selection instructions."""
 
     def __init__(self, question: object, parent: object = None) -> None:
-        """Initialize the instance."""
+        """Initialize the host Daily Double widget.
+
+        Args:
+            question: Daily Double question object.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(question, parent)
         self.answer_label.setVisible(False)
         self.main_layout.setStretchFactor(self.dd_label, 6)
@@ -317,7 +373,11 @@ class HostDailyDoubleWidget(HostQuestionWidget, DailyDoubleWidget):
         self.main_layout.setStretchFactor(self.hint_label, 1)
 
     def show_question(self) -> None:
-        """Run show question."""
+        """Reveal the clue and restore the answer label.
+
+        Returns:
+            ``None``.
+        """
         super().show_question()
         self.main_layout.replaceWidget(self.hint_label, self.answer_label)
         self.hint_label.deleteLater()
@@ -326,10 +386,18 @@ class HostDailyDoubleWidget(HostQuestionWidget, DailyDoubleWidget):
 
 
 class FinalJeopardyWidget(QuestionWidget):
-    """Represent finaljeopardywidget."""
+    """Question widget that first shows the Final Jeopardy category."""
 
     def __init__(self, question: object, parent: object = None) -> None:
-        """Initialize the instance."""
+        """Initialize the Final Jeopardy category/clue widget.
+
+        Args:
+            question: Final Jeopardy question object.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(question, parent)
         self.question_label.setVisible(False)
         self.category_label = MyLabel(
@@ -338,11 +406,19 @@ class FinalJeopardyWidget(QuestionWidget):
         self.main_layout.replaceWidget(self.question_label, self.category_label)
 
     def startCategoryFontSize(self) -> object:
-        """Run startcategoryfontsize."""
+        """Return the starting font size for the category reveal.
+
+        Returns:
+            A font size derived from the current widget width.
+        """
         return self.width() * 0.1
 
     def show_question(self) -> None:
-        """Run show question."""
+        """Replace the category reveal with the actual Final Jeopardy clue.
+
+        Returns:
+            ``None``.
+        """
         self.main_layout.replaceWidget(self.category_label, self.question_label)
         self.category_label.deleteLater()
         self.category_label = None
@@ -350,10 +426,18 @@ class FinalJeopardyWidget(QuestionWidget):
 
 
 class HostFinalJeopardyWidget(FinalJeopardyWidget, HostQuestionWidget):
-    """Represent hostfinaljeopardywidget."""
+    """Host-side Final Jeopardy widget with wagering status text."""
 
     def __init__(self, question: object, parent: object) -> None:
-        """Initialize the instance."""
+        """Initialize the host Final Jeopardy widget.
+
+        Args:
+            question: Final Jeopardy question object.
+            parent: Parent widget.
+
+        Returns:
+            ``None``.
+        """
         super().__init__(question, parent)
         self.answer_label.setVisible(False)
         self.main_layout.setStretchFactor(self.question_label, 6)
@@ -364,11 +448,19 @@ class HostFinalJeopardyWidget(FinalJeopardyWidget, HostQuestionWidget):
         self.main_layout.setStretchFactor(self.hint_label, 1)
 
     def hide_hint(self) -> None:
-        """Run hide hint."""
+        """Show the host hint label.
+
+        Returns:
+            ``None``.
+        """
         self.hint_label.setVisible(True)
 
     def show_question(self) -> None:
-        """Run show question."""
+        """Reveal the clue and restore the answer label.
+
+        Returns:
+            ``None``.
+        """
         super().show_question()
         self.main_layout.replaceWidget(self.hint_label, self.answer_label)
         self.hint_label.deleteLater()

@@ -1,4 +1,9 @@
-"""App module."""
+"""Tornado application wiring for buzzer and lectern web endpoints.
+
+This module defines the top-level Tornado ``Application`` used by JParty's web
+layer. It registers the HTTP and websocket routes that power player buzzers,
+host-facing lecterns, and the landing page served to connected devices.
+"""
 
 import tornado.web
 
@@ -13,10 +18,18 @@ from jparty.web.handlers import (
 
 
 class Application(tornado.web.Application):
-    """Represent application."""
+    """Configure the Tornado app used by the buzzer web server."""
 
     def __init__(self, controller: object) -> None:
-        """Initialize the instance."""
+        """Initialize the Tornado application and route table.
+
+        Args:
+            controller: ``BuzzerController`` instance shared with all request
+                and websocket handlers.
+
+        Returns:
+            ``None``.
+        """
         handlers = [
             ("/", WelcomeHandler),
             ("/play", BuzzerHandler),

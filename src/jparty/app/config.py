@@ -1,4 +1,10 @@
-"""Config module."""
+"""Application-wide configuration constants.
+
+This module centralizes the small set of static values that shape JParty's
+runtime behavior, including clue timing, score values, networking defaults, and
+the computed project root. The constants defined here are imported broadly
+across the app, domain, and UI layers.
+"""
 
 from pathlib import Path
 

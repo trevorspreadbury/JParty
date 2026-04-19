@@ -1,4 +1,10 @@
-"""Models module."""
+"""Core data models representing games, boards, clues, and players.
+
+This module defines the domain objects that the rest of JParty passes around
+when loading archived games, tracking buzz attempts, and updating player state.
+These models intentionally stay lightweight so the engine, services, and UI can
+share a common representation of game data.
+"""
 
 import os
 import sys
@@ -11,7 +17,7 @@ BOARD_QUESTION_COUNT = 30
 
 @dataclass
 class Question:
-    """Represent question."""
+    """Represent a single clue on the board or in Final Jeopardy."""
 
     index: tuple
     text: str
@@ -27,7 +33,7 @@ class Question:
 
 @dataclass
 class BuzzAttempt:
-    """Represent buzzattempt."""
+    """Capture one player buzz interaction for analytics and persistence."""
 
     player_index: int
     question_index: tuple
@@ -39,49 +45,84 @@ class BuzzAttempt:
 
 
 class Board:
-    """Represent board."""
+    """Represent a standard Jeopardy round board."""
 
     size = (6, 5)
 
     def __init__(
         self, categories: object, questions: object, dj: object = False
     ) -> None:
-        """Initialize the instance."""
+        """Initialize a board with categories and clue objects.
+
+        Args:
+            categories: Sequence of category names displayed on the board.
+            questions: Sequence of ``Question`` objects belonging to the board.
+            dj: Whether this board represents the Double Jeopardy round.
+
+        Returns:
+            ``None``.
+        """
         self.categories = categories
         self.dj = dj
         self.questions = questions or []
 
     def get_question(self, i: object, j: object) -> object:
-        """Run get question."""
+        """Return the question at a board coordinate if one exists.
+
+        Args:
+            i: Zero-based category index.
+            j: Zero-based clue row index.
+
+        Returns:
+            The matching ``Question`` object, or ``None`` if no clue matches the
+            requested coordinates.
+        """
         for question in self.questions:
             if question.index == (i, j):
                 return question
         return None
 
     def complete(self) -> object:
-        """Run complete."""
+        """Check whether the board has the expected number of clues.
+
+        Returns:
+            ``True`` when the board contains all standard clues, otherwise
+            ``False``.
+        """
         return len(self.questions) == BOARD_QUESTION_COUNT
 
 
 class FinalBoard(Board):
-    """Represent finalboard."""
+    """Represent the single-clue Final Jeopardy board."""
 
     size = (1, 1)
 
     def __init__(self, category: object, question: object) -> None:
-        """Initialize the instance."""
+        """Initialize the Final Jeopardy board wrapper.
+
+        Args:
+            category: Final Jeopardy category name.
+            question: ``Question`` object representing the final clue.
+
+        Returns:
+            ``None``.
+        """
         super().__init__([category], [question], dj=False)
         self.category = category
         self.question = question
 
     def complete(self) -> object:
-        """Run complete."""
+        """Check whether the final board has its single required clue.
+
+        Returns:
+            ``True`` when the final board contains exactly one question.
+        """
         return len(self.questions) == 1
 
 
 @dataclass
 class GameData:
-    """Represent gamedata."""
+    """Bundle the parsed rounds and metadata for one archived game."""
 
     rounds: list
     date: str
@@ -89,10 +130,21 @@ class GameData:
 
 
 class Player:
-    """Represent player."""
+    """Represent a connected player and their live game state."""
 
     def __init__(self, name: object, waiter: object, player_number: object) -> None:
-        """Initialize the instance."""
+        """Initialize a player session.
+
+        Args:
+            name: Display name chosen by the player.
+            waiter: Connection or response channel used to communicate with the
+                player's lectern client.
+            player_number: Zero-based player slot currently assigned to the
+                player.
+
+        Returns:
+            ``None``.
+        """
         self.name = name
         self.token = os.urandom(15)
         self.score = 0
@@ -104,9 +156,17 @@ class Player:
         self.key = index_to_key[player_number]
 
     def __hash__(self) -> object:
-        """Return hash."""
+        """Return a stable hash derived from the player's random token.
+
+        Returns:
+            Integer hash value suitable for set membership and dict keys.
+        """
         return int.from_bytes(self.token, sys.byteorder)
 
     def state(self) -> object:
-        """Run state."""
+        """Return a minimal serializable view of the player's current state.
+
+        Returns:
+            A dictionary containing the current page and score.
+        """
         return {"page": self.page, "score": self.score}

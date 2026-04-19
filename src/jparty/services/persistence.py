@@ -1,4 +1,9 @@
-"""Persistence module."""
+"""Compatibility exports for persisted game-state helpers.
+
+This module gathers the persistence-related functions used by the application
+for loading, saving, and reconstructing gameplay state. The implementations
+live in ``jparty.domain.state`` and are re-exported here as service utilities.
+"""
 
 from jparty.domain.state import (
     classify_buzz_phases,

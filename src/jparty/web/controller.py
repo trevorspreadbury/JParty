@@ -1,4 +1,9 @@
-"""Controller module."""
+"""Controller for the Tornado-based buzzer and lectern server.
+
+This module contains the bridge between the game engine and the web-facing
+player interfaces. The controller starts the Tornado server, tracks connected
+players and lecterns, and translates websocket events into game actions.
+"""
 
 import logging
 import socket
@@ -18,10 +23,18 @@ DEFAULT_HTTP_PORT = 80
 
 
 class BuzzerController:
-    """Represent buzzercontroller."""
+    """Manage player, lectern, and websocket interactions for the game."""
 
     def __init__(self, game: object) -> None:
-        """Initialize the instance."""
+        """Initialize the buzzer controller and its Tornado application.
+
+        Args:
+            game: Active game instance that should receive buzz, wager, and
+                answer events.
+
+        Returns:
+            ``None``.
+        """
         self.thread = None
         self.game = game
         tornado.options.parse_command_line()
@@ -32,7 +45,19 @@ class BuzzerController:
         self.lectern_connections = {}
 
     def start(self, threaded: object = True, tries: object = 0) -> None:
-        """Run start."""
+        """Start the Tornado server, retrying with higher ports if needed.
+
+        Args:
+            threaded: Whether to start Tornado on a background thread.
+            tries: Current retry count while searching for an open port.
+
+        Returns:
+            ``None``.
+
+        Raises:
+            Exception: If no open port can be found within the configured retry
+                limit.
+        """
         try:
             self.app.listen(self.port)
         except OSError as err:
@@ -49,14 +74,25 @@ class BuzzerController:
             tornado.ioloop.IOLoop.current().start()
 
     def restart(self) -> None:
-        """Run restart."""
+        """Disconnect all players and reset lobby acceptance state.
+
+        Returns:
+            ``None``.
+        """
         for p in self.connected_players:
             p.waiter.close()
         self.connected_players = []
         self.accepting_players = True
 
     def buzz(self, player: object) -> None:
-        """Run buzz."""
+        """Forward a player's buzz event into the game engine.
+
+        Args:
+            player: Player object that initiated the buzz.
+
+        Returns:
+            ``None``.
+        """
         if self.game:
             i_player = self.game.players.index(player)
             self.game.buzz_trigger.emit(i_player)
@@ -65,30 +101,61 @@ class BuzzerController:
             self.game.buzz_hint_trigger.emit(i_player)
 
     def wager(self, player: object, amount: object) -> None:
-        """Run wager."""
+        """Forward a player's Final Jeopardy wager into the game engine.
+
+        Args:
+            player: Player object submitting the wager.
+            amount: Numeric wager amount from the client.
+
+        Returns:
+            ``None``.
+        """
         i_player = self.game.players.index(player)
         self.game.wager_trigger.emit(i_player, amount)
 
     def answer(self, player: object, guess: object) -> None:
-        """Run answer."""
+        """Forward a player's Final Jeopardy response into the game engine.
+
+        Args:
+            player: Player object submitting the response.
+            guess: Final response text from the client.
+
+        Returns:
+            ``None``.
+        """
         if self.game:
             self.game.answer(player, guess)
             player.page = "null"
 
     def new_player(self, player: object) -> None:
-        """Run new player."""
+        """Register a newly connected player and notify the game.
+
+        Args:
+            player: Player object created for the new connection.
+
+        Returns:
+            ``None``.
+        """
         self.connected_players.append(player)
         self.game.new_player_trigger.emit()
 
     @classmethod
     def localip(cls) -> object:
-        """Run localip."""
+        """Return the machine's outward-facing local IP address.
+
+        Returns:
+            String IP address used by clients on the local network.
+        """
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", options.port))
         return s.getsockname()[0]
 
     def host(self) -> str:
-        """Run host."""
+        """Return the host string clients should use to connect.
+
+        Returns:
+            Hostname string including the port when it is non-default.
+        """
         localip = BuzzerController.localip()
         if self.port == DEFAULT_HTTP_PORT:
             return f"{localip}"
@@ -96,7 +163,14 @@ class BuzzerController:
             return f"{localip}:{self.port}"
 
     def player_with_token(self, token: object) -> object:
-        """Run player with token."""
+        """Look up a connected player by their reconnect token.
+
+        Args:
+            token: Hex-encoded player token received from the client.
+
+        Returns:
+            Matching player object, or ``None`` if no player matches.
+        """
         for p in self.connected_players:
             logging.info(f"{p.token}, {token}")
             if p.token.hex() == token:
@@ -105,7 +179,15 @@ class BuzzerController:
         return None
 
     def open_wagers(self, players: object = None) -> None:
-        """Run open wagers."""
+        """Prompt one or more players to enter Final Jeopardy wagers.
+
+        Args:
+            players: Optional iterable of players to prompt. When omitted, all
+                connected players are prompted.
+
+        Returns:
+            ``None``.
+        """
         if players is None:
             players = self.connected_players
         for p in players:
@@ -113,24 +195,46 @@ class BuzzerController:
             p.page = "wager"
 
     def prompt_answers(self) -> None:
-        """Run prompt answers."""
+        """Prompt all connected players to enter Final Jeopardy answers.
+
+        Returns:
+            ``None``.
+        """
         for p in self.connected_players:
             p.waiter.send("PROMPTANSWER")
             p.page = "answer"
 
     def toolate(self) -> None:
-        """Run toolate."""
+        """Notify all connected players that the response window has closed.
+
+        Returns:
+            ``None``.
+        """
         for p in self.connected_players:
             p.waiter.send("TOOLATE")
 
     def get_player_by_number(self, player_number: object) -> object:
-        """Run get player by number."""
+        """Return the current game player assigned to a lectern slot.
+
+        Args:
+            player_number: Zero-based player slot number.
+
+        Returns:
+            Matching player object, or ``None`` when the slot is empty.
+        """
         if self.game and player_number < len(self.game.players):
             return self.game.players[player_number]
         return None
 
     def get_player_state_dict(self, player: object) -> object:
-        """Run get player state dict."""
+        """Build the serialized lectern state for a player.
+
+        Args:
+            player: Player object whose state should be exposed.
+
+        Returns:
+            Dictionary containing the player's lectern-facing state fields.
+        """
         return {
             "name": player.name,
             "score": player.score,
@@ -141,7 +245,15 @@ class BuzzerController:
         }
 
     def broadcast_to_lecterns(self, player_number: object, state_dict: object) -> None:
-        """Run broadcast to lecterns."""
+        """Send an updated state payload to a specific lectern connection.
+
+        Args:
+            player_number: Zero-based lectern slot number to update.
+            state_dict: Serialized player state to send.
+
+        Returns:
+            ``None``.
+        """
         if player_number in self.lectern_connections:
             lectern = self.lectern_connections[player_number]
             try:
