@@ -1,0 +1,468 @@
+"""Widgets for showing clues, image review, Daily Doubles, and Final Jeopardy.
+
+This module contains the question presentation widgets used on the host and
+audience displays, including specialized flows for image-based clues, Daily
+Double prompts, and Final Jeopardy category and answer screens.
+"""
+
+from pathlib import Path
+from uuid import uuid4
+
+from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+
+from jparty.app.paths import QUESTION_MEDIA
+from jparty.services.image_lookup import search_wikimedia_image
+from jparty.ui.styles import CARDPAL, MyLabel
+
+
+class QuestionWidget(QWidget):
+    """Display a clue for the audience or non-host view."""
+
+    def __init__(self, question: object, parent: object = None) -> None:
+        """Initialize a question display widget.
+
+        Args:
+            question: Question object to render.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__(parent)
+        self.question = question
+        self.setAutoFillBackground(True)
+        text_only_question = self.isQuestionTypeTextOnly()
+        self.main_layout = QVBoxLayout()
+        self.question_label = MyLabel(question.text.upper(), self.startFontSize, self)
+        self.question_label.setFont(QFont("ITC_ Korinna"))
+        self.main_layout.addWidget(self.question_label)
+        if not text_only_question:
+            self.image_label = MyLabel(
+                self.question.image_url, self.startFontSize, self, True
+            )
+            self.main_layout.addWidget(self.image_label)
+            self.main_layout.setStretchFactor(self.question_label, 2)
+            self.main_layout.setStretchFactor(self.image_label, 5)
+        else:
+            self.image_label = None
+        self.setLayout(self.main_layout)
+        self.setPalette(CARDPAL)
+        self.show()
+
+    def startFontSize(self) -> object:
+        """Return the starting font size for clue text.
+
+        Returns:
+            A font size derived from the current widget width.
+        """
+        return self.width() * 0.05
+
+    def isQuestionTypeTextOnly(self) -> bool:
+        """Check if visual clues have been saved for the question"""
+        if self.question.image and self.question.image_url is not None:
+            return False
+        else:
+            return True
+
+
+class HostQuestionWidget(QuestionWidget):
+    """Host-side clue widget that also shows the correct response."""
+
+    def __init__(self, question: object, parent: object = None) -> None:
+        """Initialize a host clue widget with answer text.
+
+        Args:
+            question: Question object to render.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__(question, parent)
+        self.question_label.setText(question.text)
+        self.main_layout.setStretchFactor(self.question_label, 6)
+        self.main_layout.addSpacing(self.main_layout.contentsMargins().top())
+        self.answer_label = MyLabel(question.answer, self.startFontSize, self)
+        self.answer_label.setFont(QFont("ITC_ Korinna"))
+        self.main_layout.addWidget(self.answer_label, 1)
+
+    def paintEvent(self, event: object) -> None:
+        """Draw a separator line between clue and answer text.
+
+        Args:
+            event: Qt paint event object.
+
+        Returns:
+            ``None``.
+        """
+        qp = QPainter()
+        qp.begin(self)
+        qp.setPen(QPen(QColor("white")))
+        line_y = self.main_layout.itemAt(1).geometry().top()
+        qp.drawLine(0, line_y, self.width(), line_y)
+
+    def isQuestionTypeTextOnly(self) -> bool:
+        """Host always see only text"""
+        return True
+
+
+class HostImageQuestionWidget(QWidget):
+    """Widget to display and manage an image-based question for a game."""
+
+    def __init__(self, game: object, parent: object = None) -> None:
+        """Initialize the widget with game state and setup UI components.
+
+        Args:
+            game: The game instance containing the active question.
+            parent: Optional parent widget.
+        """
+        super().__init__(parent)
+        self.game = game
+        self.question = game.active_question
+        self.current_pixmap = None
+        self.image_url = self.get_initial_image_url()
+        self.setup_ui()
+        self.fetch_image(self.image_url)
+
+    def setup_ui(self) -> None:
+        """Set up the UI components and layout."""
+        self.setup_main_layout()
+        self.setup_left_layout()
+        self.setup_right_layout()
+
+    def setup_main_layout(self) -> None:
+        """Create the main layout dividing the screen into two sections."""
+        self.main_horizontal_layout = QHBoxLayout(self)
+        self.setLayout(self.main_horizontal_layout)
+
+    def setup_left_layout(self) -> None:
+        """Create the left section with the question and answer display."""
+        self.left_layout = QVBoxLayout()
+        self.setup_question_label()
+        self.setup_answer_label()
+        self.left_layout.addStretch()
+        self.main_horizontal_layout.addLayout(self.left_layout, 1)
+
+    def setup_question_label(self) -> None:
+        """Create and configure the question label."""
+        self.question_label = QLabel(self.question.text.upper(), self)
+        self.question_label.setFont(QFont("ITC Korinna", 16))
+        self.question_label.setWordWrap(True)
+        self.question_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.left_layout.addWidget(self.question_label)
+
+    def setup_answer_label(self) -> None:
+        """Create and configure the answer label."""
+        self.answer_label = QLabel(self.question.answer, self)
+        self.answer_label.setFont(QFont("ITC Korinna", 14))
+        self.answer_label.setWordWrap(True)
+        self.answer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.left_layout.addWidget(self.answer_label)
+
+    def setup_right_layout(self) -> None:
+        """Create the right section with image display, input, and buttons."""
+        self.right_layout = QVBoxLayout()
+        self.setup_image_label()
+        self.add_image_search_box()
+        self.add_buttons()
+        self.right_layout.addStretch()
+        self.main_horizontal_layout.addLayout(self.right_layout, 2)
+
+    def setup_image_label(self) -> None:
+        """Create and configure the image display label."""
+        self.image_label = QLabel("Loading image...", self)
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setStyleSheet("border: 1px solid black;")
+        self.image_label.setSizePolicy(
+            QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.MinimumExpanding
+        )
+        self.right_layout.addWidget(self.image_label)
+
+    def add_image_search_box(self) -> None:
+        """Add the image search input box with debouncing."""
+        self.debounce_timer = QTimer(self)
+        self.debounce_timer.setSingleShot(True)
+        self.debounce_timer.timeout.connect(self.debounced_input_changed)
+        self.textbox = QLineEdit(self)
+        self.textbox.setPlaceholderText("Enter image URL or search query...")
+        self.textbox.textChanged.connect(self.start_debounce_timer)
+        self.right_layout.addWidget(self.textbox)
+
+    def add_buttons(self) -> None:
+        """Add buttons to accept or reject the image."""
+        self.buttons_layout = QHBoxLayout()
+        self.start_button = QPushButton("Accept Image", self)
+        self.start_button.clicked.connect(self.on_accept_image_clicked)
+        self.buttons_layout.addWidget(self.start_button)
+        self.reject_button = QPushButton("No Image Necessary", self)
+        self.reject_button.clicked.connect(self.on_no_image_needed_clicked)
+        self.buttons_layout.addWidget(self.reject_button)
+        self.right_layout.addLayout(self.buttons_layout)
+
+    def get_initial_image_url(self) -> object:
+        """Retrieve the initial image URL for the question."""
+        return self.question.image_url or search_wikimedia_image(self.question.answer)
+
+    def fetch_image(self, path_or_url: object) -> None:
+        """Fetch the image from a local path or URL."""
+        if Path(path_or_url).exists():
+            self.load_image_from_file(path_or_url)
+        else:
+            self.load_image_from_url(path_or_url)
+
+    def load_image_from_file(self, file_path: object) -> None:
+        """Load an image from a local file and display it."""
+        pixmap = QPixmap(file_path)
+        self.handle_pixmap_load(pixmap)
+
+    def load_image_from_url(self, url: object) -> None:
+        """Download and load an image from a URL."""
+        self.network_manager = QNetworkAccessManager(self.image_label)
+        self.network_manager.finished.connect(self.on_image_downloaded)
+        request = QNetworkRequest(QUrl(url))
+        self.network_manager.get(request)
+
+    def on_image_downloaded(self, reply: object) -> None:
+        """Handle the downloaded image and display it."""
+        if reply.error() == reply.NetworkError.NoError:
+            pixmap = QPixmap()
+            pixmap.loadFromData(reply.readAll())
+            self.handle_pixmap_load(pixmap)
+        else:
+            self.image_label.setText("Failed to load image.")
+
+    def handle_pixmap_load(self, pixmap: object) -> None:
+        """Update the image display with the given pixmap."""
+        if not pixmap.isNull():
+            self.current_pixmap = pixmap
+            self.update_image_display()
+        else:
+            self.image_label.setText("Failed to load image.")
+
+    def start_debounce_timer(self, _: object) -> None:
+        """Restart the debounce timer for text input."""
+        self.debounce_timer.start(1000)
+
+    def debounced_input_changed(self) -> None:
+        """Update the image URL or query after debounce."""
+        input_text = self.textbox.text()
+        self.image_url = (
+            input_text
+            if input_text.startswith("https://")
+            else search_wikimedia_image(input_text)
+        )
+        self.fetch_image(self.image_url)
+        self.update_accept_button(input_text)
+
+    def update_accept_button(self, input_text: object) -> None:
+        """Enable or disable the accept button based on input."""
+        self.start_button.setEnabled(bool(input_text.strip()))
+
+    def resizeEvent(self, event: object) -> None:
+        """Handle resize events to update the image display."""
+        super().resizeEvent(event)
+        self.update_image_display()
+
+    def update_image_display(self) -> None:
+        """Resize and display the current image."""
+        if self.current_pixmap:
+            scaled_pixmap = self.current_pixmap.scaled(
+                self.image_label.width(),
+                self.image_label.height(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self.image_label.setPixmap(scaled_pixmap)
+
+    def on_accept_image_clicked(self) -> None:
+        """Handle accept image button click."""
+        self.question.image = True
+        self.question.image_url = self._store_accepted_image()
+        self.game.accept_image()
+
+    def on_no_image_needed_clicked(self) -> None:
+        """Handle reject image button click."""
+        self.game.no_image_needed()
+
+    def _store_accepted_image(self) -> object:
+        """Persist the approved image locally so contestant displays use a stable file."""
+        if not self.current_pixmap or self.current_pixmap.isNull():
+            return self.image_url
+        reviewed_dir = QUESTION_MEDIA / "reviewed"
+        reviewed_dir.mkdir(parents=True, exist_ok=True)
+        game_id = self.game.current_game_id() or "custom"
+        question_index = "-".join(str(part) for part in self.question.index)
+        filename = f"{game_id}-{question_index}-{uuid4().hex[:8]}.png"
+        saved_path = reviewed_dir / filename
+        if self.current_pixmap.save(str(saved_path), "PNG"):
+            return str(saved_path)
+        return self.image_url
+
+
+class DailyDoubleWidget(QuestionWidget):
+    """Question widget that first shows a Daily Double splash screen."""
+
+    def __init__(self, question: object, parent: object = None) -> None:
+        """Initialize the Daily Double reveal widget.
+
+        Args:
+            question: Daily Double question object.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__(question, parent)
+        self.question_label.setVisible(False)
+        self.dd_label = MyLabel("DAILY<br/>DOUBLE!", self.startDDFontSize, self)
+        self.main_layout.replaceWidget(self.question_label, self.dd_label)
+
+    def startDDFontSize(self) -> object:
+        """Return the starting font size for the Daily Double splash text.
+
+        Returns:
+            A font size derived from the current widget width.
+        """
+        return self.width() * 0.2
+
+    def show_question(self) -> None:
+        """Replace the Daily Double splash with the actual clue.
+
+        Returns:
+            ``None``.
+        """
+        self.main_layout.replaceWidget(self.dd_label, self.question_label)
+        self.dd_label.deleteLater()
+        self.dd_label = None
+        self.question_label.setVisible(True)
+
+
+class HostDailyDoubleWidget(HostQuestionWidget, DailyDoubleWidget):
+    """Host-side Daily Double widget with player-selection instructions."""
+
+    def __init__(self, question: object, parent: object = None) -> None:
+        """Initialize the host Daily Double widget.
+
+        Args:
+            question: Daily Double question object.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__(question, parent)
+        self.answer_label.setVisible(False)
+        self.main_layout.setStretchFactor(self.dd_label, 6)
+        self.hint_label = MyLabel(
+            "Click the player below who found the Daily Double",
+            self.startFontSize,
+            self,
+        )
+        self.main_layout.replaceWidget(self.answer_label, self.hint_label)
+        self.main_layout.setStretchFactor(self.hint_label, 1)
+
+    def show_question(self) -> None:
+        """Reveal the clue and restore the answer label.
+
+        Returns:
+            ``None``.
+        """
+        super().show_question()
+        self.main_layout.replaceWidget(self.hint_label, self.answer_label)
+        self.hint_label.deleteLater()
+        self.hint_label = None
+        self.answer_label.setVisible(True)
+
+
+class FinalJeopardyWidget(QuestionWidget):
+    """Question widget that first shows the Final Jeopardy category."""
+
+    def __init__(self, question: object, parent: object = None) -> None:
+        """Initialize the Final Jeopardy category/clue widget.
+
+        Args:
+            question: Final Jeopardy question object.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__(question, parent)
+        self.question_label.setVisible(False)
+        self.category_label = MyLabel(
+            question.category, self.startCategoryFontSize, self
+        )
+        self.main_layout.replaceWidget(self.question_label, self.category_label)
+
+    def startCategoryFontSize(self) -> object:
+        """Return the starting font size for the category reveal.
+
+        Returns:
+            A font size derived from the current widget width.
+        """
+        return self.width() * 0.1
+
+    def show_question(self) -> None:
+        """Replace the category reveal with the actual Final Jeopardy clue.
+
+        Returns:
+            ``None``.
+        """
+        self.main_layout.replaceWidget(self.category_label, self.question_label)
+        self.category_label.deleteLater()
+        self.category_label = None
+        self.question_label.setVisible(True)
+
+
+class HostFinalJeopardyWidget(FinalJeopardyWidget, HostQuestionWidget):
+    """Host-side Final Jeopardy widget with wagering status text."""
+
+    def __init__(self, question: object, parent: object) -> None:
+        """Initialize the host Final Jeopardy widget.
+
+        Args:
+            question: Final Jeopardy question object.
+            parent: Parent widget.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__(question, parent)
+        self.answer_label.setVisible(False)
+        self.main_layout.setStretchFactor(self.question_label, 6)
+        self.hint_label = MyLabel(
+            "Waiting for all players to wager...", self.startFontSize, self
+        )
+        self.main_layout.replaceWidget(self.answer_label, self.hint_label)
+        self.main_layout.setStretchFactor(self.hint_label, 1)
+
+    def hide_hint(self) -> None:
+        """Show the host hint label.
+
+        Returns:
+            ``None``.
+        """
+        self.hint_label.setVisible(True)
+
+    def show_question(self) -> None:
+        """Reveal the clue and restore the answer label.
+
+        Returns:
+            ``None``.
+        """
+        super().show_question()
+        self.main_layout.replaceWidget(self.hint_label, self.answer_label)
+        self.hint_label.deleteLater()
+        self.hint_label = None
+        self.answer_label.setVisible(True)

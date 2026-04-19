@@ -42,36 +42,84 @@ The host sees the answer on the laptop screen and can adjudicate with the arrow 
 JParty supports visual clues! By default, any question with a hyperlink on the J-Archive page will prompt the host to either find an image for the question or determine that no image is needed before displaying the question to contestants. The host uses a search box to either enter a url to an image or a query to Wikimedia to find an appropriate image. 
 
 Users also have the option to find images beforehand by going through the following process:
-1. Create a folder in `jparty/data/question_media` with the game of interest's J-Archive url id.
+1. Create a folder in the JParty user data directory under `question_media` with the game of interest's J-Archive url id.
 2. Then for each question that needs visual clues, add an image with the board number (Jeopardy is '0', Double Jeopardy is '1') the name of the question coordinates separated by a "-". For example the first clue of the game is "0-0-0". Any common image file extension should work (tested on jpeg, jpg, webp, png). For reference the layout of the single jeopardy round is as follows:
 <img src="resources/question-media-labelling.png" height="300" />
 
 
-## Requirements:
+## Requirements
 ### For running the app (binary)
 - macOS, Windows or Linux
 - Two monitors
 - A device with web access for each player
 
 ### For compiling from source code
-- Python [>=3.9]
-- PyQt6
-- requests
-- simpleaudio
-- tornado
-- BeautifulSoup4
-- qrcode
-- pyinstaller [>=5.0]
+- Python [>=3.10]
+- `uv` is the preferred development workflow
+- `conda` is still supported as a fallback if you run into platform-specific Qt/audio issues
 
-To debug, run 
+## Installation
+### Recommended: `uv`
+Create a virtual environment and install the project with test dependencies:
+
+```
+uv venv
+uv sync --extra test
+```
+
+Install the Playwright browser runtime if you want to run the browser smoke tests:
+
+```
+uv run playwright install chromium
+```
+
+### Fallback: `conda`
+If `uv` gives you trouble on your machine, especially around audio or Qt, you can still use conda:
 
 ```
 conda env create -f environment.yml
-cd jparty
-python ../run.py
+conda activate JParty
+pip install -e .[test]
+python -m playwright install chromium
 ```
 
-To build from source, run
+## Development
+To keep downloads, saved state, logs, and graphs in a predictable repo-local location, create a `.env` file with:
+
+```
+DATA_DIR=.jparty-data
+```
+
+Run the app with either:
+
+```
+uv run jparty
+```
+
+or:
+
+```
+uv run python -m jparty
+```
+
+Useful development commands:
+
+```
+uv run pytest tests -q
+uv run jparty download 4453 4454
+uv run jparty download games.txt
+```
+
+If you are using conda instead of `uv`, use the same commands without the `uv run` prefix.
+
+## Build
+To build from source, run:
+
+```
+uv run pyinstaller -y JParty.spec
+```
+
+If you are using conda, run:
 
 ```
 pyinstaller -y JParty.spec

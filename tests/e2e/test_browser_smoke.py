@@ -1,3 +1,5 @@
+"""Test browser smoke module."""
+
 import asyncio
 import threading
 import time
@@ -8,17 +10,15 @@ import pytest
 import tornado.httpserver
 import tornado.ioloop
 import tornado.netutil
+from jparty.domain.models import Player
+from jparty.web.app import Application
 from playwright.sync_api import sync_playwright
-
-import jparty.controller as controller_module
-from jparty.controller import Application
-from jparty.game import Player
-
 
 pytestmark = pytest.mark.e2e
 
 
-def wait_until(predicate, timeout=2.0):
+def wait_until(predicate: object, timeout: object = 2.0) -> None:
+    """Test wait until."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         if predicate():
@@ -28,12 +28,18 @@ def wait_until(predicate, timeout=2.0):
 
 
 class FakeWaiter:
-    def close(self):
+    """Test helper for fakewaiter."""
+
+    def close(self) -> None:
+        """Test close."""
         return None
 
 
 class BrowserSmokeController:
-    def __init__(self):
+    """Test helper for browsersmokecontroller."""
+
+    def __init__(self) -> None:
+        """Test init."""
         self.connected_players = []
         self.accepting_players = True
         self.lectern_connections = {}
@@ -45,31 +51,38 @@ class BrowserSmokeController:
             new_player_trigger=SimpleNamespace(emit=lambda: None),
         )
 
-    def new_player(self, player):
+    def new_player(self, player: object) -> None:
+        """Test new player."""
         self.connected_players.append(player)
         self.game.players.append(player)
 
-    def buzz(self, player):
+    def buzz(self, player: object) -> None:
+        """Test buzz."""
         self.buzzed_players.append(player.name)
 
-    def wager(self, player, amount):
+    def wager(self, player: object, amount: object) -> None:
+        """Test wager."""
         return None
 
-    def answer(self, player, guess):
+    def answer(self, player: object, guess: object) -> None:
+        """Test answer."""
         return None
 
-    def player_with_token(self, token):
+    def player_with_token(self, token: object) -> object:
+        """Test player with token."""
         for player in self.connected_players:
             if player.token.hex() == token:
                 return player
         return None
 
-    def get_player_by_number(self, player_number):
+    def get_player_by_number(self, player_number: object) -> object:
+        """Test get player by number."""
         if player_number < len(self.game.players):
             return self.game.players[player_number]
         return None
 
-    def get_player_state_dict(self, player):
+    def get_player_state_dict(self, player: object) -> object:
+        """Test get player state dict."""
         return {
             "name": player.name,
             "score": player.score,
@@ -79,12 +92,15 @@ class BrowserSmokeController:
             "finalanswer": player.finalanswer,
         }
 
-    def broadcast_to_lecterns(self, player_number, state_dict):
+    def broadcast_to_lecterns(self, player_number: object, state_dict: object) -> None:
+        """Test broadcast to lecterns."""
         return None
 
 
 @dataclass
 class LiveBrowserServer:
+    """Test helper for livebrowserserver."""
+
     controller: BrowserSmokeController
     url: str
     loop: tornado.ioloop.IOLoop
@@ -93,17 +109,17 @@ class LiveBrowserServer:
 
 
 @pytest.fixture
-def live_browser_server():
+def live_browser_server() -> object:
+    """Test live browser server."""
     controller = BrowserSmokeController()
-    original_root = controller_module.root
-    controller_module.root = "jparty"
     app = Application(controller)
     sockets = tornado.netutil.bind_sockets(0, address="127.0.0.1")
     port = sockets[0].getsockname()[1]
     ready = threading.Event()
     state = {}
 
-    def run():
+    def run() -> None:
+        """Test run."""
         asyncio.set_event_loop(asyncio.new_event_loop())
         loop = tornado.ioloop.IOLoop.current()
         server = tornado.httpserver.HTTPServer(app)
@@ -116,7 +132,6 @@ def live_browser_server():
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
     ready.wait(timeout=5)
-
     live_server = LiveBrowserServer(
         controller=controller,
         url=f"http://127.0.0.1:{port}",
@@ -124,7 +139,6 @@ def live_browser_server():
         thread=thread,
         server=state["server"],
     )
-
     try:
         yield live_server
     finally:
@@ -133,104 +147,74 @@ def live_browser_server():
         live_server.thread.join(timeout=5)
         for sock in sockets:
             sock.close()
-        controller_module.root = original_root
 
 
 @pytest.fixture
-def browser_page():
+def browser_page() -> object:
+    """Test browser page."""
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page()
         page.add_init_script(
-            """
-            window.$ = window.jQuery = function(selector) {
-                if (selector === document) {
-                    return {
-                        ready: function(callback) {
-                            if (document.readyState === "loading") {
-                                document.addEventListener("DOMContentLoaded", callback, { once: true });
-                            } else {
-                                callback();
-                            }
-                        }
-                    };
-                }
-                const nodes = typeof selector === "string"
-                    ? Array.from(document.querySelectorAll(selector))
-                    : (selector ? [selector] : []);
-                return {
-                    hide: function() { nodes.forEach((node) => { node.style.display = "none"; }); return this; },
-                    show: function() { nodes.forEach((node) => { node.style.display = ""; }); return this; },
-                    prop: function(name, value) {
-                        if (value === undefined) {
-                            return nodes[0] ? nodes[0][name] : undefined;
-                        }
-                        nodes.forEach((node) => { node[name] = value; });
-                        return this;
-                    },
-                    val: function(value) {
-                        if (value === undefined) {
-                            return nodes[0] ? nodes[0].value : "";
-                        }
-                        nodes.forEach((node) => { node.value = value; });
-                        return this;
-                    },
-                    attr: function(name, value) {
-                        if (value === undefined) {
-                            return nodes[0] ? nodes[0].getAttribute(name) : undefined;
-                        }
-                        nodes.forEach((node) => { node.setAttribute(name, value); });
-                        return this;
-                    },
-                    on: function(name, handler) {
-                        nodes.forEach((node) => { node.addEventListener(name, handler); });
-                        return this;
-                    }
-                };
-            };
-            window.SignaturePad = function() {
-                this.clear = function() {};
-                this.isEmpty = function() { return true; };
-                this.toData = function() { return []; };
-                this.fromData = function() {};
-                this.toDataURL = function() { return "data:image/png;base64,stub"; };
-            };
-            """
+            '\n            window.$ = window.jQuery = function(selector) {\n                if (selector === document) {\n                    return {\n                        ready: function(callback) {\n                            if (document.readyState === "loading") {\n                                document.addEventListener("DOMContentLoaded", callback, { once: true });\n                            } else {\n                                callback();\n                            }\n                        }\n                    };\n                }\n                const nodes = typeof selector === "string"\n                    ? Array.from(document.querySelectorAll(selector))\n                    : (selector ? [selector] : []);\n                return {\n                    hide: function() { nodes.forEach((node) => { node.style.display = "none"; }); return this; },\n                    show: function() { nodes.forEach((node) => { node.style.display = ""; }); return this; },\n                    prop: function(name, value) {\n                        if (value === undefined) {\n                            return nodes[0] ? nodes[0][name] : undefined;\n                        }\n                        nodes.forEach((node) => { node[name] = value; });\n                        return this;\n                    },\n                    val: function(value) {\n                        if (value === undefined) {\n                            return nodes[0] ? nodes[0].value : "";\n                        }\n                        nodes.forEach((node) => { node.value = value; });\n                        return this;\n                    },\n                    attr: function(name, value) {\n                        if (value === undefined) {\n                            return nodes[0] ? nodes[0].getAttribute(name) : undefined;\n                        }\n                        nodes.forEach((node) => { node.setAttribute(name, value); });\n                        return this;\n                    },\n                    on: function(name, handler) {\n                        nodes.forEach((node) => { node.addEventListener(name, handler); });\n                        return this;\n                    }\n                };\n            };\n            window.SignaturePad = function() {\n                this.clear = function() {};\n                this.isEmpty = function() { return true; };\n                this.toData = function() { return []; };\n                this.fromData = function() {};\n                this.toDataURL = function() { return "data:image/png;base64,stub"; };\n            };\n            '
         )
-        page.route("https://cdn.jsdelivr.net/**", lambda route: route.fulfill(body="", content_type="application/javascript"))
-        page.route("http://ajax.googleapis.com/**", lambda route: route.fulfill(body="", content_type="application/javascript"))
-        page.route("https://fonts.googleapis.com/**", lambda route: route.fulfill(body="", content_type="text/css"))
-        page.route("https://www.w3schools.com/**", lambda route: route.fulfill(body="", content_type="text/css"))
+        page.route(
+            "https://cdn.jsdelivr.net/**",
+            lambda route: route.fulfill(body="", content_type="application/javascript"),
+        )
+        page.route(
+            "http://ajax.googleapis.com/**",
+            lambda route: route.fulfill(body="", content_type="application/javascript"),
+        )
+        page.route(
+            "https://fonts.googleapis.com/**",
+            lambda route: route.fulfill(body="", content_type="text/css"),
+        )
+        page.route(
+            "https://www.w3schools.com/**",
+            lambda route: route.fulfill(body="", content_type="text/css"),
+        )
         try:
             yield page
         finally:
             browser.close()
 
 
-def test_buzzer_browser_smoke(live_browser_server, browser_page):
+def test_buzzer_browser_smoke(
+    live_browser_server: object, browser_page: object
+) -> None:
+    """Test test buzzer browser smoke."""
     browser_page.goto(f"{live_browser_server.url}/")
-    browser_page.wait_for_function("window.updater && window.updater.socket && window.updater.socket.readyState === 1")
+    browser_page.wait_for_function(
+        "window.updater && window.updater.socket && window.updater.socket.readyState === 1"
+    )
     browser_page.evaluate("nameForm('Alice')")
-    wait_until(lambda: [player.name for player in live_browser_server.controller.connected_players] == ["Alice"])
+    wait_until(
+        lambda: (
+            [player.name for player in live_browser_server.controller.connected_players]
+            == ["Alice"]
+        )
+    )
     browser_page.wait_for_function("() => document.cookie.includes('token=')")
     browser_page.evaluate("buzz()")
     wait_until(lambda: live_browser_server.controller.buzzed_players == ["Alice"])
-
     assert live_browser_server.controller.buzzed_players == ["Alice"]
 
 
-def test_lectern_browser_smoke(live_browser_server, browser_page):
+def test_lectern_browser_smoke(
+    live_browser_server: object, browser_page: object
+) -> None:
+    """Test test lectern browser smoke."""
     player = Player("Alice", FakeWaiter(), 0)
     player.score = 1200
     live_browser_server.controller.new_player(player)
-
     browser_page.goto(f"{live_browser_server.url}/lectern?player=0")
-    browser_page.wait_for_function("window.updater && window.updater.socket && window.updater.socket.readyState === 1")
-
+    browser_page.wait_for_function(
+        "window.updater && window.updater.socket && window.updater.socket.readyState === 1"
+    )
     name = browser_page.locator("#player-name")
     score = browser_page.locator("#player-score")
     name.wait_for(state="visible")
     score.wait_for(state="visible")
-
     assert name.text_content() == "Alice"
     assert score.text_content() == "$1,200"
