@@ -1,8 +1,5 @@
 import pytest
 
-from jparty.domain.models import FinalBoard
-
-
 pytestmark = pytest.mark.integration
 
 
@@ -32,7 +29,10 @@ def test_daily_double_load_and_wager_flow(game_with_players, monkeypatch):
     question = game.current_round.get_question(0, 0)
     question.dd = True
     game.players[0].score = 1200
-    monkeypatch.setattr("jparty.domain.game_engine.QInputDialog.getInt", lambda *args, **kwargs: (700, True))
+    monkeypatch.setattr(
+        "jparty.domain.game_engine.QInputDialog.getInt",
+        lambda *args, **kwargs: (700, True),
+    )
 
     game.load_question(question)
     game.get_dd_wager(game.players[0])
@@ -40,8 +40,14 @@ def test_daily_double_load_and_wager_flow(game_with_players, monkeypatch):
     assert game.soliciting_player is False
     assert question.value == 700
     assert game.dc.question_widget.show_question_calls == 1
-    assert game.keystroke_manager._KeystrokeManager__events["OPEN_RESPONSES"].active is False
-    assert game.keystroke_manager._KeystrokeManager__events["CORRECT_ANSWER"].active is True
+    assert (
+        game.keystroke_manager._KeystrokeManager__events["OPEN_RESPONSES"].active
+        is False
+    )
+    assert (
+        game.keystroke_manager._KeystrokeManager__events["CORRECT_ANSWER"].active
+        is True
+    )
 
 
 def test_daily_double_incorrect_returns_to_board(game_with_players):

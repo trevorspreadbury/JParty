@@ -2,11 +2,12 @@ import json
 
 import pytest
 
-
 pytestmark = pytest.mark.integration
 
 
-def test_incorrect_answer_subtracts_logs_and_reopens_for_other_players(game_with_players):
+def test_incorrect_answer_subtracts_logs_and_reopens_for_other_players(
+    game_with_players,
+):
     game = game_with_players
     question = game.current_round.get_question(0, 0)
 
@@ -56,7 +57,9 @@ def test_stumped_closes_responses_and_enables_return_to_board(game_with_players)
 
     assert game.accepting_responses is False
     assert game.dc.borders.flash_calls == 1
-    assert game.keystroke_manager._KeystrokeManager__events["BACK_TO_BOARD"].active is True
+    assert (
+        game.keystroke_manager._KeystrokeManager__events["BACK_TO_BOARD"].active is True
+    )
 
 
 def test_set_score_updates_widget_and_lectern_state(game_with_players):

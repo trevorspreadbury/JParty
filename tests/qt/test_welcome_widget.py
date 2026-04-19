@@ -5,7 +5,6 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from jparty.ui.widgets.welcome import Welcome
 
-
 pytestmark = pytest.mark.qt
 
 
@@ -48,7 +47,9 @@ class StubGame:
 
 def test_load_saved_game_requires_matching_player_count(qtbot, monkeypatch):
     game = StubGame()
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved")
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved"
+    )
 
     widget = Welcome(game)
     qtbot.addWidget(widget)
@@ -67,7 +68,9 @@ def test_load_saved_game_requires_matching_player_count(qtbot, monkeypatch):
 def test_load_saved_game_invalid_folder_shows_warning(qtbot, monkeypatch):
     game = StubGame()
     warnings = []
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/bad")
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/bad"
+    )
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
 
     def raise_error(selected_dir):

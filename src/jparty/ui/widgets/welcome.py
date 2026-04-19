@@ -1,26 +1,31 @@
-from PyQt6.QtGui import QPainter, QBrush, QImage, QFont, QPalette, QPixmap
-from PyQt6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLineEdit,
-    QSizePolicy,
-    QMessageBox,
-    QLabel,
-    QFileDialog,
-)
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, QTimer
-
-import qrcode
+import logging
 import time
 from threading import Thread
-import logging
+
+import qrcode
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QBrush, QFont, QImage, QPainter, QPalette, QPixmap
+from PyQt6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from jparty import __version__ as version
 from jparty.app.helptext import helpmsg
 from jparty.services.game_loader import get_game, get_random_game
 from jparty.ui.styles import WINDOWPAL
-from jparty.ui.widgets.common import DynamicButton, DynamicLabel, add_shadow, resource_path
+from jparty.ui.widgets.common import (
+    DynamicButton,
+    DynamicLabel,
+    add_shadow,
+    resource_path,
+)
 
 
 class Image(qrcode.image.base.BaseImage):
@@ -225,7 +230,9 @@ class Welcome(StartWidget):
                     time.sleep(0.25)
 
             self.gameid_trigger.emit(str(game_id))
-            self.summary_trigger.emit(self.game.data.date + "\n" + self.game.data.comments)
+            self.summary_trigger.emit(
+                self.game.data.date + "\n" + self.game.data.comments
+            )
 
         except Exception as e:
             logging.error(e)
@@ -268,7 +275,9 @@ class Welcome(StartWidget):
             self.resume_path = None
             self.game.clear_resume_state()
             self.start_button.setText("Start!")
-        self.debounce_timer.start(2000)  # Adjust debounce delay (in milliseconds) as needed
+        self.debounce_timer.start(
+            2000
+        )  # Adjust debounce delay (in milliseconds) as needed
 
     def debounced_show_summary(self):
         """Call show_summary with the current text after debounce period."""
@@ -300,15 +309,17 @@ class Welcome(StartWidget):
         self.resume_path = selected_dir
         self.start_button.setText("Resume!")
         saved_players = resume_state["general_state"].get("players", [])
-        self._base_summary_text = "\n".join([
-            f"Resume game {resume_state['game_id']} from:",
-            selected_dir,
-            "",
-            self.game.data.date,
-            self.game.data.comments,
-            "",
-            f"Saved players: {len(saved_players)}",
-        ])
+        self._base_summary_text = "\n".join(
+            [
+                f"Resume game {resume_state['game_id']} from:",
+                selected_dir,
+                "",
+                self.game.data.date,
+                self.game.data.comments,
+                "",
+                f"Saved players: {len(saved_players)}",
+            ]
+        )
         self.summary_label.setText(self._base_summary_text)
         self.check_start()
 

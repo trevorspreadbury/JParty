@@ -10,7 +10,9 @@ def get_current_game_state(game):
     current_time = time.time()
     return {
         "game_id": game_id,
-        "players": [{"name": p.name, "player_number": p.player_number} for p in game.players],
+        "players": [
+            {"name": p.name, "player_number": p.player_number} for p in game.players
+        ],
         "started_at": game._game_started_at or current_time,
         "last_updated": current_time,
     }
@@ -57,7 +59,9 @@ def classify_buzz_phases(game):
     for phase_start_time, phase_end_time in phase_boundaries:
         phases.append(
             {
-                "phase_type": "main" if phase_start_time == game._question_start_time else "rebound",
+                "phase_type": "main"
+                if phase_start_time == game._question_start_time
+                else "rebound",
                 "start_time": phase_start_time,
                 "end_time": phase_end_time,
                 "buzz_attempts": [
@@ -82,7 +86,7 @@ def load_question_history(game):
 
     entries = []
     try:
-        with open(history_file, "r") as file_obj:
+        with open(history_file) as file_obj:
             for line in file_obj:
                 line = line.strip()
                 if line:
@@ -147,7 +151,7 @@ def load_general_state(game):
     if not general_file.exists():
         return {}
     try:
-        with open(general_file, "r") as file_obj:
+        with open(general_file) as file_obj:
             return json.load(file_obj)
     except Exception as exc:
         logging.error("Error loading general state: %s", exc)

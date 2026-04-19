@@ -2,9 +2,9 @@ import re
 from threading import Thread
 
 import simpleaudio as sa
+from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QColor, QFontMetrics
 from PyQt6.QtWidgets import QGraphicsDropShadowEffect, QLabel, QPushButton, QSizePolicy
-from PyQt6.QtCore import Qt, QSize
 
 from jparty.app.paths import data_asset_path
 
@@ -13,7 +13,7 @@ def resource_path(relative_path):
     return str(data_asset_path(relative_path))
 
 
-class SongPlayer(object):
+class SongPlayer:
     def __init__(self):
         super().__init__()
         self.__wave_obj = sa.WaveObject.from_wave_file(resource_path("intro.wav"))
@@ -48,7 +48,7 @@ class SongPlayer(object):
             self.__play_obj = self.__wave_obj.play()
 
 
-class CompoundObject(object):
+class CompoundObject:
     def __init__(self, *objs):
         self.__objs = list(objs)
 
@@ -85,7 +85,7 @@ def add_shadow(widget, radius=0.1, offset=3):
     widget.setGraphicsEffect(shadow)
 
 
-class AutosizeWidget(object):
+class AutosizeWidget:
     """This class is a mixin which must be inherited with a QWidget with a `text()` method."""
 
     def __init__(self, *args, **kwargs):

@@ -13,7 +13,6 @@ from playwright.sync_api import sync_playwright
 from jparty.domain.models import Player
 from jparty.web.app import Application
 
-
 pytestmark = pytest.mark.e2e
 
 
@@ -193,10 +192,22 @@ def browser_page():
             };
             """
         )
-        page.route("https://cdn.jsdelivr.net/**", lambda route: route.fulfill(body="", content_type="application/javascript"))
-        page.route("http://ajax.googleapis.com/**", lambda route: route.fulfill(body="", content_type="application/javascript"))
-        page.route("https://fonts.googleapis.com/**", lambda route: route.fulfill(body="", content_type="text/css"))
-        page.route("https://www.w3schools.com/**", lambda route: route.fulfill(body="", content_type="text/css"))
+        page.route(
+            "https://cdn.jsdelivr.net/**",
+            lambda route: route.fulfill(body="", content_type="application/javascript"),
+        )
+        page.route(
+            "http://ajax.googleapis.com/**",
+            lambda route: route.fulfill(body="", content_type="application/javascript"),
+        )
+        page.route(
+            "https://fonts.googleapis.com/**",
+            lambda route: route.fulfill(body="", content_type="text/css"),
+        )
+        page.route(
+            "https://www.w3schools.com/**",
+            lambda route: route.fulfill(body="", content_type="text/css"),
+        )
         try:
             yield page
         finally:
@@ -205,9 +216,16 @@ def browser_page():
 
 def test_buzzer_browser_smoke(live_browser_server, browser_page):
     browser_page.goto(f"{live_browser_server.url}/")
-    browser_page.wait_for_function("window.updater && window.updater.socket && window.updater.socket.readyState === 1")
+    browser_page.wait_for_function(
+        "window.updater && window.updater.socket && window.updater.socket.readyState === 1"
+    )
     browser_page.evaluate("nameForm('Alice')")
-    wait_until(lambda: [player.name for player in live_browser_server.controller.connected_players] == ["Alice"])
+    wait_until(
+        lambda: (
+            [player.name for player in live_browser_server.controller.connected_players]
+            == ["Alice"]
+        )
+    )
     browser_page.wait_for_function("() => document.cookie.includes('token=')")
     browser_page.evaluate("buzz()")
     wait_until(lambda: live_browser_server.controller.buzzed_players == ["Alice"])
@@ -221,7 +239,9 @@ def test_lectern_browser_smoke(live_browser_server, browser_page):
     live_browser_server.controller.new_player(player)
 
     browser_page.goto(f"{live_browser_server.url}/lectern?player=0")
-    browser_page.wait_for_function("window.updater && window.updater.socket && window.updater.socket.readyState === 1")
+    browser_page.wait_for_function(
+        "window.updater && window.updater.socket && window.updater.socket.readyState === 1"
+    )
 
     name = browser_page.locator("#player-name")
     score = browser_page.locator("#player-score")

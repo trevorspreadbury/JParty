@@ -1,13 +1,14 @@
-from PyQt6.QtGui import QPainter, QBrush, QColor, QPixmap
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
-from PyQt6.QtCore import Qt, QSize
-
-from jparty.ui.widgets.common import resource_path
 import time
 from threading import Thread, current_thread
 
+from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtGui import QBrush, QColor, QPainter, QPixmap
+from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-class Borders(object):
+from jparty.ui.widgets.common import resource_path
+
+
+class Borders:
     def __init__(self, parent):
         super().__init__()
         self.left = self.create_widget(parent, -1)
@@ -49,7 +50,7 @@ class HostBorders(Borders):
                 b.show_hints(key)
             time.sleep(0.5)
             for b in self:
-               b.hide_hints(key)
+                b.hide_hints(key)
             time.sleep(0.5)
 
     def buzz_hint(self):

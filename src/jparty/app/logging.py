@@ -1,4 +1,3 @@
-import os
 import logging
 import platform
 import sys
@@ -23,9 +22,7 @@ log.info("Logging initialized at %s", LOG_FILE)
 
 def mailto(recipients, subject, body):
     "recipients: string with comma-separated emails (no spaces!)"
-    webbrowser.open(
-        "mailto:{}?subject={}&body={}".format(recipients, quote(subject), quote(body))
-    )
+    webbrowser.open(f"mailto:{recipients}?subject={quote(subject)}&body={quote(body)}")
 
 
 def show_exception_box(log_msg):
@@ -41,7 +38,7 @@ def show_exception_box(log_msg):
             defaultButton=QMessageBox.StandardButton.Yes,
         )
         if button is QMessageBox.StandardButton.Yes:
-            with open(LOG_FILE, "r") as f:
+            with open(LOG_FILE) as f:
                 logdata = f.read()
             message = f"""JPARTY ERROR REPORT:
 
@@ -63,7 +60,7 @@ class UncaughtHook(QObject):
     _exception_caught = pyqtSignal(object)
 
     def __init__(self, *args, **kwargs):
-        super(UncaughtHook, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         # this registers the exception_hook() function as hook with the Python interpreter
         sys.excepthook = self.exception_hook
@@ -83,10 +80,10 @@ class UncaughtHook(QObject):
             log_msg = "\n".join(
                 [
                     "".join(traceback.format_tb(exc_traceback)),
-                    "{0}: {1}".format(exc_type.__name__, exc_value),
+                    f"{exc_type.__name__}: {exc_value}",
                 ]
             )
-            log.critical("Uncaught exception:\n {0}".format(log_msg), exc_info=exc_info)
+            log.critical(f"Uncaught exception:\n {log_msg}", exc_info=exc_info)
 
             # trigger message box show
             self._exception_caught.emit(log_msg)

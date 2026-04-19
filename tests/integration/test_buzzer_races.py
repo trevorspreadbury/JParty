@@ -1,6 +1,5 @@
 import pytest
 
-
 pytestmark = pytest.mark.integration
 
 
@@ -16,7 +15,9 @@ def test_early_buzz_adds_player_to_penalty(game_with_players):
     assert game.answering_player is None
 
 
-def test_penalized_player_is_ignored_during_timeout_but_other_player_can_win(game_with_players, time_controller):
+def test_penalized_player_is_ignored_during_timeout_but_other_player_can_win(
+    game_with_players, time_controller
+):
     game = game_with_players
     question = game.current_round.get_question(0, 0)
     game.load_question(question)

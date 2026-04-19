@@ -1,13 +1,11 @@
-from types import SimpleNamespace
 from pathlib import Path
-
-from PyQt6.QtGui import QColor, QPixmap
+from types import SimpleNamespace
 
 import pytest
+from PyQt6.QtGui import QColor, QPixmap
 
 from jparty.domain.models import Question
 from jparty.ui.widgets.question import HostImageQuestionWidget, QuestionWidget
-
 
 pytestmark = pytest.mark.qt
 
@@ -40,7 +38,9 @@ def test_image_question_widget_shows_text_and_image(qtbot, temp_dir):
     assert not widget.image_label.pixmap().isNull()
 
 
-def test_accept_image_persists_local_file_for_contestant_display(qtbot, temp_dir, monkeypatch):
+def test_accept_image_persists_local_file_for_contestant_display(
+    qtbot, temp_dir, monkeypatch
+):
     monkeypatch.setattr("jparty.ui.widgets.question.QUESTION_MEDIA", temp_dir)
     monkeypatch.setattr(
         "jparty.ui.widgets.question.search_wikimedia_image",

@@ -1,24 +1,23 @@
-from PyQt6.QtGui import QColor, QPalette, QGuiApplication
 from PyQt6.QtCore import QMargins
-
+from PyQt6.QtGui import QColor, QGuiApplication, QPalette
 from PyQt6.QtWidgets import (
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
     QHBoxLayout,
+    QMainWindow,
+    QVBoxLayout,
+    QWidget,
 )
 
 from jparty.ui.widgets.board import BoardWidget
 from jparty.ui.widgets.borders import Borders, HostBorders
 from jparty.ui.widgets.final import FinalDisplay, GraphDisplay
 from jparty.ui.widgets.question import (
-    QuestionWidget,
     DailyDoubleWidget,
     FinalJeopardyWidget,
-    HostQuestionWidget,
     HostDailyDoubleWidget,
     HostFinalJeopardyWidget,
     HostImageQuestionWidget,
+    HostQuestionWidget,
+    QuestionWidget,
 )
 from jparty.ui.widgets.scoreboard import HostScoreBoard, ScoreBoard
 from jparty.ui.widgets.welcome import QRWidget, Welcome
@@ -164,12 +163,14 @@ class DisplayWindow(QMainWindow):
         # If graph_display is in the layout, replace it with board_widget first
         if self.graph_display is not None:
             # Check if graph_display is actually in the layout
-            layout_item = self.board_layout.itemAt(1)  # Position 1 is where board_widget/graph_display/question_widget should be
+            layout_item = self.board_layout.itemAt(
+                1
+            )  # Position 1 is where board_widget/graph_display/question_widget should be
             if layout_item is not None and layout_item.widget() == self.graph_display:
                 self.graph_display.setVisible(False)
                 self.board_layout.replaceWidget(self.graph_display, self.board_widget)
                 self.board_widget.setVisible(True)
-        
+
         self.hide_question()
         if self.final_display is not None:
             self.final_display.close()
@@ -207,7 +208,7 @@ class HostDisplayWindow(DisplayWindow):
             return HostDailyDoubleWidget(q, self)
         else:
             return HostQuestionWidget(q, self)
-        
+
     def create_image_question_widget(self, game):
         return HostImageQuestionWidget(game, self)
 
@@ -232,7 +233,9 @@ class HostDisplayWindow(DisplayWindow):
         self.board_widget.setVisible(False)
         if self.on_image_question:
             self.on_image_question = False
-            self.board_layout.replaceWidget(self.image_question_widget, self.question_widget)
+            self.board_layout.replaceWidget(
+                self.image_question_widget, self.question_widget
+            )
             self.image_question_widget.deleteLater()
             self.image_question_widget = None
         else:

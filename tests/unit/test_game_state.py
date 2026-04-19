@@ -1,7 +1,6 @@
 import json
-import os
-import pytest
 
+import pytest
 
 pytestmark = pytest.mark.unit
 
@@ -36,7 +35,9 @@ def test_save_general_state_writes_general_json(game, players, monkeypatch):
     assert len(saved["players"]) == len(players)
 
 
-def test_get_current_game_state_uses_started_at_and_players(game, players, monkeypatch, time_controller):
+def test_get_current_game_state_uses_started_at_and_players(
+    game, players, monkeypatch, time_controller
+):
     monkeypatch.setenv("JPARTY_GAME_ID", "8888")
     time_controller.set(2000.0)
     game._game_started_at = 1234.0

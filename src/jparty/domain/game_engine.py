@@ -2,7 +2,6 @@ import json
 import logging
 import os
 import time
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
@@ -10,14 +9,22 @@ import matplotlib
 import matplotlib.pyplot as plt
 import simpleaudio as sa
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
-from PyQt6.QtWidgets import QInputDialog, QApplication
+from PyQt6.QtWidgets import QApplication, QInputDialog
 
-matplotlib.use('Agg')  # Use non-interactive backend
+matplotlib.use("Agg")  # Use non-interactive backend
 
 from jparty.app.config import EARLY_BUZZ_PENALTY, FJTIME, QUESTIONTIME
 from jparty.app.paths import GAME_SCORES_DIR, GAME_STATES_DIR
-from jparty.domain.input import MAX_PLAYERS, KeystrokeManager, QuestionTimer, index_to_key
-from jparty.domain.models import Board, BuzzAttempt, FinalBoard, GameData, Player, Question
+from jparty.domain.input import (
+    MAX_PLAYERS,
+    KeystrokeManager,
+    QuestionTimer,
+    index_to_key,
+)
+from jparty.domain.models import (
+    BuzzAttempt,
+    FinalBoard,
+)
 from jparty.domain.state import (
     classify_buzz_phases,
     get_current_game_state,
@@ -54,7 +61,7 @@ class Game(QObject):
         self.previous_answerers = set()
         self.timer = None
         self.soliciting_player = False  # part of selecting who found a daily double
-        
+
         self.early_buzzes = set()
         self.responses_open_time = None
 
@@ -88,7 +95,10 @@ class Game(QObject):
             "CLOSE_GAME", Qt.Key.Key_Space, self.close_game, self.spacehints
         )
         self.keystroke_manager.addEvent(
-            "GENERATE_GRAPHS", Qt.Key.Key_Space, self.generate_final_score_graphs, self.spacehints
+            "GENERATE_GRAPHS",
+            Qt.Key.Key_Space,
+            self.generate_final_score_graphs,
+            self.spacehints,
         )
         self.keystroke_manager.addEvent(
             "FINAL_OPEN_RESPONSES",
@@ -125,10 +135,10 @@ class Game(QObject):
                 f"BUZZED_{player_index}",
                 index_to_key[player_index],
                 self.buzz,
-                lambda x: x, #nonsense
+                lambda x: x,  # nonsense
                 active=True,
                 persistent=True,
-                func_args=player_index
+                func_args=player_index,
             )
         self.wager_trigger.connect(self.wager)
         self.buzz_trigger.connect(self.buzz)
@@ -156,7 +166,10 @@ class Game(QObject):
             return False
 
         expected_player_count = self.expected_player_count()
-        if expected_player_count is not None and connected_players != expected_player_count:
+        if (
+            expected_player_count is not None
+            and connected_players != expected_player_count
+        ):
             return False
 
         return True
@@ -178,7 +191,7 @@ class Game(QObject):
             raise FileNotFoundError("Saved game folder must contain general.json")
 
         try:
-            with open(general_file, "r") as f:
+            with open(general_file) as f:
                 general_state = json.load(f)
         except Exception as e:
             raise ValueError(f"Could not load saved game metadata: {e}") from e
@@ -232,7 +245,10 @@ class Game(QObject):
                 continue
 
             question_coords = question_index[1]
-            if not isinstance(question_coords, (list, tuple)) or len(question_coords) != 2:
+            if (
+                not isinstance(question_coords, (list, tuple))
+                or len(question_coords) != 2
+            ):
                 continue
 
             question = self.data.rounds[round_index].get_question(*question_coords)
@@ -259,7 +275,9 @@ class Game(QObject):
     def _start_resumed_game(self):
         resume_state = self._resume_state
         self._game_state_dir = resume_state["path"]
-        self._game_started_at = resume_state["general_state"].get("started_at") or time.time()
+        self._game_started_at = (
+            resume_state["general_state"].get("started_at") or time.time()
+        )
 
         self.players = self.buzzer_controller.connected_players
         self._update_player_numbers()
@@ -270,9 +288,9 @@ class Game(QObject):
         self._restore_player_scores()
 
         if question_history:
-            self.question_number = max(
-                entry.get("question_number", 0) for entry in question_history
-            ) + 1
+            self.question_number = (
+                max(entry.get("question_number", 0) for entry in question_history) + 1
+            )
         else:
             self.question_number = 1
 
@@ -352,12 +370,12 @@ class Game(QObject):
         if not self._game_state_dir or not self._current_question_history:
             logging.error("No game state directory or current question history")
             return
-        
+
         question_index = self._get_question_index()
         if not question_index:
             logging.error("No question index")
             return
-        
+
         # Classify buzz attempts if question was not a daily double
         if not self.active_question.dd:
             buzz_phases = self._classify_buzz_phases()
@@ -368,17 +386,21 @@ class Game(QObject):
         entry = {
             "question_index": list(question_index),
             "question_number": self.question_number,
-            "round_index": self.data.rounds.index(self.current_round) if self.data and self.current_round else None,
+            "round_index": self.data.rounds.index(self.current_round)
+            if self.data and self.current_round
+            else None,
             "category": self.active_question.category if self.active_question else "",
             "value": self.active_question.value if self.active_question else -1,
-            "is_daily_double": self.active_question.dd if self.active_question else False,
+            "is_daily_double": self.active_question.dd
+            if self.active_question
+            else False,
             "buzz_phases": buzz_phases,
             "answer_attempts": self._answer_attempts.copy(),
             "completed_at": time.time(),
         }
-        
+
         history_file = self._game_state_dir / "question_history.jsonl"
-        
+
         try:
             with open(history_file, "a") as f:
                 json.dump(entry, f)
@@ -422,7 +444,10 @@ class Game(QObject):
             return
         index = self.players.index(player)
         if index > 0:
-            self.players[index], self.players[index - 1] = self.players[index - 1], self.players[index]
+            self.players[index], self.players[index - 1] = (
+                self.players[index - 1],
+                self.players[index],
+            )
             self._update_player_numbers()
             self.dc.scoreboard.refresh_players()
             self._update_all_lecterns()
@@ -432,7 +457,10 @@ class Game(QObject):
             return
         index = self.players.index(player)
         if index < len(self.players) - 1:
-            self.players[index], self.players[index + 1] = self.players[index + 1], self.players[index]
+            self.players[index], self.players[index + 1] = (
+                self.players[index + 1],
+                self.players[index],
+            )
             self._update_player_numbers()
             self.dc.scoreboard.refresh_players()
             self._update_all_lecterns()
@@ -471,7 +499,6 @@ class Game(QObject):
     def keyboard_buzz(self):
         self.buzz(0)
 
-
     def buzz(self, i_player):
         player = self.players[i_player]
         # unlogged buzzes
@@ -501,13 +528,11 @@ class Game(QObject):
         # If the player previously buzzed too early and the penalt
         # period has not expired, the player is in timeout.
         elif (
-            i_player in self.early_buzzes and 
-            (current_time - self.responses_open_time) < EARLY_BUZZ_PENALTY
+            i_player in self.early_buzzes
+            and (current_time - self.responses_open_time) < EARLY_BUZZ_PENALTY
         ):
             in_timeout = True
-            logging.info(
-                f"Early buzz timeout: player {i_player} ignored"
-            )
+            logging.info(f"Early buzz timeout: player {i_player} ignored")
         # successful buzz
         else:
             self.accepting_responses = False
@@ -521,17 +546,18 @@ class Game(QObject):
             self.keystroke_manager.activate("CORRECT_ANSWER", "INCORRECT_ANSWER")
             self.dc.borders.lights(False)
             self._successful_buzz_times.append(current_time)
-        
-        self._all_buzz_attempts.append(BuzzAttempt(
-            player_index=i_player,
-            question_index=question_index,
-            timestamp=current_time,
-            is_early=early_buzz,
-            is_success=successful_buzz,
-            is_rebound=False,
-            in_timeout=in_timeout
-        ))
-            
+
+        self._all_buzz_attempts.append(
+            BuzzAttempt(
+                player_index=i_player,
+                question_index=question_index,
+                timestamp=current_time,
+                is_early=early_buzz,
+                is_success=successful_buzz,
+                is_rebound=False,
+                in_timeout=in_timeout,
+            )
+        )
 
     def answer_given(self):
         self.keystroke_manager.deactivate("CORRECT_ANSWER", "INCORRECT_ANSWER")
@@ -541,13 +567,12 @@ class Game(QObject):
         if answering_player:
             self._update_lectern_for_player(answering_player, buzzed=False)
 
-
     def back_to_board(self):
         logging.info("back_to_board")
-        
+
         # Save question history before incrementing question number
         self._flush_question_history()
-        
+
         self.question_number += 1
         self.dc.hide_question()
         self.timer = None
@@ -556,8 +581,7 @@ class Game(QObject):
         self.previous_answerers = set()
         self.early_buzzes = set()
         self.responses_open_time = None
-        
-        
+
         # Clear active state for all players on lecterns
         if self.answering_player:
             self._update_lectern_for_player(self.answering_player, buzzed=False)
@@ -565,7 +589,7 @@ class Game(QObject):
         # Update all players to ensure lecterns show correct state
         for player in self.players:
             self._update_lectern_for_player(player, buzzed=False)
-        
+
         if all(q.complete for q in self.current_round.questions):
             logging.info("NEXT ROUND")
             self.keystroke_manager.activate("NEXT_ROUND")
@@ -642,7 +666,7 @@ class Game(QObject):
 
         self.dc.final_window.guess_label.setText("")
         self.dc.final_window.wager_label.setText("")
-        
+
         # Update lectern to show player name (answer will be shown in final_show_answer)
         self._update_lectern_for_player(self.answering_player, show_final_answer=False)
 
@@ -704,13 +728,13 @@ class Game(QObject):
 
     def generate_final_score_graphs(self):
         self.keystroke_manager.deactivate("GENERATE_GRAPHS")
-        
+
         for player_set in ["original", "current", "all"]:
             self.generate_final_score_graph(player_set)
-        
+
         # Ensure PyQt6 GUI is fully updated after all matplotlib operations
         QApplication.processEvents()
-        
+
         self.dc.load_final_graphs()
         self.keystroke_manager.activate("CLOSE_GAME")
 
@@ -730,75 +754,88 @@ class Game(QObject):
         if not all_score_history:
             logging.warning("No score history found to generate graph")
             return
-        
+
         # Get player name mappings
         general_state = self._load_general_state()
         original_player_map = {
             p.get("player_number"): p.get("name", f"Player {p.get('player_number')}")
             for p in general_state.get("players", [])
         }
-        current_player_map = {
-            p.player_number: p.name for p in self.players
-        }
-        
+        current_player_map = {p.player_number: p.name for p in self.players}
+
         # Determine which players to include
         if players == "original":
             player_numbers = set(original_player_map.keys())
         elif players == "current":
             player_numbers = set(current_player_map.keys())
         elif players == "all":
-            player_numbers = set(original_player_map.keys()) | set(current_player_map.keys())
+            player_numbers = set(original_player_map.keys()) | set(
+                current_player_map.keys()
+            )
         else:
             logging.error(f"Unknown player set: {players}")
             return
-        
+
         # Filter score history to requested players
         data = {
             pnum: all_score_history[pnum]
             for pnum in player_numbers
             if pnum in all_score_history
         }
-        
+
         if not data:
             logging.warning(f"No score data found for player set: {players}")
             return
-        
+
         game_id = os.environ.get("JPARTY_GAME_ID", "unknown")
-        
+
         # Isolate matplotlib operations to prevent interference with PyQt6
         fig = None
         try:
             # Create matplotlib figure
             fig, ax = plt.subplots(figsize=(10, 6))
-            
+
             # Plot each player's scores
             for player_number, scores in data.items():
                 # Get player name, preferring current name if available
-                player_name = current_player_map.get(player_number) or original_player_map.get(player_number) or f"Player {player_number}"
+                player_name = (
+                    current_player_map.get(player_number)
+                    or original_player_map.get(player_number)
+                    or f"Player {player_number}"
+                )
                 # x_values: 1 = start, 2 = after q1, 3 = after q2, etc.
                 x_values = list(range(1, len(scores) + 1))
-                ax.plot(x_values, scores, marker='o', label=player_name, linewidth=2, markersize=6)
-            
-            ax.set_xlabel('Question Number', fontsize=12)
-            ax.set_ylabel('Score', fontsize=12)
-            ax.set_title(f'Game {game_id}: Player Scores', fontsize=14, fontweight='bold')
-            ax.legend(loc='best')
+                ax.plot(
+                    x_values,
+                    scores,
+                    marker="o",
+                    label=player_name,
+                    linewidth=2,
+                    markersize=6,
+                )
+
+            ax.set_xlabel("Question Number", fontsize=12)
+            ax.set_ylabel("Score", fontsize=12)
+            ax.set_title(
+                f"Game {game_id}: Player Scores", fontsize=14, fontweight="bold"
+            )
+            ax.legend(loc="best")
             ax.grid(True, alpha=0.3)
-            
+
             # Save the figure
             GAME_SCORES_DIR.mkdir(exist_ok=True)
             image_path = GAME_SCORES_DIR / f"{game_id}-{players}.jpg"
-            
+
             plt.tight_layout()
-            fig.savefig(str(image_path), dpi=150, bbox_inches='tight')
+            fig.savefig(str(image_path), dpi=150, bbox_inches="tight")
         finally:
             # Always clean up matplotlib state
             if fig is not None:
                 plt.close(fig)  # Close figure to free memory
-            plt.close('all')  # Close all figures to ensure clean state
+            plt.close("all")  # Close all figures to ensure clean state
             # Ensure matplotlib doesn't interfere with PyQt6
             plt.ioff()  # Turn off interactive mode
-        
+
         # Process PyQt6 events to ensure GUI stays responsive
         QApplication.processEvents()
 
@@ -806,10 +843,14 @@ class Game(QObject):
         self.buzzer_controller.restart()
         # Notify all lecterns that players are cleared
         if self.buzzer_controller:
-            for player_number in list(self.buzzer_controller.lectern_connections.keys()):
+            for player_number in list(
+                self.buzzer_controller.lectern_connections.keys()
+            ):
                 if player_number in self.buzzer_controller.lectern_connections:
                     try:
-                        self.buzzer_controller.lectern_connections[player_number].send("NO_PLAYER", "")
+                        self.buzzer_controller.lectern_connections[player_number].send(
+                            "NO_PLAYER", ""
+                        )
                     except:
                         pass
         self.players = []
@@ -835,9 +876,7 @@ class Game(QObject):
         except:
             round_index = 1
 
-        max_wager = max(
-            self.answering_player.score,
-            1000 if round_index == 0 else 2000)
+        max_wager = max(self.answering_player.score, 1000 if round_index == 0 else 2000)
         wager_res = QInputDialog.getInt(
             self.host_display,
             "Wager",
@@ -859,7 +898,6 @@ class Game(QObject):
         self.active_question = q
         self.host_display.load_image_review_screen(q)
 
-
     def load_question(self, q):
         self.active_question = q
         # Initialize question tracking
@@ -868,19 +906,21 @@ class Game(QObject):
         self._answer_attempts = []
         self._open_responses_times = []
         self._successful_buzz_times = []
-        
+
         # Initialize question history entry
         question_index = self._get_question_index()
         if question_index:
             self._current_question_history = {
                 "question_index": list(question_index),
                 "question_number": self.question_number,
-                "round_index": self.data.rounds.index(self.current_round) if self.data and self.current_round else None,
+                "round_index": self.data.rounds.index(self.current_round)
+                if self.data and self.current_round
+                else None,
                 "category": q.category,
                 "value": q.value,
                 "is_daily_double": q.dd,
             }
-        
+
         if q.dd:
             logging.info("Daily double!")
             wo = sa.WaveObject.from_wave_file(resource_path("dd.wav"))
@@ -900,14 +940,16 @@ class Game(QObject):
         new_score = old_score + self.active_question.value
         # Record answer attempt
         if self.answering_player:
-            self._answer_attempts.append({
-                "player_index": self.answering_player.player_number,
-                "answer_correct": True,
-                "timestamp": time.time(),
-                "score_before": old_score,
-                "score_after": new_score,
-            })
-        
+            self._answer_attempts.append(
+                {
+                    "player_index": self.answering_player.player_number,
+                    "answer_correct": True,
+                    "timestamp": time.time(),
+                    "score_before": old_score,
+                    "score_after": new_score,
+                }
+            )
+
         if self.timer:
             self.timer.cancel()
 
@@ -924,13 +966,15 @@ class Game(QObject):
         new_score = old_score - self.active_question.value
         # Record answer attempt
         if self.answering_player:
-            self._answer_attempts.append({
-                "player_index": self.answering_player.player_number,
-                "answer_correct": False,
-                "timestamp": time.time(),
-                "score_before": old_score,
-                "score_after": new_score,
-            })
+            self._answer_attempts.append(
+                {
+                    "player_index": self.answering_player.player_number,
+                    "answer_correct": False,
+                    "timestamp": time.time(),
+                    "score_before": old_score,
+                    "score_after": new_score,
+                }
+            )
         self.set_score(
             self.answering_player,
             new_score,
@@ -959,7 +1003,9 @@ class Game(QObject):
         if self.buzzer_controller:
             state_dict = self.buzzer_controller.get_player_state_dict(player)
             state_dict["buzzed"] = buzzed
-            state_dict["active"] = (self.answering_player is player) if self.answering_player else False
+            state_dict["active"] = (
+                (self.answering_player is player) if self.answering_player else False
+            )
             # Only include finalanswer if we're showing it
             if not show_final_answer:
                 state_dict["finalanswer"] = None
@@ -983,4 +1029,3 @@ class Game(QObject):
     def close(self):
         self.song_player.stop()
         QApplication.quit()
-

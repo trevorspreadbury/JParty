@@ -5,7 +5,6 @@ import pytest
 
 from jparty.services import archive_client as retrieve
 
-
 pytestmark = pytest.mark.unit
 
 
@@ -15,23 +14,39 @@ def test_get_game_html_prefers_saved_local_html(temp_dir, monkeypatch):
     expected_html = "<html>saved</html>"
     (saved_dir / "1234.html").write_text(expected_html)
     monkeypatch.setattr(retrieve, "SAVED_GAMES", saved_dir)
-    monkeypatch.setattr(retrieve, "get_wayback_game_html", lambda game_id: pytest.fail("wayback should not be called"))
-    monkeypatch.setattr(retrieve, "get_jarchive_game_html", lambda game_id: pytest.fail("j-archive should not be called"))
+    monkeypatch.setattr(
+        retrieve,
+        "get_wayback_game_html",
+        lambda game_id: pytest.fail("wayback should not be called"),
+    )
+    monkeypatch.setattr(
+        retrieve,
+        "get_jarchive_game_html",
+        lambda game_id: pytest.fail("j-archive should not be called"),
+    )
 
     assert retrieve.get_game_html(1234) == expected_html
 
 
 def test_get_game_html_falls_back_to_wayback(temp_dir, monkeypatch):
     monkeypatch.setattr(retrieve, "SAVED_GAMES", temp_dir / "missing")
-    monkeypatch.setattr(retrieve, "get_wayback_game_html", lambda game_id: "<html>wayback</html>")
+    monkeypatch.setattr(
+        retrieve, "get_wayback_game_html", lambda game_id: "<html>wayback</html>"
+    )
 
     assert retrieve.get_game_html(1234) == "<html>wayback</html>"
 
 
 def test_get_game_html_falls_back_to_jarchive_when_wayback_fails(temp_dir, monkeypatch):
     monkeypatch.setattr(retrieve, "SAVED_GAMES", temp_dir / "missing")
-    monkeypatch.setattr(retrieve, "get_wayback_game_html", lambda game_id: (_ for _ in ()).throw(RuntimeError("wayback failed")))
-    monkeypatch.setattr(retrieve, "get_jarchive_game_html", lambda game_id: "<html>jarchive</html>")
+    monkeypatch.setattr(
+        retrieve,
+        "get_wayback_game_html",
+        lambda game_id: (_ for _ in ()).throw(RuntimeError("wayback failed")),
+    )
+    monkeypatch.setattr(
+        retrieve, "get_jarchive_game_html", lambda game_id: "<html>jarchive</html>"
+    )
 
     assert retrieve.get_game_html(1234) == "<html>jarchive</html>"
 
@@ -81,6 +96,7 @@ def test_find_question_media_returns_matching_file(temp_dir, monkeypatch):
 
 def test_get_game_uses_gsheet_for_long_ids(monkeypatch):
     called = {}
+
     def fake_get_gsheet_game(file_id):
         called["id"] = file_id
         return "sentinel"

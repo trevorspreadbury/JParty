@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import Qt
 
-
 MAX_PLAYERS = 6
 index_to_key = {
     0: Qt.Key.Key_Q,

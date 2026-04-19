@@ -1,26 +1,18 @@
-from PyQt6.QtGui import (
-    QPainter,
-    QPen,
-    QColor,
-    QFont,
-    QPixmap,
-    QKeyEvent
-)
-from PyQt6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QLabel,
-    QPushButton,
-    QHBoxLayout,
-    QSplitter,
-    QSizePolicy,
-    QLineEdit,
-)
-from PyQt6.QtCore import Qt, QUrl, QTimer, QObject, QEvent
-from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
-import requests
 from pathlib import Path
 from uuid import uuid4
+
+from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from jparty.app.paths import QUESTION_MEDIA
 from jparty.services.image_lookup import search_wikimedia_image
@@ -58,13 +50,14 @@ class QuestionWidget(QWidget):
 
     def startFontSize(self):
         return self.width() * 0.05
-    
+
     def isQuestionTypeTextOnly(self):
         """Check if visual clues have been saved for the question"""
         if self.question.image and self.question.image_url is not None:
             return False
         else:
             return True
+
 
 class HostQuestionWidget(QuestionWidget):
     def __init__(self, question, parent=None):
@@ -86,7 +79,7 @@ class HostQuestionWidget(QuestionWidget):
 
     def isQuestionTypeTextOnly(self):
         """Host always see only text"""
-        return True 
+        return True
 
 
 class HostImageQuestionWidget(QWidget):
@@ -237,7 +230,8 @@ class HostImageQuestionWidget(QWidget):
         """Update the image URL or query after debounce."""
         input_text = self.textbox.text()
         self.image_url = (
-            input_text if input_text.startswith("https://")
+            input_text
+            if input_text.startswith("https://")
             else search_wikimedia_image(input_text)
         )
         self.fetch_image(self.image_url)
@@ -290,6 +284,7 @@ class HostImageQuestionWidget(QWidget):
             return str(saved_path)
 
         return self.image_url
+
 
 class DailyDoubleWidget(QuestionWidget):
     def __init__(self, question, parent=None):

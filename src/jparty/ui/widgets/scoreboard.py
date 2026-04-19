@@ -1,11 +1,11 @@
-from PyQt6.QtGui import QPainter, QPixmap, QImage, QPalette, QColor, QIcon
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QSizePolicy, QPushButton
-from PyQt6.QtCore import Qt, QSize, QPoint
-
 import time
-from threading import Thread
 from base64 import urlsafe_b64decode
 from functools import partial
+from threading import Thread
+
+from PyQt6.QtCore import QPoint, QSize, Qt
+from PyQt6.QtGui import QColor, QIcon, QImage, QPainter, QPalette, QPixmap
+from PyQt6.QtWidgets import QHBoxLayout, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from jparty.ui.styles import MyLabel
 from jparty.ui.widgets.common import resource_path
@@ -178,12 +178,16 @@ class HostPlayerWidget(PlayerWidget):
 
         self.up_button = QPushButton("▲", self)
         self.up_button.clicked.connect(partial(self.game.move_player_up, player))
-        self.up_button.setStyleSheet("QPushButton { font-size: 16px; font-weight: bold; }")
+        self.up_button.setStyleSheet(
+            "QPushButton { font-size: 16px; font-weight: bold; }"
+        )
         self.up_button.show()
 
         self.down_button = QPushButton("▼", self)
         self.down_button.clicked.connect(partial(self.game.move_player_down, player))
-        self.down_button.setStyleSheet("QPushButton { font-size: 16px; font-weight: bold; }")
+        self.down_button.setStyleSheet(
+            "QPushButton { font-size: 16px; font-weight: bold; }"
+        )
         self.down_button.show()
 
     def resizeEvent(self, event):
@@ -193,15 +197,17 @@ class HostPlayerWidget(PlayerWidget):
             xbutton_size = int(self.width() * 0.2)
             self.remove_button.resize(QSize(xbutton_size, xbutton_size))
             self.remove_button.setIconSize(self.size())
-        
+
         if self.up_button is not None:
             button_size = int(self.width() * 0.15)
             self.up_button.move(QPoint(self.width() - button_size, 0))
             self.up_button.resize(QSize(button_size, button_size))
-        
+
         if self.down_button is not None:
             button_size = int(self.width() * 0.15)
-            self.down_button.move(QPoint(self.width() - button_size, self.height() - button_size))
+            self.down_button.move(
+                QPoint(self.width() - button_size, self.height() - button_size)
+            )
             self.down_button.resize(QSize(button_size, button_size))
 
 
@@ -240,10 +246,10 @@ class ScoreBoard(QWidget):
             item = self.player_layout.takeAt(1)
             if item.widget():
                 item.widget().setParent(None)
-        
+
         # Reorder player_widgets list and rebuild layout
         self.player_widgets = []
-        for (i, p) in enumerate(self.game.players):
+        for i, p in enumerate(self.game.players):
             if p in player_to_widget:
                 pw = player_to_widget[p]
             else:
@@ -251,11 +257,11 @@ class ScoreBoard(QWidget):
             self.player_widgets.append(pw)
             self.player_layout.insertWidget(2 * i + 1, pw)
             self.player_layout.insertStretch(2 * i + 2)
-            
+
             # Enable/disable reorder buttons based on position
-            if hasattr(pw, 'up_button'):
+            if hasattr(pw, "up_button"):
                 pw.up_button.setEnabled(i > 0)
-            if hasattr(pw, 'down_button'):
+            if hasattr(pw, "down_button"):
                 pw.down_button.setEnabled(i < len(self.game.players) - 1)
 
         self.update()
@@ -278,9 +284,9 @@ class HostScoreBoard(ScoreBoard):
         for pw in self.player_widgets:
             pw.remove_button.setVisible(False)
             pw.remove_button.setEnabled(False)
-            if hasattr(pw, 'up_button'):
+            if hasattr(pw, "up_button"):
                 pw.up_button.setVisible(False)
                 pw.up_button.setEnabled(False)
-            if hasattr(pw, 'down_button'):
+            if hasattr(pw, "down_button"):
                 pw.down_button.setVisible(False)
                 pw.down_button.setEnabled(False)

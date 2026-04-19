@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 APP_NAME = "JParty"
 FJTIME = 31
 QUESTIONTIME = 4

@@ -1,13 +1,12 @@
-import asyncio
 import json
 from types import SimpleNamespace
 
 import pytest
-from tornado.testing import AsyncHTTPTestCase as TornadoAsyncHTTPTestCase, gen_test
+from tornado.testing import AsyncHTTPTestCase as TornadoAsyncHTTPTestCase
+from tornado.testing import gen_test
 from tornado.websocket import websocket_connect
 
 from jparty.web.app import Application
-
 
 pytestmark = pytest.mark.e2e
 TornadoAsyncHTTPTestCase.__test__ = False
@@ -75,14 +74,18 @@ class TestBuzzerSocketSystem(TornadoAsyncHTTPTestCase):
 
     @gen_test
     async def test_player_can_join_and_reconnect_by_token(self):
-        ws = await websocket_connect(self.get_url("/buzzersocket").replace("http", "ws"))
+        ws = await websocket_connect(
+            self.get_url("/buzzersocket").replace("http", "ws")
+        )
         ws.write_message(json.dumps({"message": "NAME", "text": "Alice"}))
         first_message = json.loads(await ws.read_message())
         assert first_message["message"] == "TOKEN"
         token = first_message["text"]
         ws.close()
 
-        ws2 = await websocket_connect(self.get_url("/buzzersocket").replace("http", "ws"))
+        ws2 = await websocket_connect(
+            self.get_url("/buzzersocket").replace("http", "ws")
+        )
         ws2.write_message(json.dumps({"message": "CHECK_IF_EXISTS", "text": token}))
         reconnect_message = json.loads(await ws2.read_message())
         assert reconnect_message["message"] == "EXISTS"
@@ -90,11 +93,15 @@ class TestBuzzerSocketSystem(TornadoAsyncHTTPTestCase):
 
     @gen_test
     async def test_lectern_socket_receives_initial_player_state(self):
-        ws = await websocket_connect(self.get_url("/buzzersocket").replace("http", "ws"))
+        ws = await websocket_connect(
+            self.get_url("/buzzersocket").replace("http", "ws")
+        )
         ws.write_message(json.dumps({"message": "NAME", "text": "Alice"}))
         await ws.read_message()
 
-        lectern = await websocket_connect(self.get_url("/lecternsocket?player=0").replace("http", "ws"))
+        lectern = await websocket_connect(
+            self.get_url("/lecternsocket?player=0").replace("http", "ws")
+        )
         lectern_message = json.loads(await lectern.read_message())
         assert lectern_message["message"] == "PLAYER_STATE"
         payload = json.loads(lectern_message["text"])

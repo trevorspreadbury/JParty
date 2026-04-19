@@ -1,6 +1,5 @@
-from PyQt6.QtWidgets import QWidget, QGridLayout
 from PyQt6.QtGui import QPalette
-
+from PyQt6.QtWidgets import QGridLayout, QWidget
 
 from jparty.domain.models import Board
 from jparty.ui.styles import CARDPAL, DARKBLUE, JBLUE, MyLabel

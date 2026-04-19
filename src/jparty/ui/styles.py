@@ -1,9 +1,9 @@
-from PyQt6.QtWidgets import QStyle, QCommonStyle
-from PyQt6.QtGui import QPalette, QColor, QPixmap
-from PyQt6.QtCore import Qt, QRect, QByteArray
+from pathlib import Path
 
 import requests
-from pathlib import Path
+from PyQt6.QtCore import QByteArray, Qt
+from PyQt6.QtGui import QColor, QPalette, QPixmap
+from PyQt6.QtWidgets import QCommonStyle, QStyle
 
 from jparty.ui.widgets.common import DynamicLabel, add_shadow
 
@@ -27,6 +27,7 @@ class JPartyStyle(QCommonStyle):
     def styleHint(self, key, *args, **kwargs):
         return JPartyStyle.SH_dict.get(key, super().styleHint(key, *args, **kwargs))
 
+
 def fetch_image_from_url(url: str) -> QPixmap:
     """
     Fetches an image from the given URL and converts it to a QPixmap.
@@ -35,16 +36,17 @@ def fetch_image_from_url(url: str) -> QPixmap:
         # Fetch image data from the URL
         response = requests.get(url)
         response.raise_for_status()  # Raise an error for failed requests
-        
+
         # Convert image data to QPixmap
         image_data = QByteArray(response.content)
         pixmap = QPixmap()
         pixmap.loadFromData(image_data)
-        
+
         return pixmap
     except Exception as e:
         print(f"Failed to fetch or load the image: {e}")
         return QPixmap()  # Return an empty pixmap on failure
+
 
 class MyLabel(DynamicLabel):
     def __init__(self, text, initialSize, parent=None, image=False):
@@ -55,7 +57,9 @@ class MyLabel(DynamicLabel):
         else:
             self.question_image = text
             if not Path(self.question_image).exists():
-                self.question_image_pixmap = fetch_image_from_url(str(self.question_image))
+                self.question_image_pixmap = fetch_image_from_url(
+                    str(self.question_image)
+                )
             else:
                 self.question_image_pixmap = QPixmap(self.question_image)
             self.setText("")
@@ -75,14 +79,15 @@ class MyLabel(DynamicLabel):
     def resizeEvent(self, event):
         """Override the resize event to rescale the image."""
         super().resizeEvent(event)
-        if hasattr(self, 'question_image_pixmap') and self.question_image_pixmap:
+        if hasattr(self, "question_image_pixmap") and self.question_image_pixmap:
             # Scale the pixmap to fit the label's size while keeping the aspect ratio
             scaled_pixmap = self.question_image_pixmap.scaled(
-                self.size(), 
+                self.size(),
                 Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
+                Qt.TransformationMode.SmoothTransformation,
             )
             self.setPixmap(scaled_pixmap)
+
 
 WINDOWPAL = QPalette()
 WINDOWPAL.setColor(QPalette.ColorRole.Base, QColor("white"))

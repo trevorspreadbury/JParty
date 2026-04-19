@@ -45,7 +45,9 @@ def _default_user_data_root() -> Path:
         except OSError as exc:
             last_error = exc
             continue
-    raise RuntimeError("Could not create a writable JParty data directory") from last_error
+    raise RuntimeError(
+        "Could not create a writable JParty data directory"
+    ) from last_error
 
 
 USER_DATA_ROOT = _default_user_data_root()

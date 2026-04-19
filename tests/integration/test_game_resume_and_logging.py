@@ -4,7 +4,6 @@ import pytest
 
 from jparty.domain.models import FinalBoard, Player
 
-
 pytestmark = pytest.mark.integration
 
 
@@ -16,7 +15,9 @@ class DummyWaiter:
         return None
 
 
-def test_question_history_logging_writes_buzz_phases_and_attempts(game_with_players, time_controller):
+def test_question_history_logging_writes_buzz_phases_and_attempts(
+    game_with_players, time_controller
+):
     game = game_with_players
     question = game.current_round.get_question(0, 0)
 
@@ -38,7 +39,9 @@ def test_question_history_logging_writes_buzz_phases_and_attempts(game_with_play
     assert entry["buzz_phases"][0]["buzz_attempts"][0]["player_index"] == 0
 
 
-def test_prepare_and_resume_saved_game_restores_round_scores_and_questions(game, monkeypatch, sample_saved_game_dir):
+def test_prepare_and_resume_saved_game_restores_round_scores_and_questions(
+    game, monkeypatch, sample_saved_game_dir
+):
     from jparty.services import game_loader
 
     restored_data = game.data

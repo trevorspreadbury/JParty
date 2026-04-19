@@ -131,7 +131,9 @@ class LecternSocketHandler(tornado.websocket.WebSocketHandler):
         try:
             self.write_message(data)
         except Exception:
-            logging.error("Error sending message to lectern %s", self.player_number, exc_info=True)
+            logging.error(
+                "Error sending message to lectern %s", self.player_number, exc_info=True
+            )
 
     def send_initial_state(self):
         if self.player_number is None or not self.controller.game:

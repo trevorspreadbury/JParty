@@ -5,12 +5,11 @@ import time
 from pathlib import Path
 
 import requests
-from simpleaudio._simpleaudio import SimpleaudioError
 from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication, QMessageBox
+from simpleaudio._simpleaudio import SimpleaudioError
 
 from jparty.app.config import DEBUG_MODE, PORT
-from jparty.app.logging import qt_exception_hook
 from jparty.app.paths import SAVED_GAMES
 from jparty.domain.game_engine import Game
 from jparty.services.archive_client import get_game_html, process_game_board_from_html
@@ -46,22 +45,24 @@ def permission_error():
         defaultButton=QMessageBox.StandardButton.Abort,
     )
 
+
 def audio_error():
-    logging.error(f"Cannot access audio device")
+    logging.error("Cannot access audio device")
     QMessageBox.critical(
         None,
         "Audio error Error",
-        f"JParty cannot access an audio device.",
+        "JParty cannot access an audio device.",
         buttons=QMessageBox.StandardButton.Abort,
         defaultButton=QMessageBox.StandardButton.Abort,
     )
+
 
 def check_second_monitor():
     # Allow bypassing the check for testing with environment variable
     if DEBUG_MODE:
         logging.warning("Single monitor mode enabled (DEBUG_MODE)")
         return
-    
+
     if len(QApplication.instance().screens()) < 2:
         logging.error("No two monitors")
         QMessageBox.critical(
@@ -136,9 +137,7 @@ def launch_gui():
     check_internet()
     app.setFont(QFont("Verdana"))
 
-    i = QFontDatabase.addApplicationFont(
-        resource_path("ITC_ Korinna Normal.ttf")
-    )
+    i = QFontDatabase.addApplicationFont(resource_path("ITC_ Korinna Normal.ttf"))
 
     game = Game()
 
@@ -148,25 +147,23 @@ def launch_gui():
 
     try:
         socket_controller.start()
-    except PermissionError as e:
+    except PermissionError:
         permission_error()
         exit(1)
 
     main_window = DisplayWindow(game)
     host_window = HostDisplayWindow(game)
     game.setDisplays(host_window, main_window)
-    
+
     try:
         game.begin()
-    except SimpleaudioError as e:
+    except SimpleaudioError:
         audio_error()
         exit(1)
 
     song_player = game.song_player
 
-
-
-    r=1 # fail by default
+    r = 1  # fail by default
     try:
         r = app.exec()
     finally:

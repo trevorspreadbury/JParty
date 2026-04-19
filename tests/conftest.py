@@ -343,7 +343,10 @@ def build_game_data():
         rounds=[
             build_round(1),
             build_round(2),
-            FinalBoard("Final Category", Question((0, 0), "Final clue", "Final response", "Final Category")),
+            FinalBoard(
+                "Final Category",
+                Question((0, 0), "Final clue", "Final response", "Final Category"),
+            ),
         ],
         date="January 1, 2026",
         comments="Fixture game",
@@ -372,13 +375,13 @@ def temp_dir():
 
 @pytest.fixture()
 def sample_general_state(fixture_dir):
-    with open(fixture_dir / "general.json", "r") as f:
+    with open(fixture_dir / "general.json") as f:
         return json.load(f)
 
 
 @pytest.fixture()
 def sample_question_history_lines(fixture_dir):
-    with open(fixture_dir / "question_history.jsonl", "r") as f:
+    with open(fixture_dir / "question_history.jsonl") as f:
         return [json.loads(line) for line in f if line.strip()]
 
 
@@ -447,7 +450,9 @@ def game_with_players(game, players):
 
 
 @pytest.fixture()
-def sample_saved_game_dir(temp_dir, sample_general_state, sample_question_history_lines):
+def sample_saved_game_dir(
+    temp_dir, sample_general_state, sample_question_history_lines
+):
     saved_dir = temp_dir / "saved_game"
     saved_dir.mkdir()
     with open(saved_dir / "general.json", "w") as f:

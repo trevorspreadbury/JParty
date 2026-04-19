@@ -1,11 +1,12 @@
-import requests
-from bs4 import BeautifulSoup
-from html import unescape
-import re
+import csv
 import json
 import logging
-import csv
 import os
+import re
+from html import unescape
+
+import requests
+from bs4 import BeautifulSoup
 
 from jparty.app.config import MONIES
 from jparty.app.paths import QUESTION_MEDIA, SAVED_GAMES
@@ -72,6 +73,7 @@ def get_game_html(game_id):
         game_html = get_jarchive_game_html(game_id)
     return game_html
 
+
 def get_game(game_id):
     os.environ["JPARTY_GAME_ID"] = str(game_id)
     if len(str(game_id)) < 7:
@@ -84,14 +86,16 @@ def get_game(game_id):
 def findanswer(clue):
     return re.findall(r'correct_response">(.*?)</em', unescape(str(clue)))[0]
 
+
 def get_jarchive_game_html(game_id):
     game_url = f"http://www.j-archive.com/showgame.php?game_id={game_id}"
     r = requests.get(game_url)
     return r.text
 
+
 def find_question_media(game_id: int, round: int, index: tuple) -> str:
     """Return path to question media or False if none exist
-    
+
     Args:
         game_id: game id
         round: round number, 1-jeopardy, 2-double jeopardy
@@ -105,6 +109,7 @@ def find_question_media(game_id: int, round: int, index: tuple) -> str:
                 return str(media_file)
     return False
 
+
 def get_actual_player_results(clue: BeautifulSoup, value: int):
     """Get the results from the actual jeopardy contestants"""
     dd_value = clue.find(class_="clue_value_daily_double")
@@ -112,8 +117,8 @@ def get_actual_player_results(clue: BeautifulSoup, value: int):
         value = int(dd_value.text[5:].replace(",", ""))
     wrong_answers = clue.find_all("td", {"class": "wrong"})
     answers = [
-        [wrong_answer.text, -value] 
-        for wrong_answer in wrong_answers 
+        [wrong_answer.text, -value]
+        for wrong_answer in wrong_answers
         if wrong_answer.text != "Triple Stumper"
     ]
     right_answer = clue.find("td", {"class": "right"})
@@ -121,17 +126,27 @@ def get_actual_player_results(clue: BeautifulSoup, value: int):
         answers.append([right_answer.text, value])
     return answers
 
+
 def get_actual_player_final(clue: BeautifulSoup) -> list[list[str]]:
     answers = []
     wrong_players = clue.find_all("td", {"class": "wrong"})
     for player_answer in wrong_players:
-        value = int(player_answer.parent.find_next_sibling("tr").text.strip()[1:].replace(",", ""))
+        value = int(
+            player_answer.parent.find_next_sibling("tr")
+            .text.strip()[1:]
+            .replace(",", "")
+        )
         answers.append([player_answer.text, -value])
     right_players = clue.find_all("td", {"class": "right"})
     for player_answer in right_players:
-        value = int(player_answer.parent.find_next_sibling("tr").text.strip()[1:].replace(",", ""))
+        value = int(
+            player_answer.parent.find_next_sibling("tr")
+            .text.strip()[1:]
+            .replace(",", "")
+        )
         answers.append([player_answer.text, value])
     return answers
+
 
 def process_game_board_from_html(html, game_id) -> GameData:
     """Given j-archive html, produce a game data object"""
@@ -140,9 +155,7 @@ def process_game_board_from_html(html, game_id) -> GameData:
     comment_nodes = soup.select("#game_comments")
     if not title_nodes or not comment_nodes:
         return None
-    datesearch = re.search(
-        r"- \w+, (.*?)$", title_nodes[0].text
-    )
+    datesearch = re.search(r"- \w+, (.*?)$", title_nodes[0].text)
     if datesearch is None:
         return None
     date = datesearch.groups()[0]
@@ -166,7 +179,7 @@ def process_game_board_from_html(html, game_id) -> GameData:
                 print(f"{game_id} is inccomplete")
                 logging.info("this game is incomplete")
                 return None
-            image_likely = text_obj.find('a')
+            image_likely = text_obj.find("a")
             image_url = None
             text = text_obj.text
             # get actual player results
@@ -179,7 +192,7 @@ def process_game_board_from_html(html, game_id) -> GameData:
             if dd:
                 dds += 1
             if dds > i + 1:
-                dd = False 
+                dd = False
             value = MONIES[i][index[1]]
             actual_results = get_actual_player_results(clue, value)
             answer = findanswer(clue)
@@ -197,7 +210,7 @@ def process_game_board_from_html(html, game_id) -> GameData:
                     dd,
                     image=image_likely,
                     image_url=image_url,
-                    actual_results=actual_results
+                    actual_results=actual_results,
                 )
             )
         boards.append(Board(categories, questions, dj=(i == 1)))
@@ -216,7 +229,6 @@ def process_game_board_from_html(html, game_id) -> GameData:
         logging.info("this game is incomplete")
         return None
 
-
     text = text_obj.text
     answer = findanswer(final_round_obj)
     question = Question((0, 0), text, answer, category, actual_results=actual_results)
@@ -225,11 +237,12 @@ def process_game_board_from_html(html, game_id) -> GameData:
 
     return GameData(boards, date, comments)
 
+
 def get_wayback_game_html(game_id):
     # kudos to Abhi Kumbar: https://medium.com/analytics-vidhya/the-wayback-machine-scraper-63238f6abb66
     # this query's the wayback cdx api for possible instances of the saved jarchive page with the specified game id & returns the latest one
     JArchive_url = f"j-archive.com/showgame.php?game_id={str(game_id)}"  # use the url w/o the http:// or https:// to include both in query
-    url = f'http://web.archive.org/cdx/search/cdx?url={JArchive_url}&collapse=digest&limit=-2&fastLatest=true&output=json'  # for some reason, using limit=-1 does not work
+    url = f"http://web.archive.org/cdx/search/cdx?url={JArchive_url}&collapse=digest&limit=-2&fastLatest=true&output=json"  # for some reason, using limit=-1 does not work
     urls = requests.get(url).text
     parse_url = json.loads(urls)  # parses the JSON from urls.
     if len(parse_url) == 0:  # if no results, return None
@@ -239,11 +252,11 @@ def get_wayback_game_html(game_id):
 
     ## Extracts timestamp and original columns from urls and compiles a url list.
     url_list = []
-    for i in range(1, len(parse_url)): # gets the wayback url
+    for i in range(1, len(parse_url)):  # gets the wayback url
         orig_url = parse_url[i][2]
         tstamp = parse_url[i][1]
-        waylink = tstamp + '/' + orig_url
-        final_url = f'http://web.archive.org/web/{waylink}'
+        waylink = tstamp + "/" + orig_url
+        final_url = f"http://web.archive.org/web/{waylink}"
         url_list.append(final_url)
     latest_url = url_list[-1]
     r = requests.get(latest_url)

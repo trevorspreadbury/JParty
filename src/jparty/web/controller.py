@@ -1,15 +1,13 @@
 import logging
-import tornado.ioloop
-from tornado.options import define, options
-
 import socket
 from threading import Thread
 
 import tornado.escape
+import tornado.ioloop
+from tornado.options import define, options
 
 from jparty.app.config import PORT
 from jparty.web.app import Application
-
 
 define("port", default=PORT, help="run on the given port", type=int)
 
@@ -30,11 +28,11 @@ class BuzzerController:
     def start(self, threaded=True, tries=0):
         try:
             self.app.listen(self.port)
-        except OSError as e:
-            if tries>10:
+        except OSError:
+            if tries > 10:
                 raise Exception("Cannot find open port")
             self.port += 1
-            self.start(threaded, tries+1)
+            self.start(threaded, tries + 1)
             return
 
         if threaded:
@@ -121,7 +119,7 @@ class BuzzerController:
             "player_number": player.player_number,
             "active": False,
             "buzzed": False,
-            "finalanswer": getattr(player, 'finalanswer', None),
+            "finalanswer": getattr(player, "finalanswer", None),
         }
 
     def broadcast_to_lecterns(self, player_number, state_dict):
@@ -130,4 +128,6 @@ class BuzzerController:
             try:
                 lectern.send("PLAYER_STATE", tornado.escape.json_encode(state_dict))
             except:
-                logging.error(f"Error broadcasting to lectern {player_number}", exc_info=True)
+                logging.error(
+                    f"Error broadcasting to lectern {player_number}", exc_info=True
+                )

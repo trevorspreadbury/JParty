@@ -1,6 +1,6 @@
 import os
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout
+from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
 from jparty.app.paths import GAME_SCORES_DIR
 from jparty.ui.styles import CARDPAL, MyLabel
@@ -21,7 +21,7 @@ class GraphDisplay(QWidget):
         self.main_layout.addWidget(self.question_label)
         self.setLayout(self.main_layout)
         self.setPalette(CARDPAL)
-        self.show() 
+        self.show()
 
 
 class FinalDisplay(QWidget):
