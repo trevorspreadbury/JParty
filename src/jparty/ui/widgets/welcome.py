@@ -40,7 +40,7 @@ ROUND_CHECKBOX_STYLE = """
 QCheckBox {
     color: black;
     spacing: 0px;
-    font-size: 16px;
+    font-size: 24px;
     font-weight: 600;
 }
 QCheckBox::indicator {
@@ -48,6 +48,14 @@ QCheckBox::indicator {
     height: 0px;
     border: none;
     background: transparent;
+}
+"""
+
+ROUNDS_LABEL_STYLE = """
+QLabel {
+    color: black;
+    font-size: 22px;
+    font-weight: 700;
 }
 """
 
@@ -238,7 +246,7 @@ class Welcome(StartWidget):
         select_layout.addStretch(2)
         select_layout.addLayout(button_layout, 20)
         select_layout.addStretch(5)
-        self.summary_label = DynamicLabel("", lambda: self.height() * 0.04, self)
+        self.summary_label = DynamicLabel("", lambda: self.height() * 0.072, self)
         self.summary_label.setWordWrap(True)
         self.summary_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.summary_label.setSizePolicy(
@@ -247,6 +255,7 @@ class Welcome(StartWidget):
         self.rounds_widget = QWidget(self)
         self.rounds_layout = QVBoxLayout()
         self.rounds_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.rounds_layout.setSpacing(12)
         self.rounds_widget.setLayout(self.rounds_layout)
         self.rounds_widget.setVisible(False)
         self.quit_button = DynamicButton("Quit", self)
@@ -266,8 +275,8 @@ class Welcome(StartWidget):
         main_layout.addStretch(1)
         main_layout.addLayout(select_layout, 5)
         main_layout.addStretch(1)
-        main_layout.addWidget(self.summary_label, 5)
-        main_layout.addWidget(self.rounds_widget, 3)
+        main_layout.addWidget(self.summary_label, 7)
+        main_layout.addWidget(self.rounds_widget, 4)
         main_layout.addLayout(footer_layout, 3)
         main_layout.addStretch(3)
         self.gameid_trigger.connect(self.set_gameid)
@@ -306,6 +315,35 @@ class Welcome(StartWidget):
         f = self.textbox.font()
         f.setPixelSize(int(textbox_height * 0.9))
         self.textbox.setFont(f)
+        checkbox_font_size = max(int(self.height() * 0.026), 22)
+        checkbox_style = f"""
+QCheckBox {{
+    color: black;
+    spacing: 0px;
+    font-size: {checkbox_font_size}px;
+    font-weight: 600;
+}}
+QCheckBox::indicator {{
+    width: 0px;
+    height: 0px;
+    border: none;
+    background: transparent;
+}}
+"""
+        rounds_label_font_size = max(int(self.height() * 0.022), 18)
+        rounds_label_style = f"""
+QLabel {{
+    color: black;
+    font-size: {rounds_label_font_size}px;
+    font-weight: 700;
+}}
+"""
+        for index in range(self.rounds_layout.count()):
+            widget = self.rounds_layout.itemAt(index).widget()
+            if isinstance(widget, QCheckBox):
+                widget.setStyleSheet(checkbox_style)
+            elif isinstance(widget, QLabel):
+                widget.setStyleSheet(rounds_label_style)
 
     def __random(self) -> None:
         """Return random."""
@@ -479,8 +517,7 @@ class Welcome(StartWidget):
                 connected_players = len(self.game.buzzer_controller.connected_players)
                 self.summary_label.setText(
                     self._base_summary_text
-                    + f"\n\nConnect exactly {expected_player_count} players to resume."
-                    + f"\nCurrently connected: {connected_players}"
+                    + f"\nConnect exactly {expected_player_count} players to resume."
                 )
             elif (
                 not self._loading_summary
@@ -540,6 +577,7 @@ class Welcome(StartWidget):
         selected_indices = {int(index) for index in selected_indices}
         rounds_label = QLabel("Rounds to play:", self.rounds_widget)
         rounds_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        rounds_label.setStyleSheet(ROUNDS_LABEL_STYLE)
         self.rounds_layout.addWidget(rounds_label)
         for index, round_data in enumerate(self.game.data.rounds):
             checkbox = QCheckBox("", self.rounds_widget)
