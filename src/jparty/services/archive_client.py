@@ -25,6 +25,7 @@ REQUEST_TIMEOUT_SECONDS = 10
 DOUBLE_JEOPARDY_START_ROW = 14
 GOOGLE_SHEETS_ID_LENGTH = 7
 STANDARD_AND_FINAL_ROUND_COUNT = 3
+_LOADED_GAME_HTML_CACHE = {}
 
 
 def list_to_game(s: object) -> object:
@@ -98,6 +99,7 @@ def get_game_html(game_id: object) -> object:
         try:
             with saved_game_path.open("r") as f:
                 game_html = f.read()
+                _LOADED_GAME_HTML_CACHE[str(game_id)] = game_html
                 return game_html
         except UnicodeDecodeError:
             print("UnicodeDecodeError on saved game, trying from internet")
@@ -108,7 +110,31 @@ def get_game_html(game_id: object) -> object:
         print("using j-archive")
         logging.error(e)
         game_html = get_jarchive_game_html(game_id)
+    _LOADED_GAME_HTML_CACHE[str(game_id)] = game_html
     return game_html
+
+
+def save_game_html(game_id: object) -> object:
+    """Persist a played J-Archive game's HTML into the saved-games cache.
+
+    Args:
+        game_id: Numeric J-Archive game identifier to save locally.
+
+    Returns:
+        The saved HTML path when the game can be cached locally, or ``None``
+        for identifiers that are not J-Archive game ids.
+    """
+    game_id_str = str(game_id)
+    if len(game_id_str) >= GOOGLE_SHEETS_ID_LENGTH:
+        return None
+    saved_game_path = SAVED_GAMES / f"{game_id_str}.html"
+    if saved_game_path.exists():
+        return saved_game_path
+    game_html = _LOADED_GAME_HTML_CACHE.get(game_id_str)
+    if game_html is None:
+        game_html = get_game_html(game_id_str)
+    saved_game_path.write_text(game_html, encoding="utf-8")
+    return saved_game_path
 
 
 def get_game(game_id: object) -> object:

@@ -116,3 +116,25 @@ def test_get_game_uses_gsheet_for_long_ids(monkeypatch: object) -> None:
     result = retrieve.get_game("1234567")
     assert called["id"] == "1234567"
     assert result == "sentinel"
+
+
+def test_save_game_html_uses_cached_html_and_writes_file(
+    temp_dir: object, monkeypatch: object
+) -> None:
+    """Test test save game html uses cached html and writes file."""
+    saved_dir = temp_dir / "saved"
+    saved_dir.mkdir()
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", saved_dir)
+    monkeypatch.setattr(
+        retrieve,
+        "_LOADED_GAME_HTML_CACHE",
+        {"4453": "<html>cached game</html>"},
+    )
+    monkeypatch.setattr(
+        retrieve,
+        "get_game_html",
+        lambda game_id: pytest.fail("cached HTML should be used"),
+    )
+    saved_path = retrieve.save_game_html(4453)
+    assert saved_path == saved_dir / "4453.html"
+    assert saved_path.read_text(encoding="utf-8") == "<html>cached game</html>"
