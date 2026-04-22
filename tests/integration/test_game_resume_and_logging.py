@@ -152,3 +152,35 @@ def test_start_game_saves_html_when_play_begins(
     assert saved_game_ids == ["4453"]
     assert game.current_round is game.data.rounds[0]
     assert game.dc.hidden_welcome == 1
+
+
+def test_start_game_filters_rounds_to_selected_indices(
+    game: object, monkeypatch: object
+) -> None:
+    """Test test start game filters rounds to selected indices."""
+    from jparty.services import archive_client
+
+    monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
+    monkeypatch.setenv("JPARTY_GAME_ID", "4453")
+    game.set_selected_round_indices([0, 2])
+    original_final_round = game.data.rounds[2]
+    game.start_game()
+    assert len(game.data.rounds) == 2
+    assert game.data.rounds[1] is original_final_round
+
+
+def test_next_round_ends_game_when_no_later_round_is_selected(
+    game_with_players: object, monkeypatch: object
+) -> None:
+    """Test test next round ends game when no later round is selected."""
+    from jparty.services import archive_client
+
+    game = game_with_players
+    monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
+    monkeypatch.setenv("JPARTY_GAME_ID", "4453")
+    game.set_selected_round_indices([0])
+    game.dc.final_window = None
+    game.start_game()
+    game.next_round()
+    assert game.dc.loaded_final_judgement == 1
+    assert game.dc.final_window.winner is not None or game.dc.final_window.tie_shown

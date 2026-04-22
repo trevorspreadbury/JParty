@@ -32,12 +32,14 @@ def test_save_general_state_writes_general_json(
 ) -> None:
     """Test test save general state writes general json."""
     monkeypatch.setenv("JPARTY_GAME_ID", "7777")
+    game.set_selected_round_indices([0, 2])
     game._save_general_state()
     general_file = game._game_state_dir / "general.json"
     assert general_file.exists()
     saved = json.loads(general_file.read_text())
     assert saved["game_id"] == "7777"
     assert len(saved["players"]) == len(players)
+    assert saved["selected_round_indices"] == [0, 2]
 
 
 def test_get_current_game_state_uses_started_at_and_players(

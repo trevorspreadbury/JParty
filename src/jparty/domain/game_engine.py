@@ -28,7 +28,7 @@ from jparty.domain.input import (
     QuestionTimer,
     index_to_key,
 )
-from jparty.domain.models import BuzzAttempt, FinalBoard
+from jparty.domain.models import BuzzAttempt, FinalBoard, GameData
 from jparty.domain.state import (
     classify_buzz_phases,
     get_current_game_state,
@@ -162,6 +162,7 @@ class Game(QObject):
         self._successful_buzz_times = []
         self._game_started_at = None
         self._resume_state = None
+        self._selected_round_indices = None
 
     def startable(self) -> bool:
         """Determine whether the game can start with the current connections.
@@ -201,6 +202,50 @@ class Game(QObject):
             ``None``.
         """
         self._resume_state = None
+        self._selected_round_indices = None
+
+    def set_selected_round_indices(self, indices: object) -> None:
+        """Store the original round indices selected for play.
+
+        Args:
+            indices: Iterable of zero-based round indices to include when the
+                game starts, or ``None`` to fall back to all rounds.
+
+        Returns:
+            ``None``.
+        """
+        if indices is None:
+            self._selected_round_indices = None
+            return
+        self._selected_round_indices = sorted({int(index) for index in indices})
+
+    def selected_round_indices(self) -> list[int]:
+        """Return the configured original round indices for this session.
+
+        Returns:
+            Selected zero-based round indices, or all currently loaded rounds
+            when no explicit selection has been stored.
+        """
+        if self._selected_round_indices is not None:
+            return list(self._selected_round_indices)
+        if self.data is None:
+            return []
+        return list(range(len(self.data.rounds)))
+
+    def _apply_selected_rounds_to_data(self) -> None:
+        """Filter loaded game data down to the currently selected rounds.
+
+        Returns:
+            ``None``.
+        """
+        if self.data is None:
+            return
+        selected_rounds = [
+            self.data.rounds[index]
+            for index in self.selected_round_indices()
+            if 0 <= index < len(self.data.rounds)
+        ]
+        self.data = GameData(selected_rounds, self.data.date, self.data.comments)
 
     def prepare_resume_from_dir(self, saved_game_dir: object) -> object:
         """Load enough metadata to resume a previously saved game session.
@@ -236,6 +281,8 @@ class Game(QObject):
         if not saved_players:
             raise ValueError("Saved game metadata is missing player information")
         self.data = get_game(game_id)
+        self.set_selected_round_indices(general_state.get("selected_round_indices"))
+        self._apply_selected_rounds_to_data()
         if not self.valid_game():
             raise ValueError("Saved game points to an invalid or incomplete game")
         self._resume_state = {
@@ -263,15 +310,24 @@ class Game(QObject):
         if self._resume_state:
             self._start_resumed_game()
             return
+        self._apply_selected_rounds_to_data()
+        if not self.data or not self.data.rounds:
+            logging.warning("No rounds selected for play")
+            return
         self._save_played_game_html()
         self.current_round = self.data.rounds[0]
         self.dc.hide_welcome_widgets()
-        self.dc.board_widget.load_round(self.current_round)
         self.buzzer_controller.accepting_players = False
         self.song_player.stop()
         self._game_started_at = time.time()
         self._initialize_game_state_dir()
         self._save_general_state()
+        if isinstance(self.current_round, FinalBoard):
+            self.dc.load_final(self.current_round.question)
+            self.active_question = self.current_round.question
+            self.start_final()
+        else:
+            self.dc.board_widget.load_round(self.current_round)
 
     def _save_played_game_html(self) -> None:
         """Persist the current J-Archive game's HTML once play actually begins.
@@ -827,6 +883,11 @@ class Game(QObject):
         logging.info("next round")
         i = self.data.rounds.index(self.current_round)
         logging.info(f"ROUND {i}")
+        if i + 1 >= len(self.data.rounds):
+            if getattr(self.dc, "final_window", None) is None:
+                self.dc.load_final_judgement()
+            self.end_game()
+            return
         self.current_round = self.data.rounds[i + 1]
         if isinstance(self.current_round, FinalBoard):
             self.dc.load_final(self.current_round.question)

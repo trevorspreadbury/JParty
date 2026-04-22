@@ -26,11 +26,13 @@ def get_current_game_state(game: object) -> object:
     """
     game_id = game.current_game_id()
     current_time = time.time()
+    selected_round_indices = game.selected_round_indices()
     return {
         "game_id": game_id,
         "players": [
             {"name": p.name, "player_number": p.player_number} for p in game.players
         ],
+        "selected_round_indices": selected_round_indices,
         "started_at": game._game_started_at or current_time,
         "last_updated": current_time,
     }
