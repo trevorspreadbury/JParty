@@ -444,10 +444,7 @@ class Welcome(StartWidget):
         self.resume_path = selected_dir
         self.start_button.setText("Resume!")
         saved_players = resume_state["general_state"].get("players", [])
-        self.configure_round_selector(
-            resume_state["general_state"].get("selected_round_indices"),
-            enabled=False,
-        )
+        self.configure_round_selector(enabled=False)
         self._base_summary_text = "\n".join(
             [
                 f"Resume game {resume_state['game_id']} from:",

@@ -52,9 +52,17 @@ class StubGame:
     def prepare_resume_from_dir(self, selected_dir: object) -> object:
         """Test prepare resume from dir."""
         self.resume_expected = 2
+        self.data = GameData(
+            [self.data.rounds[0], self.data.rounds[2]],
+            self.data.date,
+            self.data.comments,
+        )
         return {
             "game_id": "4453",
-            "general_state": {"players": [{"name": "Alice"}, {"name": "Bob"}]},
+            "general_state": {
+                "players": [{"name": "Alice"}, {"name": "Bob"}],
+                "selected_round_indices": [0, 2],
+            },
         }
 
     def startable(self) -> object:
@@ -99,6 +107,12 @@ def test_load_saved_game_requires_matching_player_count(
     widget.load_saved_game()
     assert widget.start_button.text() == "Resume!"
     assert widget.start_button.isEnabled() is False
+    assert [checkbox.text() for checkbox in widget.round_checkboxes] == [
+        "[x] Jeopardy!",
+        "[x] Final Jeopardy!",
+    ]
+    assert all(checkbox.isChecked() for checkbox in widget.round_checkboxes)
+    assert all(not checkbox.isEnabled() for checkbox in widget.round_checkboxes)
     assert "Connect exactly 2 players" in widget.summary_label.text()
     game.buzzer_controller.connected_players = [object(), object()]
     widget.check_start()
