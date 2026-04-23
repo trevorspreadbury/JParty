@@ -300,33 +300,27 @@ def build_end_game_summary(game: object) -> EndGameSummary:
                 if buzz_attempt.get("is_early"):
                     early_buzzes[player_number] = early_buzzes.get(player_number, 0) + 1
 
-        main_phase = next(
-            (phase for phase in buzz_phases if phase.get("phase_type") == "main"),
-            None,
-        )
         answer_attempts = entry.get("answer_attempts", [])
-        if main_phase and answer_attempts:
+        for phase_index, phase in enumerate(buzz_phases):
+            if phase_index >= len(answer_attempts):
+                break
             race_buzzers = {
                 buzz_attempt.get("player_index")
-                for buzz_attempt in main_phase.get("buzz_attempts", [])
+                for buzz_attempt in phase.get("buzz_attempts", [])
                 if buzz_attempt.get("player_index") is not None
-                and not buzz_attempt.get("is_early")
                 and not buzz_attempt.get("in_timeout")
             }
-            if len(race_buzzers) >= 2:
-                for player_number in race_buzzers:
-                    race_opportunities[player_number] = (
-                        race_opportunities.get(player_number, 0) + 1
-                    )
-                first_response = min(
-                    answer_attempts,
-                    key=lambda attempt: attempt.get("timestamp", float("inf")),
+            if len(race_buzzers) < 2:
+                continue
+            for player_number in race_buzzers:
+                race_opportunities[player_number] = (
+                    race_opportunities.get(player_number, 0) + 1
                 )
-                winner_player_number = first_response.get("player_index")
-                if winner_player_number in race_buzzers:
-                    race_wins[winner_player_number] = (
-                        race_wins.get(winner_player_number, 0) + 1
-                    )
+            winner_player_number = answer_attempts[phase_index].get("player_index")
+            if winner_player_number in race_buzzers:
+                race_wins[winner_player_number] = (
+                    race_wins.get(winner_player_number, 0) + 1
+                )
 
         for attempt in answer_attempts:
             player_number = attempt.get("player_index")

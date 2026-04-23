@@ -69,7 +69,7 @@ class SummaryGraphWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        rect = self.rect().adjusted(42, 18, -18, -36)
+        rect = self.rect().adjusted(86, 18, -18, -36)
         painter.fillRect(self.rect(), CARDPAL.color(QPalette.ColorRole.Window))
 
         min_score = min(self._all_scores())
@@ -120,7 +120,7 @@ class SummaryGraphWidget(QWidget):
         for tick_index in range(y_ticks + 1):
             score = int(max_score - ((max_score - min_score) * tick_index / y_ticks))
             y = rect.top() + (rect.height() * tick_index / y_ticks)
-            painter.drawText(4, int(y) + 5, f"${score:,}")
+            painter.drawText(10, int(y) + 5, f"${score:,}")
 
         if max_points > 1:
             x_step = max(1, ceil(max_points / 8))
@@ -167,6 +167,7 @@ class SummaryGraphWidget(QWidget):
 
         pen = QPen(color, width)
         painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
         path = QPainterPath()
         first_point = QPointF(x_pos(0), y_pos(series.scores[0]))
         path.moveTo(first_point)

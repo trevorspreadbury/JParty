@@ -137,3 +137,117 @@ def test_build_end_game_summary_includes_original_series_for_replaced_players(
         series.player_number == 0 and series.name == "Alice"
         for series in summary.original_series
     )
+
+
+def test_build_end_game_summary_counts_races_in_any_phase(
+    game: object, players: object, temp_dir: object
+) -> None:
+    """Test race stats count any phase with multiple buzzers."""
+    game._game_state_dir = temp_dir / "saved"
+    game._game_state_dir.mkdir()
+    (game._game_state_dir / "general.json").write_text(
+        json.dumps(
+            {
+                "game_id": "4453",
+                "players": [
+                    {"name": "Alice", "player_number": 0},
+                    {"name": "Bob", "player_number": 1},
+                    {"name": "Cara", "player_number": 2},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (game._game_state_dir / "question_history.jsonl").write_text(
+        json.dumps(
+            {
+                "question_index": [0, [0, 0]],
+                "question_number": 1,
+                "round_index": 0,
+                "category": "Cat 0",
+                "value": 200,
+                "is_daily_double": False,
+                "buzz_phases": [
+                    {
+                        "phase_type": "main",
+                        "start_time": 1.0,
+                        "end_time": 2.0,
+                        "buzz_attempts": [
+                            {
+                                "player_index": 0,
+                                "question_index": [0, [0, 0]],
+                                "timestamp": 1.1,
+                                "is_early": False,
+                                "is_success": True,
+                                "is_rebound": False,
+                                "in_timeout": False,
+                            },
+                            {
+                                "player_index": 1,
+                                "question_index": [0, [0, 0]],
+                                "timestamp": 1.2,
+                                "is_early": False,
+                                "is_success": False,
+                                "is_rebound": False,
+                                "in_timeout": False,
+                            },
+                        ],
+                    },
+                    {
+                        "phase_type": "rebound",
+                        "start_time": 3.0,
+                        "end_time": 4.0,
+                        "buzz_attempts": [
+                            {
+                                "player_index": 1,
+                                "question_index": [0, [0, 0]],
+                                "timestamp": 3.1,
+                                "is_early": False,
+                                "is_success": True,
+                                "is_rebound": True,
+                                "in_timeout": False,
+                            },
+                            {
+                                "player_index": 2,
+                                "question_index": [0, [0, 0]],
+                                "timestamp": 3.2,
+                                "is_early": False,
+                                "is_success": False,
+                                "is_rebound": True,
+                                "in_timeout": False,
+                            },
+                        ],
+                    },
+                ],
+                "answer_attempts": [
+                    {
+                        "player_index": 0,
+                        "answer_correct": False,
+                        "timestamp": 2.5,
+                        "score_before": 0,
+                        "score_after": -200,
+                    },
+                    {
+                        "player_index": 1,
+                        "answer_correct": True,
+                        "timestamp": 4.5,
+                        "score_before": 0,
+                        "score_after": 200,
+                    },
+                ],
+                "completed_at": 5.0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    summary = build_end_game_summary(game)
+    stats_by_player = {
+        player.player_number: player for player in summary.current_players
+    }
+    assert stats_by_player[0].race_wins == 1
+    assert stats_by_player[0].race_opportunities == 1
+    assert stats_by_player[1].race_wins == 1
+    assert stats_by_player[1].race_opportunities == 2
+    assert stats_by_player[2].race_wins == 0
+    assert stats_by_player[2].race_opportunities == 1

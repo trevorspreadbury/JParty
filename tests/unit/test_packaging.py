@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+import json
 
 import pytest
 from jparty.app import bootstrap
@@ -154,3 +155,90 @@ def test_load_summary_from_game_state_directory_uses_saved_state(
     summary = bootstrap.load_summary_from_game_state_directory(sample_saved_game_dir)
     assert summary.current_players
     assert summary.question_count == 3
+
+
+def test_load_summary_counts_race_when_saved_player_buzzes_early_in_same_phase(
+    temp_dir: object, monkeypatch: object
+) -> None:
+    """Test saved-summary race stats count same-phase early buzzes as races."""
+    saved_game_dir = temp_dir / "game-state"
+    saved_game_dir.mkdir()
+    (saved_game_dir / "general.json").write_text(
+        json.dumps(
+            {
+                "game_id": "4453",
+                "players": [
+                    {"name": "Player 0", "player_number": 0},
+                    {"name": "Player 2", "player_number": 2},
+                ],
+                "selected_round_indices": [0, 1],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (saved_game_dir / "question_history.jsonl").write_text(
+        json.dumps(
+            {
+                "question_index": [0, [0, 0]],
+                "question_number": 1,
+                "round_index": 0,
+                "category": "Cat 0",
+                "value": 400,
+                "is_daily_double": False,
+                "buzz_phases": [
+                    {
+                        "phase_type": "main",
+                        "start_time": 1.0,
+                        "end_time": 2.0,
+                        "buzz_attempts": [
+                            {
+                                "player_index": 2,
+                                "question_index": [0, [0, 0]],
+                                "timestamp": 1.1,
+                                "is_early": True,
+                                "is_success": False,
+                                "is_rebound": False,
+                                "in_timeout": False,
+                            },
+                            {
+                                "player_index": 0,
+                                "question_index": [0, [0, 0]],
+                                "timestamp": 1.9,
+                                "is_early": False,
+                                "is_success": True,
+                                "is_rebound": False,
+                                "in_timeout": False,
+                            },
+                        ],
+                    }
+                ],
+                "answer_attempts": [
+                    {
+                        "player_index": 0,
+                        "answer_correct": True,
+                        "timestamp": 2.1,
+                        "score_before": 0,
+                        "score_after": 400,
+                    }
+                ],
+                "completed_at": 2.2,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    fake_data = bootstrap.process_game_board_from_html(
+        (Path("tests") / "fixtures" / "4453.html").read_text(encoding="utf-8"),
+        4453,
+    )
+    monkeypatch.setattr("jparty.services.game_loader.get_game", lambda game_id: fake_data)
+
+    summary = bootstrap.load_summary_from_game_state_directory(saved_game_dir)
+    stats_by_player = {
+        player.player_number: player for player in summary.current_players
+    }
+
+    assert stats_by_player[0].race_wins == 1
+    assert stats_by_player[0].race_opportunities == 1
+    assert stats_by_player[2].race_wins == 0
+    assert stats_by_player[2].race_opportunities == 1
