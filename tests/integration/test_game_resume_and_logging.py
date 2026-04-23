@@ -41,6 +41,43 @@ def test_question_history_logging_writes_buzz_phases_and_attempts(
     assert entry["buzz_phases"][0]["buzz_attempts"][0]["player_index"] == 0
 
 
+def test_final_jeopardy_logging_writes_question_history_entry(
+    game_with_players: object,
+) -> None:
+    """Test Final Jeopardy judgments are written to question history."""
+    game = game_with_players
+    game.current_round = game.data.rounds[2]
+    game.active_question = game.current_round.question
+    game.players[0].score = 1000
+    game.players[1].score = 800
+    game.players[2].score = 600
+    game.players[0].wager = 200
+    game.players[1].wager = 300
+    game.players[2].wager = 100
+    game.players[0].finalanswer = "Paris"
+    game.players[1].finalanswer = "London"
+    game.players[2].finalanswer = "Rome"
+    game.final_open_responses()
+    for expected_player, is_correct in [
+        (game.players[2], False),
+        (game.players[1], True),
+        (game.players[0], False),
+    ]:
+        game.final_next_player()
+        assert game.answering_player is expected_player
+        game.final_show_answer()
+        if is_correct:
+            game.final_correct_answer()
+        else:
+            game.final_incorrect_answer()
+    game.final_next_player()
+    history_file = game._game_state_dir / "question_history.jsonl"
+    entry = json.loads(history_file.read_text().splitlines()[-1])
+    assert entry["round_index"] == 2
+    assert entry["answer_attempts"]
+    assert [attempt["player_index"] for attempt in entry["answer_attempts"]] == [2, 1, 0]
+
+
 def test_prepare_and_resume_saved_game_restores_round_scores_and_questions(
     game: object, monkeypatch: object, sample_saved_game_dir: object
 ) -> None:
