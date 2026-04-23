@@ -88,6 +88,34 @@ def test_main_download_dispatches_to_downloader(monkeypatch: object) -> None:
     assert recorded == {"inputs": ["4453", "4454"], "delay": 5}
 
 
+def test_main_summary_dispatches_to_generator(monkeypatch: object) -> None:
+    """Test summary subcommand dispatches to the summary image generator."""
+    recorded = {}
+    monkeypatch.setattr(
+        bootstrap,
+        "generate_summary_image",
+        lambda game_state_directory, output_file=None: recorded.update(
+            {
+                "game_state_directory": game_state_directory,
+                "output_file": output_file,
+            }
+        )
+        or Path("summary.png"),
+    )
+    result = bootstrap.main(["summary", "--game-state-directory", "C:/saved-game"])
+    assert result == 0
+    assert recorded == {
+        "game_state_directory": "C:/saved-game",
+        "output_file": None,
+    }
+
+
+def test_summary_output_path_defaults_to_summary_png(temp_dir: object) -> None:
+    """Test summary output path defaults inside the game-state directory."""
+    output_path = bootstrap.summary_output_path(temp_dir)
+    assert output_path == temp_dir / "summary.png"
+
+
 def test_download_games_skips_existing_and_supports_file_inputs(
     temp_dir: object, monkeypatch: object, capsys: object
 ) -> None:
@@ -110,3 +138,19 @@ def test_download_games_skips_existing_and_supports_file_inputs(
     assert downloaded == ["4454"]
     assert "Game already saved" in captured.out
     assert (saved_dir / "4454.html").read_text(encoding="utf-8") == "<html>4454</html>"
+
+
+def test_load_summary_from_game_state_directory_uses_saved_state(
+    sample_saved_game_dir: object, monkeypatch: object
+) -> None:
+    """Test summary loading rebuilds a summary from saved game state."""
+    fake_data = bootstrap.process_game_board_from_html(
+        (Path("tests") / "fixtures" / "4453.html").read_text(encoding="utf-8"),
+        4453,
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game", lambda game_id: fake_data
+    )
+    summary = bootstrap.load_summary_from_game_state_directory(sample_saved_game_dir)
+    assert summary.current_players
+    assert summary.question_count == 3

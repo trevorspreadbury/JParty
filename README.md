@@ -108,9 +108,29 @@ Useful development commands:
 uv run pytest tests -q
 uv run jparty download 4453 4454
 uv run jparty download games.txt
+uv run jparty summary --game-state-directory .jparty-data/game_states/4453-20260422T2130
 ```
 
 If you are using conda instead of `uv`, use the same commands without the `uv run` prefix.
+
+### Generate a Summary Image from Saved State
+
+You can render the same audience summary visual used at the end of the game from a saved game-state directory:
+
+```
+jparty summary --game-state-directory /path/to/game_state_dir
+```
+
+Arguments:
+
+- `--game-state-directory`: required path to a saved game-state directory containing `general.json`
+- `--output-file`: optional output path for the rendered image
+
+If `--output-file` is omitted, JParty writes:
+
+```
+<game-state-directory>/summary.png
+```
 
 ## Build
 To build from source, run:
