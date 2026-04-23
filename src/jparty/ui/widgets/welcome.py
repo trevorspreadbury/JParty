@@ -65,6 +65,8 @@ STANDARD_ROUND_LABELS = [
     "Triple Jeopardy!",
 ]
 
+MISSING_DAILY_DOUBLE_WARNING = "CRITICAL: Missing Daily Double"
+
 
 class Image(qrcode.image.base.BaseImage):
     """Adapter that renders QR codes into Qt image objects."""
@@ -365,9 +367,7 @@ QLabel {{
                 else:
                     time.sleep(0.25)
             self.gameid_trigger.emit(str(game_id))
-            self.summary_trigger.emit(
-                self.game.data.date + "\n" + self.game.data.comments
-            )
+            self.summary_trigger.emit(self.build_summary_text())
         except Exception as e:
             logging.error(e)
             self.summary_trigger.emit("Cannot get game")
@@ -395,15 +395,40 @@ QLabel {{
             self.game.clear_resume_state()
             self.game.data = get_game(game_id)
             if self.game.valid_game():
-                self.summary_trigger.emit(
-                    self.game.data.date + "\n" + self.game.data.comments
-                )
+                self.summary_trigger.emit(self.build_summary_text())
             else:
-                self.summary_trigger.emit("Game has blank questions")
+                self.summary_trigger.emit("Cannot load game")
         except Exception as e:
             logging.error(e)
             self.summary_trigger.emit("Cannot get game")
         self.check_start()
+
+    def build_summary_text(self) -> str:
+        """Build the current welcome summary including load warnings.
+
+        Returns:
+            Summary text for the loaded game, including missing-clue warnings.
+        """
+        if not getattr(self.game, "data", None):
+            return ""
+        summary_lines = [self.game.data.date, self.game.data.comments]
+        missing_question_count = getattr(
+            self.game.data, "missing_question_count", lambda: 0
+        )()
+        if missing_question_count:
+            summary_lines.extend(
+                [
+                    "",
+                    f"WARNING: Missing {missing_question_count} question"
+                    f"{'' if missing_question_count == 1 else 's'}",
+                ]
+            )
+        has_missing_daily_double = getattr(
+            self.game.data, "has_missing_daily_double", lambda: False
+        )()
+        if has_missing_daily_double:
+            summary_lines.extend(["", MISSING_DAILY_DOUBLE_WARNING])
+        return "\n".join(str(line) for line in summary_lines if line is not None)
 
     def set_summary(self, text: object) -> None:
         """Update the summary text shown on the welcome screen.

@@ -295,8 +295,8 @@ def process_game_board_from_html(html: object, game_id: object) -> GameData:
             associated media lookups.
 
     Returns:
-        A ``GameData`` object for complete games, or ``None`` when required
-        sections are missing or incomplete.
+        A ``GameData`` object for playable games, or ``None`` when required
+        top-level sections are missing.
     """
     soup = BeautifulSoup(html, "html.parser")
     title_nodes = soup.select("#game_title > h1")
@@ -319,9 +319,8 @@ def process_game_board_from_html(html: object, game_id: object) -> GameData:
         for clue in ro.find_all(class_="clue"):
             text_obj = clue.find(class_="clue_text")
             if text_obj is None:
-                print(f"{game_id} is inccomplete")
-                logging.info("this game is incomplete")
-                return None
+                logging.warning("Skipping missing clue in game %s round %s", game_id, i)
+                continue
             image_likely = text_obj.find("a")
             image_url = None
             text = text_obj.text

@@ -91,6 +91,22 @@ class Board:
         """
         return len(self.questions) == BOARD_QUESTION_COUNT
 
+    def missing_question_count(self) -> int:
+        """Return the number of missing clue slots on this board.
+
+        Returns:
+            Count of clue positions that do not have a parsed question.
+        """
+        return max(BOARD_QUESTION_COUNT - len(self.questions), 0)
+
+    def daily_double_count(self) -> int:
+        """Return how many Daily Doubles exist on this board.
+
+        Returns:
+            Count of questions flagged as Daily Doubles.
+        """
+        return sum(1 for question in self.questions if question.dd)
+
 
 class FinalBoard(Board):
     """Represent the single-clue Final Jeopardy board."""
@@ -127,6 +143,35 @@ class GameData:
     rounds: list
     date: str
     comments: str
+
+    def missing_question_count(self) -> int:
+        """Return the total number of missing standard-round clues.
+
+        Returns:
+            Sum of missing clue slots across non-final rounds.
+        """
+        return sum(
+            round_data.missing_question_count()
+            for round_data in self.rounds
+            if isinstance(round_data, Board) and not isinstance(round_data, FinalBoard)
+        )
+
+    def has_missing_daily_double(self) -> bool:
+        """Return whether any standard round is missing a Daily Double.
+
+        Returns:
+            ``True`` when a standard round has fewer Daily Doubles than
+            expected for its position.
+        """
+        standard_rounds = [
+            round_data
+            for round_data in self.rounds
+            if isinstance(round_data, Board) and not isinstance(round_data, FinalBoard)
+        ]
+        return any(
+            round_data.daily_double_count() < index + 1
+            for index, round_data in enumerate(standard_rounds)
+        )
 
 
 class Player:
