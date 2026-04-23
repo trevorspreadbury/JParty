@@ -49,6 +49,17 @@ class EndGameSeries:
 
 
 @dataclass
+class EndGameGameStats:
+    """Summarize whole-game metrics for the summary sidebar card."""
+
+    lead_changes: int
+    combined_coryat: int
+    buzzer_races: int
+    triple_stumpers: int
+    victory_summary: str
+
+
+@dataclass
 class EndGameSummary:
     """Bundle the data required to render the audience summary screen."""
 
@@ -56,6 +67,7 @@ class EndGameSummary:
     is_tie: bool
     question_count: int
     current_players: list[EndGamePlayerStats]
+    game_stats: EndGameGameStats
     current_series: list[EndGameSeries]
     original_series: list[EndGameSeries]
 
@@ -331,6 +343,70 @@ def reconstruct_original_score_history(game: object) -> dict[str, list[int]]:
     return score_history
 
 
+def _lead_change_count(
+    score_history: dict[int, list[int]], player_numbers: list[int], question_count: int
+) -> int:
+    """Count how many times the current-game lead changed hands.
+
+    Args:
+        score_history: Current-player score history keyed by player number.
+        player_numbers: Ordered player numbers participating in the summary.
+        question_count: Number of played questions.
+
+    Returns:
+        Count of distinct leader-set changes across played questions.
+    """
+    previous_leaders: set[int] | None = None
+    lead_changes = 0
+    for question_index in range(1, question_count + 1):
+        scores_at_point = {
+            player_number: score_history.get(player_number, [0])[
+                min(question_index, len(score_history.get(player_number, [0])) - 1)
+            ]
+            for player_number in player_numbers
+        }
+        if not scores_at_point:
+            continue
+        top_score = max(scores_at_point.values())
+        leaders = {
+            player_number
+            for player_number, score in scores_at_point.items()
+            if score == top_score
+        }
+        if previous_leaders is not None and leaders != previous_leaders:
+            lead_changes += 1
+        previous_leaders = leaders
+    return lead_changes
+
+
+def _victory_summary(
+    score_history: dict[int, list[int]],
+    winner_player_numbers: list[int],
+    question_count: int,
+) -> str:
+    """Summarize whether the winner came from behind or led wire to wire."""
+    if len(winner_player_numbers) != 1:
+        return "Tied finish"
+    winner_player_number = winner_player_numbers[0]
+    winner_scores = score_history.get(winner_player_number, [0])
+    max_trail = 0
+    wire_to_wire = True
+    for question_index in range(1, question_count + 1):
+        scores_at_point = []
+        for scores in score_history.values():
+            scores_at_point.append(scores[min(question_index, len(scores) - 1)])
+        if not scores_at_point:
+            continue
+        winner_score = winner_scores[min(question_index, len(winner_scores) - 1)]
+        top_score = max(scores_at_point)
+        max_trail = max(max_trail, top_score - winner_score)
+        if winner_score != top_score:
+            wire_to_wire = False
+    if wire_to_wire:
+        return "Wire-to-wire victory"
+    return f"${max_trail:,} come-from-behind victory"
+
+
 def build_end_game_summary(game: object) -> EndGameSummary:
     """Compute score and buzzer summary data for the end-game screen.
 
@@ -354,6 +430,8 @@ def build_end_game_summary(game: object) -> EndGameSummary:
     right_count = {player_number: 0 for player_number in all_player_numbers}
     wrong_count = {player_number: 0 for player_number in all_player_numbers}
     coryat = {player_number: 0 for player_number in all_player_numbers}
+    buzzer_races = 0
+    triple_stumpers = 0
 
     for entry in entries:
         question_number = entry.get("question_number")
@@ -379,6 +457,7 @@ def build_end_game_summary(game: object) -> EndGameSummary:
             }
             if len(race_buzzers) < 2:
                 continue
+            buzzer_races += 1
             for player_number in race_buzzers:
                 race_opportunities[player_number] = (
                     race_opportunities.get(player_number, 0) + 1
@@ -388,6 +467,15 @@ def build_end_game_summary(game: object) -> EndGameSummary:
                 race_wins[winner_player_number] = (
                     race_wins.get(winner_player_number, 0) + 1
                 )
+        if (
+            entry.get("round_index") is not None
+            and entry.get("round_index") < len(getattr(game.data, "rounds", [])) - 1
+            and not entry.get("is_daily_double")
+            and not any(
+                attempt.get("answer_correct") for attempt in answer_attempts
+            )
+        ):
+            triple_stumpers += 1
 
         for attempt in answer_attempts:
             player_number = attempt.get("player_index")
@@ -458,11 +546,23 @@ def build_end_game_summary(game: object) -> EndGameSummary:
     winner_player_numbers = [
         player.player_number for player in game.players if player.score == top_score
     ]
+    question_count = max((entry.get("question_number", 0) for entry in entries), default=0)
     return EndGameSummary(
         winner_player_numbers=winner_player_numbers,
         is_tie=len(winner_player_numbers) != 1,
-        question_count=max((entry.get("question_number", 0) for entry in entries), default=0),
+        question_count=question_count,
         current_players=current_players,
+        game_stats=EndGameGameStats(
+            lead_changes=_lead_change_count(
+                score_history, all_player_numbers, question_count
+            ),
+            combined_coryat=sum(player.coryat for player in current_players),
+            buzzer_races=buzzer_races,
+            triple_stumpers=triple_stumpers,
+            victory_summary=_victory_summary(
+                score_history, winner_player_numbers, question_count
+            ),
+        ),
         current_series=current_series,
         original_series=original_series,
     )

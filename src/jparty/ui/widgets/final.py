@@ -271,6 +271,67 @@ class PlayerSummaryCard(QWidget):
         )
 
 
+class GameSummaryCard(QWidget):
+    """Render whole-game summary stats below the score graph."""
+
+    def __init__(self, game_stats: object, parent: object = None) -> None:
+        """Initialize the game summary stats card."""
+        super().__init__(parent)
+        self.setObjectName("gameSummaryCard")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAutoFillBackground(True)
+        self.setStyleSheet(
+            "QWidget#gameSummaryCard { "
+            "background-color: transparent; "
+            "border: none; "
+            "}"
+        )
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(22, 18, 22, 18)
+        layout.setSpacing(14)
+
+        title = QLabel("Game Stats", self)
+        title.setStyleSheet(
+            "QLabel { color: white; font-size: 42px; font-weight: 800; "
+            "background: transparent; }"
+        )
+        title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(title)
+
+        stats_grid = QGridLayout()
+        stats_grid.setContentsMargins(0, 0, 0, 0)
+        stats_grid.setHorizontalSpacing(28)
+        stats_grid.setVerticalSpacing(10)
+        stat_lines = [
+            f"Lead Changes: {game_stats.lead_changes}",
+            f"Combined Coryat: ${game_stats.combined_coryat:,}",
+            f"Buzzer Races: {game_stats.buzzer_races}",
+            f"Triple Stumpers: {game_stats.triple_stumpers}",
+        ]
+        for index, stat_line in enumerate(stat_lines):
+            label = QLabel(stat_line, self)
+            label.setWordWrap(True)
+            label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            label.setStyleSheet(
+                "QLabel { color: white; font-size: 32px; font-weight: 600; "
+                "background: transparent; }"
+            )
+            stats_grid.addWidget(label, index // 2, index % 2)
+        layout.addLayout(stats_grid)
+
+        victory_label = QLabel(game_stats.victory_summary, self)
+        victory_label.setWordWrap(True)
+        victory_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        victory_label.setStyleSheet(
+            "QLabel { color: white; font-size: 32px; font-weight: 700; "
+            "background: transparent; }"
+        )
+        layout.addWidget(victory_label)
+
+        self.setLayout(layout)
+
+
 class EndGameSummaryDisplay(QWidget):
     """Render the audience-facing end-of-game summary view."""
 
@@ -290,28 +351,6 @@ class EndGameSummaryDisplay(QWidget):
         main_layout.setSpacing(18)
 
         title = MyLabel("Game Summary", lambda: self.height() * 0.08, self)
-        recap_text = "We have a tie!" if summary.is_tie else "Winner:"
-        recap = QLabel(recap_text, self)
-        recap.setStyleSheet(
-            "QLabel { color: #ffd447; font-size: 28px; font-weight: 700; }"
-        )
-        recap_row = QHBoxLayout()
-        recap_row.addWidget(recap, 0, Qt.AlignmentFlag.AlignVCenter)
-        if not summary.is_tie and summary.current_players:
-            winner_number = summary.winner_player_numbers[0]
-            winner = next(
-                (
-                    player
-                    for player in summary.current_players
-                    if player.player_number == winner_number
-                ),
-                None,
-            )
-            if winner is not None:
-                winner_label = NameLabel(winner.name, self)
-                winner_label.setMinimumHeight(50)
-                recap_row.addWidget(winner_label, 0, Qt.AlignmentFlag.AlignVCenter)
-        recap_row.addStretch(1)
 
         content_layout = QHBoxLayout()
         content_layout.setSpacing(18)
@@ -325,9 +364,11 @@ class EndGameSummaryDisplay(QWidget):
             self,
         )
         left_panel.addWidget(self.graph_widget, 5)
+        left_panel.addWidget(GameSummaryCard(self.summary.game_stats, self), 2)
 
         right_panel = QVBoxLayout()
         right_panel.setSpacing(14)
+        right_panel.addStretch(1)
         for player in self.summary.current_players:
             card = PlayerSummaryCard(player, self.color_map[player.player_number], self)
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -338,7 +379,6 @@ class EndGameSummaryDisplay(QWidget):
         content_layout.addLayout(right_panel, 2)
 
         main_layout.addWidget(title)
-        main_layout.addLayout(recap_row)
         main_layout.addLayout(content_layout, 1)
         self.setLayout(main_layout)
         self.show()

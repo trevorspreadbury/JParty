@@ -318,6 +318,108 @@ def test_build_end_game_summary_includes_final_jeopardy_in_original_series(
     assert original_by_name["Original Bob"].scores == [0, 0, 1000]
 
 
+def test_build_end_game_summary_computes_game_stats(
+    game: object, players: object, temp_dir: object
+) -> None:
+    """Test game-level summary stats and comeback text."""
+    game._game_state_dir = temp_dir / "saved-game-stats"
+    game._game_state_dir.mkdir()
+    players[0].score = 400
+    players[1].score = 1200
+    players[2].score = 0
+    game.data = GameData(
+        rounds=[
+            Board(
+                categories=["Cat"],
+                questions=[
+                    Question((0, 0), "Q1", "A1", "Cat", value=200),
+                    Question((0, 1), "Q2", "A2", "Cat", value=400),
+                    Question((0, 2), "Q3", "A3", "Cat", value=800),
+                ],
+            ),
+            FinalBoard("Final", Question((0, 0), "FJ", "FA", "Final")),
+        ],
+        date="today",
+        comments="",
+    )
+    (game._game_state_dir / "general.json").write_text(
+        json.dumps({"game_id": "1234", "players": []}),
+        encoding="utf-8",
+    )
+    (game._game_state_dir / "question_history.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "question_index": [0, [0, 0]],
+                        "question_number": 1,
+                        "round_index": 0,
+                        "is_daily_double": False,
+                        "buzz_phases": [
+                            {
+                                "phase_type": "main",
+                                "buzz_attempts": [
+                                    {"player_index": 0, "in_timeout": False},
+                                    {"player_index": 1, "in_timeout": False},
+                                ],
+                            }
+                        ],
+                        "answer_attempts": [
+                            {
+                                "player_index": 0,
+                                "answer_correct": True,
+                                "score_after": 200,
+                            }
+                        ],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "question_index": [0, [0, 1]],
+                        "question_number": 2,
+                        "round_index": 0,
+                        "is_daily_double": False,
+                        "buzz_phases": [],
+                        "answer_attempts": [],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "question_index": [0, [0, 2]],
+                        "question_number": 3,
+                        "round_index": 0,
+                        "is_daily_double": False,
+                        "buzz_phases": [
+                            {
+                                "phase_type": "main",
+                                "buzz_attempts": [
+                                    {"player_index": 0, "in_timeout": False},
+                                    {"player_index": 1, "in_timeout": False},
+                                ],
+                            }
+                        ],
+                        "answer_attempts": [
+                            {
+                                "player_index": 1,
+                                "answer_correct": True,
+                                "score_after": 1200,
+                            }
+                        ],
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    summary = build_end_game_summary(game)
+    assert summary.game_stats.lead_changes == 1
+    assert summary.game_stats.combined_coryat == 1000
+    assert summary.game_stats.buzzer_races == 2
+    assert summary.game_stats.triple_stumpers == 1
+    assert summary.game_stats.victory_summary == "$200 come-from-behind victory"
+
+
 def test_build_end_game_summary_counts_races_in_any_phase(
     game: object, players: object, temp_dir: object
 ) -> None:
