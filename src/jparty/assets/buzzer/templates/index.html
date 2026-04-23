@@ -43,6 +43,13 @@
       <!-- </form> -->
   </div>
 
+  <div class="w3-container chooser-page noselect" style="margin-top:30px">
+      <div class="hints name-hint" id="chooser-hint">
+        Select your saved player
+      </div>
+      <div class="chooser-grid" id="saved-player-choices"></div>
+  </div>
+
   <div class="w3-container wager-page" style="margin-top:90px">
       <form onsubmit="wagerForm();" action="javascript:void(0);" class="wager_form">
           <input type='number' name="wager" pattern="[0-9]*" class="text_input wager_input" min="0" max="100" step="0"/>

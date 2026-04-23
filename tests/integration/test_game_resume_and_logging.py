@@ -50,10 +50,10 @@ def test_prepare_and_resume_saved_game_restores_round_scores_and_questions(
     restored_data = game.data
     monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
     players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(sample_saved_game_dir)
     game.buzzer_controller.connected_players = players
     game.players = players
     game.dc.scoreboard.refresh_players()
-    game.prepare_resume_from_dir(sample_saved_game_dir)
     game.start_game()
     assert game.current_round is game.data.rounds[0]
     assert not isinstance(game.current_round, FinalBoard)
@@ -112,10 +112,10 @@ def test_resume_into_final_starts_final_flow(
             json.dump(entry, f)
             f.write("\n")
     players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(saved_dir)
     game.buzzer_controller.connected_players = players
     game.players = players
     game.dc.scoreboard.refresh_players()
-    game.prepare_resume_from_dir(saved_dir)
     game.start_game()
     assert isinstance(game.current_round, FinalBoard)
     assert game.active_question is game.current_round.question

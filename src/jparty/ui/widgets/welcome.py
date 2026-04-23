@@ -494,7 +494,6 @@ QLabel {{
                 f"Saved players: {len(saved_players)}",
             ]
         )
-        self.summary_label.setText(self._base_summary_text)
         self.check_start()
 
     def check_start(self) -> None:
@@ -507,26 +506,33 @@ QLabel {{
             getattr(self.game, "selected_round_indices", lambda: [])()
         )
         expected_player_count = self.game.expected_player_count()
-        if rounds_selected and self._base_summary_text:
-            self.summary_label.setText(self._base_summary_text)
+        summary_text = self._base_summary_text
+        if self.resume_path is not None:
+            claimed_count, total_count = getattr(
+                self.game, "resume_claim_status", lambda: (0, 0)
+            )()
+            if summary_text:
+                summary_text += f"\nClaimed {claimed_count} of {total_count} saved players."
+        if rounds_selected and summary_text:
+            self.summary_label.setText(summary_text)
         if self.game.startable() and rounds_selected:
             self.start_button.setEnabled(True)
         else:
             self.start_button.setEnabled(False)
             if expected_player_count is not None:
-                connected_players = len(self.game.buzzer_controller.connected_players)
+                claimed_count, total_count = getattr(
+                    self.game, "resume_claim_status", lambda: (0, 0)
+                )()
                 self.summary_label.setText(
-                    self._base_summary_text
-                    + f"\nConnect exactly {expected_player_count} players to resume."
+                    summary_text
+                    + f"\nClaim every saved player profile to resume ({claimed_count}/{total_count})."
                 )
             elif (
                 not self._loading_summary
                 and not rounds_selected
                 and self._base_summary_text
             ):
-                self.summary_label.setText(
-                    self._base_summary_text + "\n\nSelect at least one round to play."
-                )
+                self.summary_label.setText(summary_text + "\n\nSelect at least one round to play.")
 
     def restart(self) -> None:
         """Reset the welcome screen to its initial fresh-game state.

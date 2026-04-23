@@ -173,14 +173,11 @@ class Game(QObject):
         """
         if not self.valid_game():
             return False
+        expected_player_count = self.expected_player_count()
+        if expected_player_count is not None:
+            return self.resume_claims_complete()
         connected_players = len(self.buzzer_controller.connected_players)
         if connected_players == 0:
-            return False
-        expected_player_count = self.expected_player_count()
-        if (
-            expected_player_count is not None
-            and connected_players != expected_player_count
-        ):
             return False
         return True
 
@@ -203,6 +200,31 @@ class Game(QObject):
         """
         self._resume_state = None
         self._selected_round_indices = None
+        if self.buzzer_controller:
+            self.buzzer_controller.clear_saved_player_reclaim()
+
+    def resume_claim_status(self) -> tuple[int, int]:
+        """Return current claim progress for a prepared saved-game lobby.
+
+        Returns:
+            Tuple of ``(claimed_count, total_count)`` for saved-player reclaim.
+        """
+        if not self.buzzer_controller:
+            return (0, 0)
+        return (
+            self.buzzer_controller.saved_player_claim_count(),
+            self.buzzer_controller.saved_player_total_count(),
+        )
+
+    def resume_claims_complete(self) -> bool:
+        """Return whether all saved players have been claimed.
+
+        Returns:
+            ``True`` when every saved player profile has been reclaimed.
+        """
+        if self._resume_state is None or not self.buzzer_controller:
+            return False
+        return self.buzzer_controller.saved_player_claims_complete()
 
     def set_selected_round_indices(self, indices: object) -> None:
         """Store the original round indices selected for play.
@@ -291,6 +313,8 @@ class Game(QObject):
             "general_state": general_state,
             "player_count": len(saved_players),
         }
+        if self.buzzer_controller:
+            self.buzzer_controller.begin_saved_player_reclaim(saved_players)
         return self._resume_state
 
     def begin(self) -> None:
@@ -424,8 +448,7 @@ class Game(QObject):
         self._game_started_at = (
             resume_state["general_state"].get("started_at") or time.time()
         )
-        self.players = self.buzzer_controller.connected_players
-        self._update_player_numbers()
+        self.players = self.buzzer_controller.claimed_saved_players()
         question_history = self._load_question_history()
         question_history.sort(key=lambda entry: entry.get("question_number", 0))
         self._mark_completed_questions(question_history)
@@ -636,7 +659,8 @@ class Game(QObject):
             ``None``.
         """
         self.players = self.buzzer_controller.connected_players
-        self._update_player_numbers()
+        if not self.buzzer_controller.in_saved_player_reclaim_mode():
+            self._update_player_numbers()
         self.dc.scoreboard.refresh_players()
         self.host_display.welcome_widget.check_start()
         for player in self.players:

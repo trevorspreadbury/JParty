@@ -154,6 +154,7 @@ class Player:
         self.page = "buzz"
         self.player_number = player_number
         self.key = index_to_key[player_number]
+        self.connected = True
 
     def __hash__(self) -> object:
         """Return a stable hash derived from the player's random token.

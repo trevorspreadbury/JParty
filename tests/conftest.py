@@ -352,6 +352,7 @@ class FakeBuzzerController:
         self.broadcasts = []
         self.restart_calls = 0
         self.lectern_connections = {}
+        self.saved_player_profiles = {}
 
     def open_wagers(self, players: object = None) -> None:
         """Test open wagers."""
@@ -391,6 +392,40 @@ class FakeBuzzerController:
         self.restart_calls += 1
         self.connected_players = []
         self.accepting_players = True
+        self.saved_player_profiles = {}
+
+    def clear_saved_player_reclaim(self) -> None:
+        """Test clear saved player reclaim."""
+        self.saved_player_profiles = {}
+
+    def begin_saved_player_reclaim(self, saved_players: object) -> None:
+        """Test begin saved player reclaim."""
+        self.saved_player_profiles = {
+            int(player["player_number"]): player for player in saved_players
+        }
+        self.connected_players = []
+
+    def saved_player_claim_count(self) -> int:
+        """Test saved player claim count."""
+        return len(self.connected_players)
+
+    def saved_player_total_count(self) -> int:
+        """Test saved player total count."""
+        return len(self.saved_player_profiles)
+
+    def saved_player_claims_complete(self) -> bool:
+        """Test saved player claims complete."""
+        return bool(self.saved_player_profiles) and (
+            len(self.connected_players) == len(self.saved_player_profiles)
+        )
+
+    def claimed_saved_players(self) -> object:
+        """Test claimed saved players."""
+        return sorted(self.connected_players, key=lambda player: player.player_number)
+
+    def in_saved_player_reclaim_mode(self) -> bool:
+        """Test saved-player reclaim mode."""
+        return bool(self.saved_player_profiles)
 
 
 class TimeController:

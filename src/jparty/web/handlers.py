@@ -86,6 +86,7 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
             ``None``.
         """
         self.set_nodelay(True)
+        self.controller.register_socket(self)
 
     def send(self, msg: str, text: str = "") -> None:
         """Send a structured websocket message to the player client.
@@ -115,7 +116,18 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         """
         player = self.controller.player_with_token(token)
         if player is None:
-            self.send("NEW")
+            if self.controller.in_saved_player_reclaim_mode():
+                if self.controller.saved_player_claims_complete():
+                    self.send("ALL_CLAIMED")
+                else:
+                    self.send(
+                        "SHOW_CHOOSER",
+                        tornado.escape.json_encode(
+                            self.controller.saved_player_choices_payload()
+                        ),
+                    )
+            else:
+                self.send("NEW")
             return
         logging.info("Reconnected %s", player)
         self.player = player
@@ -142,6 +154,8 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
             self.init_player(text)
         elif msg == "CHECK_IF_EXISTS":
             self.check_if_exists(text)
+        elif msg == "CLAIM_PLAYER":
+            self.claim_player(text)
         elif msg == "WAGER":
             self.wager(text)
         elif msg == "ANSWER":
@@ -158,6 +172,17 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         Returns:
             ``None``.
         """
+        if self.controller.in_saved_player_reclaim_mode():
+            if self.controller.saved_player_claims_complete():
+                self.send("ALL_CLAIMED")
+            else:
+                self.send(
+                    "SHOW_CHOOSER",
+                    tornado.escape.json_encode(
+                        self.controller.saved_player_choices_payload()
+                    ),
+                )
+            return
         if not self.controller.accepting_players:
             self.send("GAMESTARTED")
             return
@@ -168,6 +193,39 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         self.player = Player(name, self, player_index)
         self.application.controller.new_player(self.player)
         self.send("TOKEN", self.player.token.hex())
+
+    def claim_player(self, player_number: str) -> None:
+        """Claim a saved player profile during resume setup.
+
+        Args:
+            player_number: Saved player slot requested by the client.
+
+        Returns:
+            ``None``.
+        """
+        if not self.controller.in_saved_player_reclaim_mode():
+            self.send("NEW")
+            return
+        if self.controller.saved_player_claims_complete() and self.player is None:
+            self.send("ALL_CLAIMED")
+            return
+        try:
+            saved_player_number = int(player_number)
+        except (TypeError, ValueError):
+            self.send(
+                "SHOW_CHOOSER",
+                tornado.escape.json_encode(self.controller.saved_player_choices_payload()),
+            )
+            return
+        player = self.controller.claim_saved_player(self, saved_player_number)
+        if player is None:
+            return
+        self.send(
+            "CLAIMED",
+            tornado.escape.json_encode(
+                {"token": player.token.hex(), "state": player.state()}
+            ),
+        )
 
     def buzz(self) -> None:
         """Forward a buzz action for the connected player.
@@ -203,6 +261,9 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         Returns:
             ``None``.
         """
+        self.controller.unregister_socket(self)
+        if self.player is not None:
+            self.player.connected = False
         return None
 
 
