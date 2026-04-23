@@ -206,30 +206,39 @@ class PlayerSummaryCard(QWidget):
     def __init__(self, player_stats: object, color: QColor, parent: object = None) -> None:
         """Initialize the player stats card."""
         super().__init__(parent)
+        self.setObjectName("playerSummaryCard")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAutoFillBackground(True)
         self.setPalette(WINDOWPAL)
-        add_shadow(self)
-        layout = QVBoxLayout()
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(8)
-
-        header = QHBoxLayout()
-        marker = QFrame(self)
-        marker.setFixedSize(18, 18)
-        marker.setStyleSheet(
-            "QFrame { border-radius: 4px; background-color: %s; }" % color.name()
+        self.setStyleSheet(
+            "QWidget#playerSummaryCard { "
+            "background-color: white; "
+            "border: 16px solid %s; "
+            "border-radius: 18px; "
+            "}"
+            % color.name()
         )
-        header.addWidget(marker, 0, Qt.AlignmentFlag.AlignTop)
-        name_label = NameLabel(player_stats.name, self)
-        name_label.setMinimumHeight(40)
-        header.addWidget(name_label, 1)
-        layout.addLayout(header)
+        add_shadow(self)
+        layout = QHBoxLayout()
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(18)
 
+        name_label = NameLabel(player_stats.name, self)
+        name_label.setMinimumHeight(110)
+        name_label.setMinimumWidth(260)
+        name_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+        )
+        layout.addWidget(name_label, 2, Qt.AlignmentFlag.AlignVCenter)
+
+        stats_layout = QVBoxLayout()
+        stats_layout.setSpacing(8)
         final_score = QLabel(f"Final Score: ${player_stats.final_score:,}", self)
         final_score.setStyleSheet(
-            "QLabel { color: #1010a1; font-size: 26px; font-weight: 800; }"
+            "QLabel { color: #1010a1; font-size: 28px; font-weight: 800; "
+            "background: transparent; border: none; }"
         )
-        layout.addWidget(final_score)
+        stats_layout.addWidget(final_score)
 
         for stat_line in [
             f"Coryat: ${player_stats.coryat:,}",
@@ -240,11 +249,13 @@ class PlayerSummaryCard(QWidget):
         ]:
             label = QLabel(stat_line, self)
             label.setStyleSheet(
-                "QLabel { color: black; font-size: 18px; font-weight: 600; }"
+                "QLabel { color: black; font-size: 18px; font-weight: 600; "
+                "background: transparent; border: none; }"
             )
             label.setWordWrap(True)
-            layout.addWidget(label)
-        layout.addStretch(1)
+            stats_layout.addWidget(label)
+        stats_layout.addStretch(1)
+        layout.addLayout(stats_layout, 3)
         self.setLayout(layout)
 
     def _race_line(self, player_stats: object) -> str:
@@ -314,18 +325,6 @@ class EndGameSummaryDisplay(QWidget):
             self,
         )
         left_panel.addWidget(self.graph_widget, 5)
-        legend_title = QLabel("Current Players", self)
-        legend_title.setStyleSheet(
-            "QLabel { color: #ffd447; font-size: 22px; font-weight: 700; }"
-        )
-        left_panel.addWidget(legend_title)
-        legend_grid = QGridLayout()
-        legend_grid.setHorizontalSpacing(20)
-        legend_grid.setVerticalSpacing(10)
-        for index, player in enumerate(self.summary.current_players):
-            entry = LegendEntry(player.name, self.color_map[player.player_number], self)
-            legend_grid.addWidget(entry, index // 2, index % 2)
-        left_panel.addLayout(legend_grid, 2)
 
         right_panel = QVBoxLayout()
         right_panel.setSpacing(14)
