@@ -22,7 +22,7 @@ from jparty.ui.widgets.question import (
     QuestionWidget,
 )
 from jparty.ui.widgets.scoreboard import HostScoreBoard, ScoreBoard
-from jparty.ui.widgets.welcome import QRWidget, Welcome
+from jparty.ui.widgets.welcome import QRWidget, QuestionMediaPreview, Welcome
 
 
 class DisplayWindow(QMainWindow):
@@ -154,6 +154,8 @@ class DisplayWindow(QMainWindow):
         )
         if self.welcome_widget is not None:
             self.welcome_widget.setGeometry(fullrect - margins)
+        if getattr(self, "preview_widget", None) is not None:
+            self.preview_widget.setGeometry(fullrect - margins)
         if self.final_display is not None:
             self.final_display.setGeometry(fullrect)
 
@@ -317,6 +319,7 @@ class HostDisplayWindow(DisplayWindow):
         """
         super().__init__(game)
         self.on_image_question = False
+        self.preview_widget = None
 
     def host(self) -> bool:
         """Return whether this is the host display.
@@ -325,6 +328,11 @@ class HostDisplayWindow(DisplayWindow):
             ``True``.
         """
         return True
+
+    def show_welcome_widgets(self) -> None:
+        """Show the welcome screen and clear any preview overlay."""
+        self.hide_question_media_preview()
+        super().show_welcome_widgets()
 
     def monitor(self) -> int:
         """Return the preferred host monitor index.
@@ -420,7 +428,40 @@ class HostDisplayWindow(DisplayWindow):
             ``None``.
         """
         super().hide_welcome_widgets()
+        self.hide_question_media_preview()
         self.scoreboard.hide_close_buttons()
+
+    def load_question_media_preview(
+        self, preview_questions: list[tuple[int, object]]
+    ) -> None:
+        """Show the pre-start question-media preview widget."""
+        self.hide_welcome_widgets()
+        self.hide_question_media_preview()
+        self.preview_widget = QuestionMediaPreview(
+            self.game,
+            preview_questions,
+            on_back=self.show_welcome_from_preview,
+            on_start=self.game.start_game,
+            parent=self,
+        )
+        self.preview_widget.setGeometry(self.welcome_widget.geometry())
+        self.preview_widget.setVisible(True)
+        self.preview_widget.raise_()
+
+    def hide_question_media_preview(self) -> None:
+        """Hide and dispose of the question-media preview widget."""
+        if self.preview_widget is None:
+            return
+        self.preview_widget.setVisible(False)
+        self.preview_widget.deleteLater()
+        self.preview_widget = None
+
+    def show_welcome_from_preview(self) -> None:
+        """Return from the preview widget to the welcome screen."""
+        self.hide_question_media_preview()
+        self.welcome_widget.setVisible(True)
+        self.welcome_widget.setDisabled(False)
+        self.welcome_widget.raise_()
 
     def load_image_review_screen(self, q: object) -> None:
         """Replace the board with the host image review screen.

@@ -5,8 +5,11 @@ from typing import NoReturn
 
 import pytest
 from jparty.domain.models import Board, FinalBoard, GameData, Question
-from jparty.ui.widgets.welcome import Welcome
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from jparty.services.question_media import QuestionMediaStatus
+from jparty.ui.widgets.welcome import QuestionMediaPreview, Welcome
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QPixmap
+from PyQt6.QtWidgets import QFileDialog, QLabel, QMessageBox, QWidget
 
 pytestmark = pytest.mark.qt
 
@@ -99,6 +102,34 @@ class StubGame:
     def valid_game(self) -> bool:
         """Test valid game."""
         return True
+
+
+class PreviewParent(QWidget):
+    """Minimal parent object that captures preview requests."""
+
+    def __init__(self, game: object) -> None:
+        """Initialize preview capture state."""
+        super().__init__()
+        self.game = game
+        self.preview_widget = None
+        self.preview_requests = []
+        self.back_calls = 0
+
+    def load_question_media_preview(
+        self, preview_questions: list[tuple[int, object]]
+    ) -> None:
+        """Capture and render the preview widget."""
+        self.preview_requests.append(preview_questions)
+        self.preview_widget = QuestionMediaPreview(
+            self.game,
+            preview_questions,
+            on_back=self.show_welcome_from_preview,
+            on_start=self.game.start_game,
+        )
+
+    def show_welcome_from_preview(self) -> None:
+        """Track returns from the preview widget."""
+        self.back_calls += 1
 
 
 def test_load_saved_game_requires_matching_player_count(
@@ -236,3 +267,126 @@ def test_build_summary_text_flags_missing_daily_double(qtbot: object) -> None:
     qtbot.addWidget(widget)
     summary = widget.build_summary_text()
     assert "CRITICAL: Missing Daily Double" in summary
+
+
+def test_build_summary_text_includes_question_media_status(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Welcome summary should include the detected media status line."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.textbox.setText("4453")
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda _: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+    widget._question_media_status = QuestionMediaStatus(directory=None, zip_file=None)
+    summary = widget.build_summary_text()
+    assert "Question media status: no folder or zip archive found." in summary
+
+
+def test_load_question_media_requires_game_id(qtbot: object, monkeypatch: object) -> None:
+    """Import should warn when no destination game id has been typed."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
+    widget.load_question_media()
+    assert warnings
+
+
+def test_load_question_media_imports_directory_and_refreshes_status(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> None:
+    """Successful import should refresh the welcome summary."""
+    game = StubGame()
+    source_dir = temp_dir / "source"
+    source_dir.mkdir()
+    media_file = source_dir / "0-0-0.png"
+    media_file.write_bytes(b"png")
+    monkeypatch.setattr("jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media")
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.textbox.setText("4453")
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: str(source_dir))
+    widget.load_question_media()
+    assert (temp_dir / "question_media" / "4453" / "0-0-0.png").exists()
+    assert "Question media status: found folder." in widget.summary_label.text()
+
+
+def test_load_question_media_imports_zip_and_refreshes_status(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> None:
+    """Zip imports should extract into the game directory and refresh the summary."""
+    from zipfile import ZipFile
+
+    game = StubGame()
+    source_zip = temp_dir / "media.zip"
+    with ZipFile(source_zip, "w") as archive:
+        archive.writestr("1-2-3.jpg", b"jpg")
+    monkeypatch.setattr("jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media")
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.textbox.setText("4453")
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: str(source_zip))
+    widget.load_question_media()
+    assert (temp_dir / "question_media" / "4453" / "1-2-3.jpg").exists()
+    assert "Question media status: found folder." in widget.summary_label.text()
+
+
+def test_start_click_opens_preview_for_selected_round_local_media(
+    qtbot: object, temp_dir: object
+) -> None:
+    """Welcome should show preview instead of starting immediately when local media exists."""
+    game = StubGame()
+    image_path = temp_dir / "0-0-0.png"
+    pixmap = QPixmap(40, 40)
+    pixmap.fill(QColor("blue"))
+    assert pixmap.save(str(image_path))
+    game.data.rounds[0].questions[0].image = True
+    game.data.rounds[0].questions[0].image_url = str(image_path)
+    game.data.rounds[1].questions[0].image = True
+    game.data.rounds[1].questions[0].image_url = str(image_path)
+    game.set_selected_round_indices([0])
+    parent = PreviewParent(game)
+    qtbot.addWidget(parent)
+    widget = Welcome(game, parent)
+    qtbot.addWidget(widget)
+    widget._question_media_status = QuestionMediaStatus(directory=temp_dir, zip_file=None)
+    widget.on_start_clicked()
+    assert game.start_game_calls == 0
+    assert len(parent.preview_requests) == 1
+    assert len(parent.preview_requests[0]) == 1
+    assert parent.preview_widget is not None
+    qtbot.addWidget(parent.preview_widget)
+    assert parent.preview_widget.cards
+    answer_labels = parent.preview_widget.cards[0].findChildren(QLabel)
+    assert any(label.text() == game.data.rounds[0].questions[0].answer for label in answer_labels)
+
+
+def test_preview_buttons_go_back_or_start_game(qtbot: object, temp_dir: object) -> None:
+    """Preview buttons should return to welcome or continue into game start."""
+    game = StubGame()
+    image_path = temp_dir / "0-0-0.png"
+    pixmap = QPixmap(40, 40)
+    pixmap.fill(QColor("green"))
+    assert pixmap.save(str(image_path))
+    question = game.data.rounds[0].questions[0]
+    question.image = True
+    question.image_url = str(image_path)
+    parent = PreviewParent(game)
+    qtbot.addWidget(parent)
+    preview = QuestionMediaPreview(
+        game,
+        [(0, question)],
+        on_back=parent.show_welcome_from_preview,
+        on_start=game.start_game,
+    )
+    qtbot.addWidget(preview)
+    preview.show()
+    qtbot.mouseClick(preview.back_button, Qt.MouseButton.LeftButton)
+    assert parent.back_calls == 1
+    qtbot.mouseClick(preview.start_button, Qt.MouseButton.LeftButton)
+    assert game.start_game_calls == 1

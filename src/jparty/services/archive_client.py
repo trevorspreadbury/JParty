@@ -20,6 +20,7 @@ from bs4 import BeautifulSoup
 from jparty.app.config import MONIES
 from jparty.app.paths import QUESTION_MEDIA, SAVED_GAMES
 from jparty.domain.models import Board, FinalBoard, GameData, Question
+from jparty.services import question_media as question_media_service
 
 REQUEST_TIMEOUT_SECONDS = 10
 DOUBLE_JEOPARDY_START_ROW = 14
@@ -198,13 +199,8 @@ def find_question_media(game_id: int, round: int, index: tuple) -> str:
         The string path to the matching media file when one exists, otherwise
         ``False``.
     """
-    game_media_path = QUESTION_MEDIA / str(game_id)
-    if game_media_path.exists():
-        potential_filename = f"{round}-{index[0]}-{index[1]}"
-        for media_file in game_media_path.iterdir():
-            if media_file.stem == potential_filename:
-                return str(media_file)
-    return False
+    question_media_service.QUESTION_MEDIA = QUESTION_MEDIA
+    return question_media_service.find_question_media_file(game_id, round, index)
 
 
 def get_actual_player_results(clue: BeautifulSoup, value: int) -> object:
@@ -303,7 +299,7 @@ def process_game_board_from_html(html: object, game_id: object) -> GameData:
     comment_nodes = soup.select("#game_comments")
     if not title_nodes or not comment_nodes:
         return None
-    datesearch = re.search("- \\w+, (.*?)$", title_nodes[0].text)
+    datesearch = re.search(r"- .*?, (.*?)$", title_nodes[0].text)
     if datesearch is None:
         return None
     date = datesearch.groups()[0]
@@ -413,7 +409,7 @@ def get_game_sum(soup: object) -> object:
         comments section content.
     """
     date = re.search(
-        "- \\w+, (.*?)$", soup.select("#game_title > h1")[0].contents[0]
+        r"- .*?, (.*?)$", soup.select("#game_title > h1")[0].contents[0]
     ).groups()[0]
     comments = soup.select("#game_comments")[0].contents
     return (date, comments)
