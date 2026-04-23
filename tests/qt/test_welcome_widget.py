@@ -178,3 +178,40 @@ def test_welcome_round_checkboxes_update_selected_rounds(qtbot: object) -> None:
     widget.round_checkboxes[1].setChecked(True)
     assert widget.round_checkboxes[1].text() == "[x] Double Jeopardy!"
     assert game.selected_round_indices() == [0, 1, 2]
+
+
+def test_welcome_round_checkboxes_label_triple_jeopardy_games(qtbot: object) -> None:
+    """Test welcome labels a third standard board as Triple Jeopardy."""
+    game = StubGame()
+    game.data = GameData(
+        [
+            game.data.rounds[0],
+            game.data.rounds[1],
+            Board(
+                [f"Cat {index}" for index in range(6)],
+                [
+                    Question(
+                        (col, row),
+                        f"TQ {col}-{row}",
+                        f"TA {col}-{row}",
+                        f"Cat {col}",
+                    )
+                    for col in range(6)
+                    for row in range(5)
+                ],
+                dj=False,
+            ),
+            game.data.rounds[2],
+        ],
+        game.data.date,
+        game.data.comments,
+    )
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.set_summary("January 1, 2026\nFixture game")
+    assert [checkbox.text() for checkbox in widget.round_checkboxes] == [
+        "[x] Jeopardy!",
+        "[x] Double Jeopardy!",
+        "[x] Triple Jeopardy!",
+        "[x] Final Jeopardy!",
+    ]

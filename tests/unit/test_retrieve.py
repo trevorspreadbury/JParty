@@ -84,6 +84,52 @@ def test_process_game_board_from_saved_html_parses_real_fixture() -> None:
     assert game.rounds[2].category
 
 
+def test_process_game_board_from_html_keeps_third_standard_round() -> None:
+    """Test HTML parsing keeps extra standard rounds before Final Jeopardy."""
+    html = """
+    <html>
+      <div id="game_title"><h1>Show #7447 - Celebrity Jeopardy!, January 1, 2026</h1></div>
+      <div id="game_comments">Celebrity game</div>
+      <table class="round" id="round_1">
+        <td class="category"><td class="category_name">Round 1</td></td>
+        <td class="category"><td class="category_name">Round 1</td></td>
+        <td class="category"><td class="category_name">Round 1</td></td>
+        <td class="category"><td class="category_name">Round 1</td></td>
+        <td class="category"><td class="category_name">Round 1</td></td>
+        <td class="category"><td class="category_name">Round 1</td></td>
+        <td class="clue"><td class="clue_text" id="clue_J_1_1">Q1</td><td class="clue_value">$200</td><em class="correct_response">A1</em></td>
+      </table>
+      <table class="round" id="round_2">
+        <td class="category"><td class="category_name">Round 2</td></td>
+        <td class="category"><td class="category_name">Round 2</td></td>
+        <td class="category"><td class="category_name">Round 2</td></td>
+        <td class="category"><td class="category_name">Round 2</td></td>
+        <td class="category"><td class="category_name">Round 2</td></td>
+        <td class="category"><td class="category_name">Round 2</td></td>
+        <td class="clue"><td class="clue_text" id="clue_DJ_1_1">Q2</td><td class="clue_value">$400</td><em class="correct_response">A2</em></td>
+      </table>
+      <table class="round" id="round_3">
+        <td class="category"><td class="category_name">Round 3</td></td>
+        <td class="category"><td class="category_name">Round 3</td></td>
+        <td class="category"><td class="category_name">Round 3</td></td>
+        <td class="category"><td class="category_name">Round 3</td></td>
+        <td class="category"><td class="category_name">Round 3</td></td>
+        <td class="category"><td class="category_name">Round 3</td></td>
+        <td class="clue"><td class="clue_text" id="clue_TJ_1_1">Q3</td><td class="clue_value">$600</td><em class="correct_response">A3</em></td>
+      </table>
+      <table class="final_round">
+        <td class="category"><td class="category_name">Final Category</td></td>
+        <td class="clue"><td class="clue_text">Final clue</td><em class="correct_response">Final answer</em></td>
+      </table>
+    </html>
+    """
+    game = retrieve.process_game_board_from_html(html, 7447)
+    assert game is not None
+    assert len(game.rounds) == 4
+    assert game.rounds[2].get_question(0, 0).value == 600
+    assert game.rounds[3].category == "Final Category"
+
+
 def test_process_game_board_from_invalid_html_returns_none(fixture_dir: object) -> None:
     """Test test process game board from invalid html returns none."""
     invalid_html = (fixture_dir / "invalid_game.html").read_text()

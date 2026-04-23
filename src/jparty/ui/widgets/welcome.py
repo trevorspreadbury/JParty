@@ -59,6 +59,12 @@ QLabel {
 }
 """
 
+STANDARD_ROUND_LABELS = [
+    "Jeopardy!",
+    "Double Jeopardy!",
+    "Triple Jeopardy!",
+]
+
 
 class Image(qrcode.image.base.BaseImage):
     """Adapter that renders QR codes into Qt image objects."""
@@ -609,11 +615,14 @@ QLabel {{
         """
         if isinstance(round_data, FinalBoard):
             return "Final Jeopardy!"
-        if getattr(round_data, "dj", False):
-            return "Double Jeopardy!"
-        if index == 0:
-            return "Jeopardy!"
-        return f"Round {index + 1}"
+        standard_round_index = sum(
+            1
+            for prior_round in self.game.data.rounds[:index]
+            if not isinstance(prior_round, FinalBoard)
+        )
+        if standard_round_index < len(STANDARD_ROUND_LABELS):
+            return STANDARD_ROUND_LABELS[standard_round_index]
+        return f"Round {standard_round_index + 1}"
 
     def update_selected_rounds(self) -> None:
         """Push the current checkbox selection into the game object.
