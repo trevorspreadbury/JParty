@@ -130,6 +130,43 @@ def test_process_game_board_from_html_keeps_third_standard_round() -> None:
     assert game.rounds[3].category == "Final Category"
 
 
+def test_process_game_board_from_html_allows_missing_standard_clues() -> None:
+    """Test parsing keeps a game playable when a standard clue is missing."""
+    html = """
+    <html>
+      <div id="game_title"><h1>Show #9999 - Jeopardy!, January 1, 2026</h1></div>
+      <div id="game_comments">Incomplete game</div>
+      <table class="round" id="round_1">
+        <td class="category"><td class="category_name">Cat 1</td></td>
+        <td class="category"><td class="category_name">Cat 2</td></td>
+        <td class="category"><td class="category_name">Cat 3</td></td>
+        <td class="category"><td class="category_name">Cat 4</td></td>
+        <td class="category"><td class="category_name">Cat 5</td></td>
+        <td class="category"><td class="category_name">Cat 6</td></td>
+        <td class="clue"><td class="clue_text" id="clue_J_1_1">Q1</td><td class="clue_value">$200</td><em class="correct_response">A1</em></td>
+        <td class="clue"><td class="clue_value">$400</td></td>
+      </table>
+      <table class="round" id="round_2">
+        <td class="category"><td class="category_name">Cat 1</td></td>
+        <td class="category"><td class="category_name">Cat 2</td></td>
+        <td class="category"><td class="category_name">Cat 3</td></td>
+        <td class="category"><td class="category_name">Cat 4</td></td>
+        <td class="category"><td class="category_name">Cat 5</td></td>
+        <td class="category"><td class="category_name">Cat 6</td></td>
+        <td class="clue"><td class="clue_text" id="clue_DJ_1_1">Q2</td><td class="clue_value">$400</td><em class="correct_response">A2</em></td>
+      </table>
+      <table class="final_round">
+        <td class="category"><td class="category_name">Final Category</td></td>
+        <td class="clue"><td class="clue_text">Final clue</td><em class="correct_response">Final answer</em></td>
+      </table>
+    </html>
+    """
+    game = retrieve.process_game_board_from_html(html, 9999)
+    assert game is not None
+    assert len(game.rounds) == 3
+    assert game.missing_question_count() == 58
+
+
 def test_process_game_board_from_invalid_html_returns_none(fixture_dir: object) -> None:
     """Test test process game board from invalid html returns none."""
     invalid_html = (fixture_dir / "invalid_game.html").read_text()

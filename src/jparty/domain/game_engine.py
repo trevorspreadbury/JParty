@@ -749,9 +749,10 @@ class Game(QObject):
         """Check whether loaded game data contains complete rounds.
 
         Returns:
-            ``True`` when ``self.data`` is present and all rounds are complete.
+            ``True`` when ``self.data`` is present and contains at least one
+            playable round.
         """
-        return self.data is not None and all(b.complete() for b in self.data.rounds)
+        return self.data is not None and bool(self.data.rounds)
 
     def open_responses(self) -> None:
         """Open the buzz window for the active clue and start the clue timer.

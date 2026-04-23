@@ -215,3 +215,24 @@ def test_welcome_round_checkboxes_label_triple_jeopardy_games(qtbot: object) -> 
         "[x] Triple Jeopardy!",
         "[x] Final Jeopardy!",
     ]
+
+
+def test_build_summary_text_warns_about_missing_questions(qtbot: object) -> None:
+    """Test welcome summary shows missing-question warnings."""
+    game = StubGame()
+    game.data.rounds[0].questions = game.data.rounds[0].questions[:29]
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    summary = widget.build_summary_text()
+    assert "WARNING: Missing 1 question" in summary
+
+
+def test_build_summary_text_flags_missing_daily_double(qtbot: object) -> None:
+    """Test welcome summary flags missing Daily Doubles as critical."""
+    game = StubGame()
+    for question in game.data.rounds[0].questions:
+        question.dd = False
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    summary = widget.build_summary_text()
+    assert "CRITICAL: Missing Daily Double" in summary
