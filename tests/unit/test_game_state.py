@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from jparty.domain.models import Board, FinalBoard, GameData, Question
 from jparty.domain.state import build_end_game_summary
 
 pytestmark = pytest.mark.unit
@@ -126,17 +127,195 @@ def test_build_end_game_summary_calculates_stats(
     assert player_one.wrong_count == 0
 
 
-def test_build_end_game_summary_includes_original_series_for_replaced_players(
-    game: object, players: object, sample_saved_game_dir: object
+def test_build_end_game_summary_uses_played_order_for_original_series(
+    game: object, temp_dir: object
 ) -> None:
-    """Test original gray traces are kept when current players differ."""
-    game._game_state_dir = sample_saved_game_dir
-    players[0].name = "Replacement"
-    summary = build_end_game_summary(game)
-    assert any(
-        series.player_number == 0 and series.name == "Alice"
-        for series in summary.original_series
+    """Test original gray traces follow played clue order, not board order."""
+    game._game_state_dir = temp_dir / "saved"
+    game._game_state_dir.mkdir()
+    game.data = GameData(
+        rounds=[
+            Board(
+                categories=["Cat"],
+                questions=[
+                    Question(
+                        (0, 0),
+                        "Q1",
+                        "A1",
+                        "Cat",
+                        value=200,
+                        actual_results=[["Original Bob", 200]],
+                    ),
+                    Question(
+                        (0, 1),
+                        "Q2",
+                        "A2",
+                        "Cat",
+                        value=400,
+                        actual_results=[["Original Alice", 400]],
+                    ),
+                ],
+            ),
+            FinalBoard(
+                "Final Cat",
+                Question((0, 0), "FJ", "FA", "Final Cat", actual_results=[]),
+            ),
+        ],
+        date="today",
+        comments="",
     )
+    (game._game_state_dir / "general.json").write_text(
+        json.dumps({"game_id": "1234", "players": []}),
+        encoding="utf-8",
+    )
+    (game._game_state_dir / "question_history.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "question_index": [0, [0, 1]],
+                        "question_number": 1,
+                        "round_index": 0,
+                        "answer_attempts": [],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "question_index": [0, [0, 0]],
+                        "question_number": 2,
+                        "round_index": 0,
+                        "answer_attempts": [],
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    summary = build_end_game_summary(game)
+    original_by_name = {series.name: series for series in summary.original_series}
+    assert original_by_name["Original Alice"].scores == [0, 400, 400]
+    assert original_by_name["Original Bob"].scores == [0, 0, 200]
+
+
+def test_build_end_game_summary_limits_original_series_to_filtered_rounds(
+    game: object, temp_dir: object
+) -> None:
+    """Test original gray traces only include played clues from filtered data."""
+    game._game_state_dir = temp_dir / "saved-filtered"
+    game._game_state_dir.mkdir()
+    game.data = GameData(
+        rounds=[
+            Board(
+                categories=["Filtered"],
+                questions=[
+                    Question(
+                        (0, 0),
+                        "Only played clue",
+                        "Answer",
+                        "Filtered",
+                        value=400,
+                        actual_results=[["Filtered Player", 400]],
+                    )
+                ],
+            ),
+            FinalBoard(
+                "Final Cat",
+                Question((0, 0), "FJ", "FA", "Final Cat", actual_results=[]),
+            ),
+        ],
+        date="today",
+        comments="",
+    )
+    (game._game_state_dir / "general.json").write_text(
+        json.dumps({"game_id": "1234", "players": [], "selected_round_indices": [1]}),
+        encoding="utf-8",
+    )
+    (game._game_state_dir / "question_history.jsonl").write_text(
+        json.dumps(
+            {
+                "question_index": [0, [0, 0]],
+                "question_number": 1,
+                "round_index": 0,
+                "answer_attempts": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    summary = build_end_game_summary(game)
+    assert len(summary.original_series) == 1
+    assert summary.original_series[0].name == "Filtered Player"
+    assert summary.original_series[0].scores == [0, 400]
+
+
+def test_build_end_game_summary_includes_final_jeopardy_in_original_series(
+    game: object, temp_dir: object
+) -> None:
+    """Test original gray traces include Final Jeopardy when it was played."""
+    game._game_state_dir = temp_dir / "saved-final"
+    game._game_state_dir.mkdir()
+    game.data = GameData(
+        rounds=[
+            Board(
+                categories=["Cat"],
+                questions=[
+                    Question(
+                        (0, 0),
+                        "Q1",
+                        "A1",
+                        "Cat",
+                        value=200,
+                        actual_results=[["Original Alice", 200]],
+                    )
+                ],
+            ),
+            FinalBoard(
+                "Final Cat",
+                Question(
+                    (0, 0),
+                    "FJ",
+                    "FA",
+                    "Final Cat",
+                    actual_results=[["Original Alice", -1000], ["Original Bob", 1000]],
+                ),
+            ),
+        ],
+        date="today",
+        comments="",
+    )
+    (game._game_state_dir / "general.json").write_text(
+        json.dumps({"game_id": "1234", "players": []}),
+        encoding="utf-8",
+    )
+    (game._game_state_dir / "question_history.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "question_index": [0, [0, 0]],
+                        "question_number": 1,
+                        "round_index": 0,
+                        "answer_attempts": [],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "question_index": [1, [0, 0]],
+                        "question_number": 2,
+                        "round_index": 1,
+                        "answer_attempts": [],
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    summary = build_end_game_summary(game)
+    original_by_name = {series.name: series for series in summary.original_series}
+    assert original_by_name["Original Alice"].scores == [0, 200, -800]
+    assert original_by_name["Original Bob"].scores == [0, 0, 1000]
 
 
 def test_build_end_game_summary_counts_races_in_any_phase(

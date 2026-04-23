@@ -41,7 +41,7 @@ class EndGamePlayerStats:
 class EndGameSeries:
     """Describe one plotted score-history line in the summary graph."""
 
-    player_number: int
+    player_number: int | None
     name: str
     scores: list[int]
     is_current: bool
@@ -256,6 +256,81 @@ def load_general_state(game: object) -> object:
         return {}
 
 
+def _question_for_history_entry(game: object, entry: object) -> object:
+    """Resolve the archived clue referenced by a saved question-history entry.
+
+    Args:
+        game: Active or completed ``Game`` instance with loaded rounds.
+        entry: Persisted per-question history dictionary.
+
+    Returns:
+        The matching ``Question`` object, or ``None`` when the clue cannot be
+        located in the currently loaded game data.
+    """
+    round_index = entry.get("round_index")
+    question_index = entry.get("question_index")
+    if (
+        round_index is None
+        or question_index is None
+        or len(question_index) < 2
+        or round_index < 0
+        or round_index >= len(getattr(game.data, "rounds", []))
+    ):
+        return None
+    question_coords = question_index[1]
+    if not isinstance(question_coords, list | tuple) or len(question_coords) != 2:
+        return None
+    round_data = game.data.rounds[round_index]
+    try:
+        return round_data.get_question(*question_coords)
+    except AttributeError:
+        return None
+
+
+def reconstruct_original_score_history(game: object) -> dict[str, list[int]]:
+    """Rebuild archive-contestant score history in actual played clue order.
+
+    Args:
+        game: Active or completed ``Game`` instance whose loaded game data and
+            saved history should be used.
+
+    Returns:
+        Mapping from original contestant name to cumulative scores by played
+        question number.
+    """
+    entries = load_question_history(game)
+    if not entries:
+        return {}
+    entries.sort(key=lambda entry: entry.get("question_number", 0))
+    score_history: dict[str, list[int]] = {}
+    for entry in entries:
+        question_number = int(entry.get("question_number", 0) or 0)
+        if question_number <= 0:
+            continue
+        clue = _question_for_history_entry(game, entry)
+        actual_results = getattr(clue, "actual_results", None) if clue is not None else None
+        question_deltas: dict[str, int] = {}
+        if isinstance(actual_results, list):
+            for result in actual_results:
+                if not isinstance(result, list | tuple) or len(result) != 2:
+                    continue
+                player_name, score_delta = result
+                if not player_name:
+                    continue
+                player_name = str(player_name)
+                score_history.setdefault(player_name, [0])
+                while len(score_history[player_name]) < question_number:
+                    score_history[player_name].append(score_history[player_name][-1])
+                question_deltas[player_name] = (
+                    question_deltas.get(player_name, 0) + int(score_delta or 0)
+                )
+        for player_name, scores in score_history.items():
+            while len(scores) < question_number:
+                scores.append(scores[-1])
+            scores.append(scores[-1] + question_deltas.get(player_name, 0))
+    return score_history
+
+
 def build_end_game_summary(game: object) -> EndGameSummary:
     """Compute score and buzzer summary data for the end-game screen.
 
@@ -267,18 +342,10 @@ def build_end_game_summary(game: object) -> EndGameSummary:
     """
     entries = load_question_history(game)
     entries.sort(key=lambda entry: entry.get("question_number", 0))
-    general_state = load_general_state(game)
     score_history = reconstruct_score_history(game)
-
-    original_player_map = {
-        int(player.get("player_number")): player.get(
-            "name", f"Player {player.get('player_number')}"
-        )
-        for player in general_state.get("players", [])
-        if player.get("player_number") is not None
-    }
+    original_score_history = reconstruct_original_score_history(game)
     current_player_map = {player.player_number: player.name for player in game.players}
-    all_player_numbers = sorted(set(original_player_map) | set(current_player_map))
+    all_player_numbers = sorted(current_player_map)
 
     questions_buzzed_on = {player_number: set() for player_number in all_player_numbers}
     early_buzzes = {player_number: 0 for player_number in all_player_numbers}
@@ -361,13 +428,11 @@ def build_end_game_summary(game: object) -> EndGameSummary:
         )
 
     current_series = []
-    original_series = []
     for player_number in all_player_numbers:
         scores = list(score_history.get(player_number, [0]))
         if not scores:
             scores = [0]
         current_name = current_player_map.get(player_number)
-        original_name = original_player_map.get(player_number)
         if current_name is not None:
             current_series.append(
                 EndGameSeries(
@@ -378,16 +443,16 @@ def build_end_game_summary(game: object) -> EndGameSummary:
                     is_original_only=False,
                 )
             )
-        if original_name is not None and original_name != current_name:
-            original_series.append(
-                EndGameSeries(
-                    player_number=player_number,
-                    name=original_name,
-                    scores=scores,
-                    is_current=False,
-                    is_original_only=True,
-                )
-            )
+    original_series = [
+        EndGameSeries(
+            player_number=None,
+            name=player_name,
+            scores=list(scores) if scores else [0],
+            is_current=False,
+            is_original_only=True,
+        )
+        for player_name, scores in original_score_history.items()
+    ]
 
     top_score = max((player.score for player in game.players), default=0)
     winner_player_numbers = [
