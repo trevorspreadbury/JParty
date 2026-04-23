@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import QHBoxLayout, QMainWindow, QVBoxLayout, QWidget
 
 from jparty.ui.widgets.board import BoardWidget
 from jparty.ui.widgets.borders import Borders, HostBorders
-from jparty.ui.widgets.final import FinalDisplay, GraphDisplay
+from jparty.ui.widgets.final import EndGameSummaryDisplay, FinalDisplay
 from jparty.ui.widgets.question import (
     DailyDoubleWidget,
     FinalJeopardyWidget,
@@ -230,13 +230,13 @@ class DisplayWindow(QMainWindow):
         self.final_display = FinalDisplay(self.game, self)
         self.final_window = self.final_display.answer_widget
 
-    def load_final_graphs(self) -> None:
-        """Show the saved end-of-game score graph view.
+    def load_end_game_summary(self, summary: object) -> None:
+        """Show the audience-facing end-of-game summary screen.
 
         Returns:
             ``None``.
         """
-        self.graph_display = GraphDisplay(self)
+        self.graph_display = EndGameSummaryDisplay(summary, self)
         self.question_widget.setVisible(False)
         self.final_display.setVisible(False)
         self.board_layout.replaceWidget(self.question_widget, self.graph_display)

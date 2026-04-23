@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from jparty.domain.state import build_end_game_summary
 
 pytestmark = pytest.mark.unit
 
@@ -103,3 +104,36 @@ def test_classify_buzz_phases_splits_main_and_rebound(game: object) -> None:
     assert [phase["phase_type"] for phase in phases] == ["main", "rebound"]
     assert phases[0]["buzz_attempts"][0]["player_index"] == 0
     assert phases[1]["buzz_attempts"][0]["player_index"] == 1
+
+
+def test_build_end_game_summary_calculates_stats(
+    game: object, players: object, sample_saved_game_dir: object
+) -> None:
+    """Test end-game summary metrics from saved question history."""
+    game._game_state_dir = sample_saved_game_dir
+    summary = build_end_game_summary(game)
+    player_zero = next(
+        player for player in summary.current_players if player.player_number == 0
+    )
+    player_one = next(
+        player for player in summary.current_players if player.player_number == 1
+    )
+    assert player_zero.coryat == 0
+    assert player_zero.right_count == 1
+    assert player_zero.wrong_count == 1
+    assert player_one.coryat == 400
+    assert player_one.right_count == 2
+    assert player_one.wrong_count == 0
+
+
+def test_build_end_game_summary_includes_original_series_for_replaced_players(
+    game: object, players: object, sample_saved_game_dir: object
+) -> None:
+    """Test original gray traces are kept when current players differ."""
+    game._game_state_dir = sample_saved_game_dir
+    players[0].name = "Replacement"
+    summary = build_end_game_summary(game)
+    assert any(
+        series.player_number == 0 and series.name == "Alice"
+        for series in summary.original_series
+    )

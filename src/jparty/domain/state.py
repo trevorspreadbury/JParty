@@ -9,9 +9,55 @@ state-shaping logic separate from live gameplay orchestration.
 import json
 import logging
 import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from itertools import zip_longest
 from pathlib import Path
+
+
+@dataclass
+class EndGamePlayerStats:
+    """Summarize one player's end-of-game performance metrics."""
+
+    player_number: int
+    name: str
+    final_score: int
+    coryat: int
+    right_count: int
+    wrong_count: int
+    questions_buzzed_on: int
+    early_buzzes: int
+    race_wins: int
+    race_opportunities: int
+
+    @property
+    def race_win_percentage(self) -> float | None:
+        """Return the player's race-win percentage when defined."""
+        if self.race_opportunities == 0:
+            return None
+        return (self.race_wins / self.race_opportunities) * 100
+
+
+@dataclass
+class EndGameSeries:
+    """Describe one plotted score-history line in the summary graph."""
+
+    player_number: int
+    name: str
+    scores: list[int]
+    is_current: bool
+    is_original_only: bool
+
+
+@dataclass
+class EndGameSummary:
+    """Bundle the data required to render the audience summary screen."""
+
+    winner_player_numbers: list[int]
+    is_tie: bool
+    question_count: int
+    current_players: list[EndGamePlayerStats]
+    current_series: list[EndGameSeries]
+    original_series: list[EndGameSeries]
 
 
 def get_current_game_state(game: object) -> object:
@@ -208,3 +254,156 @@ def load_general_state(game: object) -> object:
     except Exception as exc:
         logging.error("Error loading general state: %s", exc)
         return {}
+
+
+def build_end_game_summary(game: object) -> EndGameSummary:
+    """Compute score and buzzer summary data for the end-game screen.
+
+    Args:
+        game: Active or completed ``Game`` instance with persisted history.
+
+    Returns:
+        Structured end-game summary data for the audience display.
+    """
+    entries = load_question_history(game)
+    entries.sort(key=lambda entry: entry.get("question_number", 0))
+    general_state = load_general_state(game)
+    score_history = reconstruct_score_history(game)
+
+    original_player_map = {
+        int(player.get("player_number")): player.get(
+            "name", f"Player {player.get('player_number')}"
+        )
+        for player in general_state.get("players", [])
+        if player.get("player_number") is not None
+    }
+    current_player_map = {player.player_number: player.name for player in game.players}
+    all_player_numbers = sorted(set(original_player_map) | set(current_player_map))
+
+    questions_buzzed_on = {player_number: set() for player_number in all_player_numbers}
+    early_buzzes = {player_number: 0 for player_number in all_player_numbers}
+    race_wins = {player_number: 0 for player_number in all_player_numbers}
+    race_opportunities = {player_number: 0 for player_number in all_player_numbers}
+    right_count = {player_number: 0 for player_number in all_player_numbers}
+    wrong_count = {player_number: 0 for player_number in all_player_numbers}
+    coryat = {player_number: 0 for player_number in all_player_numbers}
+
+    for entry in entries:
+        question_number = entry.get("question_number")
+        buzz_phases = entry.get("buzz_phases", [])
+        for phase in buzz_phases:
+            for buzz_attempt in phase.get("buzz_attempts", []):
+                player_number = buzz_attempt.get("player_index")
+                if player_number is None:
+                    continue
+                questions_buzzed_on.setdefault(player_number, set()).add(question_number)
+                if buzz_attempt.get("is_early"):
+                    early_buzzes[player_number] = early_buzzes.get(player_number, 0) + 1
+
+        main_phase = next(
+            (phase for phase in buzz_phases if phase.get("phase_type") == "main"),
+            None,
+        )
+        answer_attempts = entry.get("answer_attempts", [])
+        if main_phase and answer_attempts:
+            race_buzzers = {
+                buzz_attempt.get("player_index")
+                for buzz_attempt in main_phase.get("buzz_attempts", [])
+                if buzz_attempt.get("player_index") is not None
+                and not buzz_attempt.get("is_early")
+                and not buzz_attempt.get("in_timeout")
+            }
+            if len(race_buzzers) >= 2:
+                for player_number in race_buzzers:
+                    race_opportunities[player_number] = (
+                        race_opportunities.get(player_number, 0) + 1
+                    )
+                first_response = min(
+                    answer_attempts,
+                    key=lambda attempt: attempt.get("timestamp", float("inf")),
+                )
+                winner_player_number = first_response.get("player_index")
+                if winner_player_number in race_buzzers:
+                    race_wins[winner_player_number] = (
+                        race_wins.get(winner_player_number, 0) + 1
+                    )
+
+        for attempt in answer_attempts:
+            player_number = attempt.get("player_index")
+            if player_number is None:
+                continue
+            if attempt.get("answer_correct"):
+                right_count[player_number] = right_count.get(player_number, 0) + 1
+            else:
+                wrong_count[player_number] = wrong_count.get(player_number, 0) + 1
+            if (
+                not entry.get("is_daily_double")
+                and entry.get("round_index") is not None
+                and entry.get("round_index") >= 0
+                and entry.get("round_index") < len(getattr(game.data, "rounds", [])) - 1
+            ):
+                clue_value = int(entry.get("value", 0) or 0)
+                if attempt.get("answer_correct"):
+                    coryat[player_number] = coryat.get(player_number, 0) + clue_value
+                else:
+                    coryat[player_number] = coryat.get(player_number, 0) - clue_value
+
+    current_players = []
+    for player in game.players:
+        player_number = player.player_number
+        current_players.append(
+            EndGamePlayerStats(
+                player_number=player_number,
+                name=player.name,
+                final_score=player.score,
+                coryat=coryat.get(player_number, 0),
+                right_count=right_count.get(player_number, 0),
+                wrong_count=wrong_count.get(player_number, 0),
+                questions_buzzed_on=len(questions_buzzed_on.get(player_number, set())),
+                early_buzzes=early_buzzes.get(player_number, 0),
+                race_wins=race_wins.get(player_number, 0),
+                race_opportunities=race_opportunities.get(player_number, 0),
+            )
+        )
+
+    current_series = []
+    original_series = []
+    for player_number in all_player_numbers:
+        scores = list(score_history.get(player_number, [0]))
+        if not scores:
+            scores = [0]
+        current_name = current_player_map.get(player_number)
+        original_name = original_player_map.get(player_number)
+        if current_name is not None:
+            current_series.append(
+                EndGameSeries(
+                    player_number=player_number,
+                    name=current_name,
+                    scores=scores,
+                    is_current=True,
+                    is_original_only=False,
+                )
+            )
+        if original_name is not None and original_name != current_name:
+            original_series.append(
+                EndGameSeries(
+                    player_number=player_number,
+                    name=original_name,
+                    scores=scores,
+                    is_current=False,
+                    is_original_only=True,
+                )
+            )
+
+    top_score = max((player.score for player in game.players), default=0)
+    winner_player_numbers = [
+        player.player_number for player in game.players if player.score == top_score
+    ]
+    return EndGameSummary(
+        winner_player_numbers=winner_player_numbers,
+        is_tie=len(winner_player_numbers) != 1,
+        question_count=max((entry.get("question_number", 0) for entry in entries), default=0),
+        current_players=current_players,
+        current_series=current_series,
+        original_series=original_series,
+    )

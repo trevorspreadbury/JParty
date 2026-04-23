@@ -30,6 +30,7 @@ from jparty.domain.input import (
 )
 from jparty.domain.models import BuzzAttempt, FinalBoard, GameData
 from jparty.domain.state import (
+    build_end_game_summary,
     classify_buzz_phases,
     get_current_game_state,
     load_general_state,
@@ -1078,16 +1079,15 @@ class Game(QObject):
         self.keystroke_manager.activate("GENERATE_GRAPHS")
 
     def generate_final_score_graphs(self) -> None:
-        """Generate all supported end-of-game score graph variants.
+        """Build and show the end-of-game audience summary screen.
 
         Returns:
             ``None``.
         """
         self.keystroke_manager.deactivate("GENERATE_GRAPHS")
-        for player_set in ["original", "current", "all"]:
-            self.generate_final_score_graph(player_set)
+        summary = build_end_game_summary(self)
         QApplication.processEvents()
-        self.dc.load_final_graphs()
+        self.main_display.load_end_game_summary(summary)
         self.keystroke_manager.activate("CLOSE_GAME")
 
     def _load_question_history(self) -> object:
