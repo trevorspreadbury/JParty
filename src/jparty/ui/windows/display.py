@@ -150,12 +150,20 @@ class DisplayWindow(QMainWindow):
             QMargins(
                 fullrect.width(), fullrect.height(), fullrect.width(), fullrect.height()
             )
-            * 0.3
+            * self.welcome_margin_scale()
         )
         if self.welcome_widget is not None:
             self.welcome_widget.setGeometry(fullrect - margins)
         if self.final_display is not None:
             self.final_display.setGeometry(fullrect)
+
+    def welcome_margin_scale(self) -> float:
+        """Return the inset scale used when sizing the welcome widget.
+
+        Returns:
+            Fractional inset applied on each side of the welcome widget.
+        """
+        return 0.3
 
     def show_welcome_widgets(self) -> None:
         """Show and reset the startup widget.
@@ -325,6 +333,14 @@ class HostDisplayWindow(DisplayWindow):
             Monitor index ``0`` for the host display.
         """
         return 0
+
+    def welcome_margin_scale(self) -> float:
+        """Return a larger welcome widget footprint for the host display.
+
+        Returns:
+            Fractional inset applied on each side of the host welcome widget.
+        """
+        return 0.16
 
     def create_start_menu(self) -> object:
         """Create the host welcome screen.

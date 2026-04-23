@@ -13,6 +13,7 @@ import qrcode
 from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QBrush, QFont, QImage, QPainter, QPalette, QPixmap
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -25,6 +26,7 @@ from PyQt6.QtWidgets import (
 
 from jparty import __version__ as version
 from jparty.app.helptext import helpmsg
+from jparty.domain.models import FinalBoard
 from jparty.services.game_loader import get_game, get_random_game
 from jparty.ui.styles import WINDOWPAL
 from jparty.ui.widgets.common import (
@@ -33,6 +35,35 @@ from jparty.ui.widgets.common import (
     add_shadow,
     resource_path,
 )
+
+ROUND_CHECKBOX_STYLE = """
+QCheckBox {
+    color: black;
+    spacing: 0px;
+    font-size: 24px;
+    font-weight: 600;
+}
+QCheckBox::indicator {
+    width: 0px;
+    height: 0px;
+    border: none;
+    background: transparent;
+}
+"""
+
+ROUNDS_LABEL_STYLE = """
+QLabel {
+    color: black;
+    font-size: 22px;
+    font-weight: 700;
+}
+"""
+
+STANDARD_ROUND_LABELS = [
+    "Jeopardy!",
+    "Double Jeopardy!",
+    "Triple Jeopardy!",
+]
 
 
 class Image(qrcode.image.base.BaseImage):
@@ -172,6 +203,8 @@ class Welcome(StartWidget):
         self.game = game
         self.resume_path = None
         self._base_summary_text = ""
+        self._loading_summary = False
+        self.round_checkboxes = []
         main_layout = QVBoxLayout()
         main_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         self.title_font = QFont()
@@ -219,12 +252,18 @@ class Welcome(StartWidget):
         select_layout.addStretch(2)
         select_layout.addLayout(button_layout, 20)
         select_layout.addStretch(5)
-        self.summary_label = DynamicLabel("", lambda: self.height() * 0.04, self)
+        self.summary_label = DynamicLabel("", lambda: self.height() * 0.072, self)
         self.summary_label.setWordWrap(True)
         self.summary_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.summary_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
         )
+        self.rounds_widget = QWidget(self)
+        self.rounds_layout = QVBoxLayout()
+        self.rounds_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.rounds_layout.setSpacing(12)
+        self.rounds_widget.setLayout(self.rounds_layout)
+        self.rounds_widget.setVisible(False)
         self.quit_button = DynamicButton("Quit", self)
         self.quit_button.clicked.connect(self.game.close)
         self.help_button = DynamicButton("Show help", self)
@@ -242,7 +281,8 @@ class Welcome(StartWidget):
         main_layout.addStretch(1)
         main_layout.addLayout(select_layout, 5)
         main_layout.addStretch(1)
-        main_layout.addWidget(self.summary_label, 5)
+        main_layout.addWidget(self.summary_label, 7)
+        main_layout.addWidget(self.rounds_widget, 4)
         main_layout.addLayout(footer_layout, 3)
         main_layout.addStretch(3)
         self.gameid_trigger.connect(self.set_gameid)
@@ -281,6 +321,35 @@ class Welcome(StartWidget):
         f = self.textbox.font()
         f.setPixelSize(int(textbox_height * 0.9))
         self.textbox.setFont(f)
+        checkbox_font_size = max(int(self.height() * 0.026), 22)
+        checkbox_style = f"""
+QCheckBox {{
+    color: black;
+    spacing: 0px;
+    font-size: {checkbox_font_size}px;
+    font-weight: 600;
+}}
+QCheckBox::indicator {{
+    width: 0px;
+    height: 0px;
+    border: none;
+    background: transparent;
+}}
+"""
+        rounds_label_font_size = max(int(self.height() * 0.022), 18)
+        rounds_label_style = f"""
+QLabel {{
+    color: black;
+    font-size: {rounds_label_font_size}px;
+    font-weight: 700;
+}}
+"""
+        for index in range(self.rounds_layout.count()):
+            widget = self.rounds_layout.itemAt(index).widget()
+            if isinstance(widget, QCheckBox):
+                widget.setStyleSheet(checkbox_style)
+            elif isinstance(widget, QLabel):
+                widget.setStyleSheet(rounds_label_style)
 
     def __random(self) -> None:
         """Return random."""
@@ -312,6 +381,8 @@ class Welcome(StartWidget):
         Returns:
             ``None``.
         """
+        self._loading_summary = True
+        self.clear_round_selector()
         self.summary_trigger.emit("Loading...")
         t = Thread(target=self.__random)
         t.start()
@@ -345,6 +416,13 @@ class Welcome(StartWidget):
         """
         self._base_summary_text = text
         self.summary_label.setText(text)
+        if text == "Loading...":
+            return
+        self._loading_summary = False
+        if self.resume_path is None and self.game.valid_game():
+            self.configure_round_selector()
+        elif self.resume_path is None:
+            self.clear_round_selector()
 
     def set_gameid(self, text: object) -> None:
         """Update the game-id input field.
@@ -363,6 +441,7 @@ class Welcome(StartWidget):
             self.resume_path = None
             self.game.clear_resume_state()
             self.start_button.setText("Start!")
+        self.clear_round_selector()
         self.debounce_timer.start(2000)
 
     def debounced_show_summary(self) -> None:
@@ -379,6 +458,8 @@ class Welcome(StartWidget):
         Returns:
             ``None``.
         """
+        self._loading_summary = True
+        self.clear_round_selector()
         self.summary_trigger.emit("Loading...")
         t = Thread(target=self.__show_summary)
         t.start()
@@ -407,6 +488,7 @@ class Welcome(StartWidget):
         self.resume_path = selected_dir
         self.start_button.setText("Resume!")
         saved_players = resume_state["general_state"].get("players", [])
+        self.configure_round_selector(enabled=False)
         self._base_summary_text = "\n".join(
             [
                 f"Resume game {resume_state['game_id']} from:",
@@ -418,7 +500,6 @@ class Welcome(StartWidget):
                 f"Saved players: {len(saved_players)}",
             ]
         )
-        self.summary_label.setText(self._base_summary_text)
         self.check_start()
 
     def check_start(self) -> None:
@@ -427,18 +508,37 @@ class Welcome(StartWidget):
         Returns:
             ``None``.
         """
-        if self.game.startable():
+        rounds_selected = self.resume_path is not None or bool(
+            getattr(self.game, "selected_round_indices", lambda: [])()
+        )
+        expected_player_count = self.game.expected_player_count()
+        summary_text = self._base_summary_text
+        if self.resume_path is not None:
+            claimed_count, total_count = getattr(
+                self.game, "resume_claim_status", lambda: (0, 0)
+            )()
+            if summary_text:
+                summary_text += f"\nClaimed {claimed_count} of {total_count} saved players."
+        if rounds_selected and summary_text:
+            self.summary_label.setText(summary_text)
+        if self.game.startable() and rounds_selected:
             self.start_button.setEnabled(True)
         else:
             self.start_button.setEnabled(False)
-            expected_player_count = self.game.expected_player_count()
             if expected_player_count is not None:
-                connected_players = len(self.game.buzzer_controller.connected_players)
+                claimed_count, total_count = getattr(
+                    self.game, "resume_claim_status", lambda: (0, 0)
+                )()
                 self.summary_label.setText(
-                    self._base_summary_text
-                    + f"\n\nConnect exactly {expected_player_count} players to resume."
-                    + f"\nCurrently connected: {connected_players}"
+                    summary_text
+                    + f"\nClaim every saved player profile to resume ({claimed_count}/{total_count})."
                 )
+            elif (
+                not self._loading_summary
+                and not rounds_selected
+                and self._base_summary_text
+            ):
+                self.summary_label.setText(summary_text + "\n\nSelect at least one round to play.")
 
     def restart(self) -> None:
         """Reset the welcome screen to its initial fresh-game state.
@@ -450,7 +550,99 @@ class Welcome(StartWidget):
         self._base_summary_text = ""
         self.game.clear_resume_state()
         self.start_button.setText("Start!")
+        self.clear_round_selector()
         self.show_summary(self)
+
+    def clear_round_selector(self) -> None:
+        """Remove any existing round-selection checkboxes.
+
+        Returns:
+            ``None``.
+        """
+        while self.rounds_layout.count():
+            item = self.rounds_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.round_checkboxes = []
+        self.rounds_widget.setVisible(False)
+        if hasattr(self.game, "set_selected_round_indices"):
+            self.game.set_selected_round_indices(None)
+
+    def configure_round_selector(
+        self, selected_indices: object = None, enabled: bool = True
+    ) -> None:
+        """Populate the round-selection UI from the loaded game data.
+
+        Args:
+            selected_indices: Optional iterable of selected round indices.
+            enabled: Whether the host can edit the round selection.
+
+        Returns:
+            ``None``.
+        """
+        self.clear_round_selector()
+        if not getattr(self.game, "data", None):
+            return
+        if selected_indices is None:
+            selected_indices = list(range(len(self.game.data.rounds)))
+        selected_indices = {int(index) for index in selected_indices}
+        rounds_label = QLabel("Rounds to play:", self.rounds_widget)
+        rounds_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        rounds_label.setStyleSheet(ROUNDS_LABEL_STYLE)
+        self.rounds_layout.addWidget(rounds_label)
+        for index, round_data in enumerate(self.game.data.rounds):
+            checkbox = QCheckBox("", self.rounds_widget)
+            checkbox.setProperty("round_label", self.describe_round(round_data, index))
+            checkbox.setStyleSheet(ROUND_CHECKBOX_STYLE)
+            checkbox.setChecked(index in selected_indices)
+            checkbox.setEnabled(enabled)
+            checkbox.stateChanged.connect(self.update_selected_rounds)
+            self.rounds_layout.addWidget(checkbox)
+            self.round_checkboxes.append(checkbox)
+        self.rounds_widget.setVisible(True)
+        self.update_selected_rounds()
+
+    def describe_round(self, round_data: object, index: int) -> str:
+        """Return a user-facing label for a game round.
+
+        Args:
+            round_data: Round object being described.
+            index: Zero-based round index within the loaded game data.
+
+        Returns:
+            Human-readable round label for the checkbox UI.
+        """
+        if isinstance(round_data, FinalBoard):
+            return "Final Jeopardy!"
+        standard_round_index = sum(
+            1
+            for prior_round in self.game.data.rounds[:index]
+            if not isinstance(prior_round, FinalBoard)
+        )
+        if standard_round_index < len(STANDARD_ROUND_LABELS):
+            return STANDARD_ROUND_LABELS[standard_round_index]
+        return f"Round {standard_round_index + 1}"
+
+    def update_selected_rounds(self) -> None:
+        """Push the current checkbox selection into the game object.
+
+        Returns:
+            ``None``.
+        """
+        for checkbox in self.round_checkboxes:
+            round_label = checkbox.property("round_label") or checkbox.text()
+            checkbox.setText(
+                f"[{'x' if checkbox.isChecked() else ' '}] {round_label}"
+            )
+        selected_indices = [
+            index
+            for index, checkbox in enumerate(self.round_checkboxes)
+            if checkbox.isChecked()
+        ]
+        if hasattr(self.game, "set_selected_round_indices"):
+            self.game.set_selected_round_indices(selected_indices)
+        self.check_start()
 
 
 class QRWidget(StartWidget):

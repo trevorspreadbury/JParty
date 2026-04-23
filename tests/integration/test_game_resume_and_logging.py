@@ -50,10 +50,10 @@ def test_prepare_and_resume_saved_game_restores_round_scores_and_questions(
     restored_data = game.data
     monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
     players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(sample_saved_game_dir)
     game.buzzer_controller.connected_players = players
     game.players = players
     game.dc.scoreboard.refresh_players()
-    game.prepare_resume_from_dir(sample_saved_game_dir)
     game.start_game()
     assert game.current_round is game.data.rounds[0]
     assert not isinstance(game.current_round, FinalBoard)
@@ -112,10 +112,10 @@ def test_resume_into_final_starts_final_flow(
             json.dump(entry, f)
             f.write("\n")
     players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(saved_dir)
     game.buzzer_controller.connected_players = players
     game.players = players
     game.dc.scoreboard.refresh_players()
-    game.prepare_resume_from_dir(saved_dir)
     game.start_game()
     assert isinstance(game.current_round, FinalBoard)
     assert game.active_question is game.current_round.question
@@ -152,3 +152,35 @@ def test_start_game_saves_html_when_play_begins(
     assert saved_game_ids == ["4453"]
     assert game.current_round is game.data.rounds[0]
     assert game.dc.hidden_welcome == 1
+
+
+def test_start_game_filters_rounds_to_selected_indices(
+    game: object, monkeypatch: object
+) -> None:
+    """Test test start game filters rounds to selected indices."""
+    from jparty.services import archive_client
+
+    monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
+    monkeypatch.setenv("JPARTY_GAME_ID", "4453")
+    game.set_selected_round_indices([0, 2])
+    original_final_round = game.data.rounds[2]
+    game.start_game()
+    assert len(game.data.rounds) == 2
+    assert game.data.rounds[1] is original_final_round
+
+
+def test_next_round_ends_game_when_no_later_round_is_selected(
+    game_with_players: object, monkeypatch: object
+) -> None:
+    """Test test next round ends game when no later round is selected."""
+    from jparty.services import archive_client
+
+    game = game_with_players
+    monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
+    monkeypatch.setenv("JPARTY_GAME_ID", "4453")
+    game.set_selected_round_indices([0])
+    game.dc.final_window = None
+    game.start_game()
+    game.next_round()
+    assert game.dc.loaded_final_judgement == 1
+    assert game.dc.final_window.winner is not None or game.dc.final_window.tie_shown

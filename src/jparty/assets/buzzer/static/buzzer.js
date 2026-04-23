@@ -60,6 +60,10 @@ function getToken() {
   return "";
 }
 
+function clearToken() {
+    document.cookie = "token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+}
+
 function send(msg, text="") {
     var message = {message:msg, text: text};
     updater.socket.send(JSON.stringify(message));
@@ -83,6 +87,38 @@ function answerForm() {
 function nameForm(name) {
     console.log(name);
     send("NAME",name);
+}
+
+function renderSavedPlayerChoices(payload) {
+    var choicesContainer = document.getElementById("saved-player-choices");
+    var hint = document.getElementById("chooser-hint");
+    if (!choicesContainer || !payload) {
+        return;
+    }
+    choicesContainer.innerHTML = "";
+    hint.textContent = "Select your saved player (" + payload.claimed_count + "/" + payload.total_count + " claimed)";
+    (payload.players || []).forEach(function(player) {
+        var button = document.createElement("button");
+        button.type = "button";
+        button.className = "jparty-button saved-player-button";
+        if (player.claimed) {
+            button.classList.add("claimed");
+        }
+        button.disabled = !!player.claimed;
+        if ((player.name || "").substring(0, 21) === "data:image/png;base64") {
+            var image = document.createElement("img");
+            image.src = player.name;
+            image.alt = "Saved player " + player.player_number;
+            image.className = "saved-player-signature";
+            button.appendChild(image);
+        } else {
+            button.textContent = player.name;
+        }
+        button.addEventListener("click", function() {
+            send("CLAIM_PLAYER", String(player.player_number));
+        });
+        choicesContainer.appendChild(button);
+    });
 }
 
 function set_max_wager(score) {
@@ -191,15 +227,38 @@ var updater = {
                     load_page("buzz");
                     setToken(jsondata.text);
                     break;
+                case "CLAIMED":
+                    var claimData = JSON.parse(jsondata.text);
+                    setToken(claimData.token);
+                    set_max_wager(claimData.state.score);
+                    load_page(claimData.state.page);
+                    break;
                 case "NEW":
                     load_page("name");
                     resizeCanvas();
+                    break;
+                case "SHOW_CHOOSER":
+                    clearToken();
+                    renderSavedPlayerChoices(JSON.parse(jsondata.text));
+                    load_page("chooser");
                     break;
                 case "EXISTS":
                     console.log("Already exists" + jsondata.text);
                     state = JSON.parse(jsondata.text);
                     set_max_wager(state.score);
                     load_page(state.page);
+                    break;
+                case "PLAYER_TAKEN":
+                    alert("That saved player has already been claimed.");
+                    break;
+                case "ALL_CLAIMED":
+                    clearToken();
+                    alert("All saved players have already been claimed.");
+                    load_page(null);
+                    break;
+                case "LOGOUT":
+                    clearToken();
+                    load_page(null);
                     break;
                 case "PROMPTWAGER":
                     set_max_wager(jsondata.text);

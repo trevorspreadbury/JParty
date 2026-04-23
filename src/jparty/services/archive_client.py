@@ -24,7 +24,6 @@ from jparty.domain.models import Board, FinalBoard, GameData, Question
 REQUEST_TIMEOUT_SECONDS = 10
 DOUBLE_JEOPARDY_START_ROW = 14
 GOOGLE_SHEETS_ID_LENGTH = 7
-STANDARD_AND_FINAL_ROUND_COUNT = 3
 _LOADED_GAME_HTML_CACHE = {}
 
 
@@ -235,6 +234,27 @@ def get_actual_player_results(clue: BeautifulSoup, value: int) -> object:
     return answers
 
 
+def get_clue_value(clue: BeautifulSoup, round_index: int, row_index: int) -> int:
+    """Extract a clue's dollar value from HTML with a safe fallback.
+
+    Args:
+        clue: Parsed clue node from an archived standard round.
+        round_index: Zero-based standard-round index in the current game.
+        row_index: Zero-based clue row index within the board.
+
+    Returns:
+        Parsed dollar value for the clue, or a fallback board value when the
+        rendered amount is unavailable.
+    """
+    value_node = clue.find(class_="clue_value")
+    if value_node is not None:
+        digits = re.sub(r"[^\d]", "", value_node.text)
+        if digits:
+            return int(digits)
+    fallback_round_index = min(round_index, len(MONIES) - 1)
+    return MONIES[fallback_round_index][row_index]
+
+
 def get_actual_player_final(clue: BeautifulSoup) -> list[list[str]]:
     """Extract contestant scoring outcomes for Final Jeopardy.
 
@@ -291,8 +311,6 @@ def process_game_board_from_html(html: object, game_id: object) -> GameData:
     comments = comments[0] if len(comments) > 0 else ""
     boards = []
     rounds = soup.find_all(class_="round")
-    if len(rounds) == STANDARD_AND_FINAL_ROUND_COUNT:
-        rounds = rounds[:2]
     for i, ro in enumerate(rounds):
         categories_objs = ro.find_all(class_="category")
         categories = [c.find(class_="category_name").text for c in categories_objs]
@@ -314,7 +332,7 @@ def process_game_board_from_html(html: object, game_id: object) -> GameData:
                 dds += 1
             if dds > i + 1:
                 dd = False
-            value = MONIES[i][index[1]]
+            value = get_clue_value(clue, i, index[1])
             actual_results = get_actual_player_results(clue, value)
             answer = findanswer(clue)
             potential_media_file = find_question_media(game_id, i, index)

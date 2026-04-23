@@ -28,7 +28,7 @@ from jparty.domain.input import (
     QuestionTimer,
     index_to_key,
 )
-from jparty.domain.models import BuzzAttempt, FinalBoard
+from jparty.domain.models import BuzzAttempt, FinalBoard, GameData
 from jparty.domain.state import (
     classify_buzz_phases,
     get_current_game_state,
@@ -162,6 +162,7 @@ class Game(QObject):
         self._successful_buzz_times = []
         self._game_started_at = None
         self._resume_state = None
+        self._selected_round_indices = None
 
     def startable(self) -> bool:
         """Determine whether the game can start with the current connections.
@@ -172,14 +173,11 @@ class Game(QObject):
         """
         if not self.valid_game():
             return False
+        expected_player_count = self.expected_player_count()
+        if expected_player_count is not None:
+            return self.resume_claims_complete()
         connected_players = len(self.buzzer_controller.connected_players)
         if connected_players == 0:
-            return False
-        expected_player_count = self.expected_player_count()
-        if (
-            expected_player_count is not None
-            and connected_players != expected_player_count
-        ):
             return False
         return True
 
@@ -201,6 +199,75 @@ class Game(QObject):
             ``None``.
         """
         self._resume_state = None
+        self._selected_round_indices = None
+        if self.buzzer_controller:
+            self.buzzer_controller.clear_saved_player_reclaim()
+
+    def resume_claim_status(self) -> tuple[int, int]:
+        """Return current claim progress for a prepared saved-game lobby.
+
+        Returns:
+            Tuple of ``(claimed_count, total_count)`` for saved-player reclaim.
+        """
+        if not self.buzzer_controller:
+            return (0, 0)
+        return (
+            self.buzzer_controller.saved_player_claim_count(),
+            self.buzzer_controller.saved_player_total_count(),
+        )
+
+    def resume_claims_complete(self) -> bool:
+        """Return whether all saved players have been claimed.
+
+        Returns:
+            ``True`` when every saved player profile has been reclaimed.
+        """
+        if self._resume_state is None or not self.buzzer_controller:
+            return False
+        return self.buzzer_controller.saved_player_claims_complete()
+
+    def set_selected_round_indices(self, indices: object) -> None:
+        """Store the original round indices selected for play.
+
+        Args:
+            indices: Iterable of zero-based round indices to include when the
+                game starts, or ``None`` to fall back to all rounds.
+
+        Returns:
+            ``None``.
+        """
+        if indices is None:
+            self._selected_round_indices = None
+            return
+        self._selected_round_indices = sorted({int(index) for index in indices})
+
+    def selected_round_indices(self) -> list[int]:
+        """Return the configured original round indices for this session.
+
+        Returns:
+            Selected zero-based round indices, or all currently loaded rounds
+            when no explicit selection has been stored.
+        """
+        if self._selected_round_indices is not None:
+            return list(self._selected_round_indices)
+        if self.data is None:
+            return []
+        return list(range(len(self.data.rounds)))
+
+    def _apply_selected_rounds_to_data(self) -> None:
+        """Filter loaded game data down to the currently selected rounds.
+
+        Returns:
+            ``None``.
+        """
+        if self.data is None:
+            return
+        selected_rounds = [
+            self.data.rounds[index]
+            for index in self.selected_round_indices()
+            if 0 <= index < len(self.data.rounds)
+        ]
+        self.data = GameData(selected_rounds, self.data.date, self.data.comments)
 
     def prepare_resume_from_dir(self, saved_game_dir: object) -> object:
         """Load enough metadata to resume a previously saved game session.
@@ -236,6 +303,8 @@ class Game(QObject):
         if not saved_players:
             raise ValueError("Saved game metadata is missing player information")
         self.data = get_game(game_id)
+        self.set_selected_round_indices(general_state.get("selected_round_indices"))
+        self._apply_selected_rounds_to_data()
         if not self.valid_game():
             raise ValueError("Saved game points to an invalid or incomplete game")
         self._resume_state = {
@@ -244,6 +313,8 @@ class Game(QObject):
             "general_state": general_state,
             "player_count": len(saved_players),
         }
+        if self.buzzer_controller:
+            self.buzzer_controller.begin_saved_player_reclaim(saved_players)
         return self._resume_state
 
     def begin(self) -> None:
@@ -263,15 +334,24 @@ class Game(QObject):
         if self._resume_state:
             self._start_resumed_game()
             return
+        self._apply_selected_rounds_to_data()
+        if not self.data or not self.data.rounds:
+            logging.warning("No rounds selected for play")
+            return
         self._save_played_game_html()
         self.current_round = self.data.rounds[0]
         self.dc.hide_welcome_widgets()
-        self.dc.board_widget.load_round(self.current_round)
         self.buzzer_controller.accepting_players = False
         self.song_player.stop()
         self._game_started_at = time.time()
         self._initialize_game_state_dir()
         self._save_general_state()
+        if isinstance(self.current_round, FinalBoard):
+            self.dc.load_final(self.current_round.question)
+            self.active_question = self.current_round.question
+            self.start_final()
+        else:
+            self.dc.board_widget.load_round(self.current_round)
 
     def _save_played_game_html(self) -> None:
         """Persist the current J-Archive game's HTML once play actually begins.
@@ -368,8 +448,7 @@ class Game(QObject):
         self._game_started_at = (
             resume_state["general_state"].get("started_at") or time.time()
         )
-        self.players = self.buzzer_controller.connected_players
-        self._update_player_numbers()
+        self.players = self.buzzer_controller.claimed_saved_players()
         question_history = self._load_question_history()
         question_history.sort(key=lambda entry: entry.get("question_number", 0))
         self._mark_completed_questions(question_history)
@@ -580,7 +659,8 @@ class Game(QObject):
             ``None``.
         """
         self.players = self.buzzer_controller.connected_players
-        self._update_player_numbers()
+        if not self.buzzer_controller.in_saved_player_reclaim_mode():
+            self._update_player_numbers()
         self.dc.scoreboard.refresh_players()
         self.host_display.welcome_widget.check_start()
         for player in self.players:
@@ -827,6 +907,11 @@ class Game(QObject):
         logging.info("next round")
         i = self.data.rounds.index(self.current_round)
         logging.info(f"ROUND {i}")
+        if i + 1 >= len(self.data.rounds):
+            if getattr(self.dc, "final_window", None) is None:
+                self.dc.load_final_judgement()
+            self.end_game()
+            return
         self.current_round = self.data.rounds[i + 1]
         if isinstance(self.current_round, FinalBoard):
             self.dc.load_final(self.current_round.question)
