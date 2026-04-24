@@ -420,11 +420,60 @@ def test_build_end_game_summary_computes_game_stats(
     assert summary.game_stats.victory_summary == "$200 come-from-behind victory"
 
 
+def test_reconstruct_score_history_includes_manual_adjustments(
+    game: object, temp_dir: object
+) -> None:
+    """Test manual score adjustment entries participate in replay."""
+    game._game_state_dir = temp_dir / "saved"
+    game._game_state_dir.mkdir()
+    history_file = game._game_state_dir / "question_history.jsonl"
+    history_file.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "question_index": [0, [0, 0]],
+                        "question_number": 1,
+                        "round_index": 0,
+                        "category": "Cat 0",
+                        "value": 200,
+                        "is_daily_double": False,
+                        "buzz_phases": [],
+                        "answer_attempts": [
+                            {
+                                "player_index": 0,
+                                "answer_correct": True,
+                                "timestamp": 1000.0,
+                                "score_before": 0,
+                                "score_after": 200,
+                            }
+                        ],
+                        "completed_at": 1001.0,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "manual_score_adjustment",
+                        "player_index": 0,
+                        "timestamp": 1002.0,
+                        "score_before": 200,
+                        "score_after": 900,
+                        "new_score": 900,
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+    score_history = game._reconstruct_score_history()
+    assert score_history[0] == [0, 200, 900]
+
+
 def test_build_end_game_summary_counts_races_in_any_phase(
     game: object, players: object, temp_dir: object
 ) -> None:
     """Test race stats count any phase with multiple buzzers."""
-    game._game_state_dir = temp_dir / "saved"
+    game._game_state_dir = temp_dir / "saved-races"
     game._game_state_dir.mkdir()
     (game._game_state_dir / "general.json").write_text(
         json.dumps(

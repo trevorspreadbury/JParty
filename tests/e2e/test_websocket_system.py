@@ -104,7 +104,10 @@ class FakeController:
         profile = self.saved_player_profiles.get(player_number)
         if profile is None:
             return None
-        if profile.get("player") is not None and profile["player"].waiter is not socket_handler:
+        if (
+            profile.get("player") is not None
+            and profile["player"].waiter is not socket_handler
+        ):
             socket_handler.send("PLAYER_TAKEN")
             return None
         player = profile.get("player")
@@ -192,7 +195,9 @@ class TestBuzzerSocketSystem(TornadoAsyncHTTPTestCase):
         ws.close()
 
     @gen_test
-    async def test_resume_mode_sends_saved_player_chooser_and_claims_profile(self) -> None:
+    async def test_resume_mode_sends_saved_player_chooser_and_claims_profile(
+        self,
+    ) -> None:
         """Test reclaim chooser and successful saved-player claim."""
         self.controller.resume_mode_active = True
         self.controller.saved_player_profiles = {

@@ -207,7 +207,9 @@ def build_parser() -> object:
     return parser
 
 
-def summary_output_path(game_state_directory: object, output_file: object = None) -> Path:
+def summary_output_path(
+    game_state_directory: object, output_file: object = None
+) -> Path:
     """Resolve the image path for a rendered summary command.
 
     Args:

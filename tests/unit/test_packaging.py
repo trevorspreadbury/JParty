@@ -1,10 +1,10 @@
 """Test packaging module."""
 
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
-import json
 
 import pytest
 from jparty.app import bootstrap
@@ -231,7 +231,9 @@ def test_load_summary_counts_race_when_saved_player_buzzes_early_in_same_phase(
         (Path("tests") / "fixtures" / "4453.html").read_text(encoding="utf-8"),
         4453,
     )
-    monkeypatch.setattr("jparty.services.game_loader.get_game", lambda game_id: fake_data)
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game", lambda game_id: fake_data
+    )
 
     summary = bootstrap.load_summary_from_game_state_directory(saved_game_dir)
     stats_by_player = {

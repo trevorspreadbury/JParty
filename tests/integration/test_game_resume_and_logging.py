@@ -1,6 +1,7 @@
 """Test game resume and logging module."""
 
 import json
+
 import pytest
 from jparty.domain.models import FinalBoard, Player
 
@@ -75,7 +76,11 @@ def test_final_jeopardy_logging_writes_question_history_entry(
     entry = json.loads(history_file.read_text().splitlines()[-1])
     assert entry["round_index"] == 2
     assert entry["answer_attempts"]
-    assert [attempt["player_index"] for attempt in entry["answer_attempts"]] == [2, 1, 0]
+    assert [attempt["player_index"] for attempt in entry["answer_attempts"]] == [
+        2,
+        1,
+        0,
+    ]
 
 
 def test_prepare_and_resume_saved_game_restores_round_scores_and_questions(

@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import time
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
@@ -30,9 +31,12 @@ from jparty.domain.input import (
 )
 from jparty.domain.models import BuzzAttempt, FinalBoard, GameData
 from jparty.domain.state import (
+    MANUAL_SCORE_ADJUSTMENT_TYPE,
     build_end_game_summary,
     classify_buzz_phases,
     get_current_game_state,
+    is_manual_score_adjustment,
+    is_question_history_entry,
     load_general_state,
     load_question_history,
     reconstruct_score_history,
@@ -353,6 +357,7 @@ class Game(QObject):
             self.start_final()
         else:
             self.dc.board_widget.load_round(self.current_round)
+        self._refresh_score_edit_controls()
 
     def _save_played_game_html(self) -> None:
         """Persist the current J-Archive game's HTML once play actually begins.
@@ -482,6 +487,7 @@ class Game(QObject):
         for player in self.players:
             self._update_lectern_for_player(player)
         self._save_general_state()
+        self._refresh_score_edit_controls()
 
     def setDisplays(self, host_display: object, main_display: object) -> None:
         """Attach the host and audience display windows to the game.
@@ -497,6 +503,7 @@ class Game(QObject):
         self.host_display = host_display
         self.main_display = main_display
         self.dc = CompoundObject(host_display, main_display)
+        self._refresh_score_edit_controls()
 
     def setBuzzerController(self, controller: object) -> None:
         """Attach the buzzer controller used for player and lectern I/O.
@@ -581,6 +588,380 @@ class Game(QObject):
         """
         return classify_buzz_phases(self)
 
+    def _history_file(self) -> object:
+        """Return the current session's question-history JSONL path.
+
+        Returns:
+            The ``question_history.jsonl`` path for the current session.
+        """
+        if not self._game_state_dir:
+            self._initialize_game_state_dir()
+        if not self._game_state_dir:
+            return None
+        return self._game_state_dir / "question_history.jsonl"
+
+    def _append_history_entry(self, entry: dict) -> None:
+        """Append a history record to the current session JSONL file.
+
+        Args:
+            entry: Serializable history entry to append.
+
+        Returns:
+            ``None``.
+        """
+        history_file = self._history_file()
+        if history_file is None:
+            logging.error("No game state directory available for history append")
+            return
+        try:
+            with history_file.open("a") as file_obj:
+                json.dump(entry, file_obj)
+                file_obj.write("\n")
+        except Exception as exc:
+            logging.error("Error appending question history: %s", exc)
+
+    def _write_history_entries(self, entries: list[dict]) -> None:
+        """Rewrite the current session history file from memory.
+
+        Args:
+            entries: Complete ordered history entry list to persist.
+
+        Returns:
+            ``None``.
+        """
+        history_file = self._history_file()
+        if history_file is None:
+            logging.error("No game state directory available for history rewrite")
+            return
+        try:
+            with history_file.open("w") as file_obj:
+                for entry in entries:
+                    json.dump(entry, file_obj)
+                    file_obj.write("\n")
+        except Exception as exc:
+            logging.error("Error rewriting question history: %s", exc)
+
+    def _refresh_score_edit_controls(self) -> None:
+        """Refresh the enabled state of host score-edit controls.
+
+        Returns:
+            ``None``.
+        """
+        scoreboard = getattr(self.host_display, "scoreboard", None)
+        if scoreboard is not None and hasattr(scoreboard, "refresh_score_edit_button"):
+            scoreboard.refresh_score_edit_button()
+
+    def can_open_score_editor(self) -> bool:
+        """Return whether the host score-correction dialog should be enabled.
+
+        Returns:
+            ``True`` when there is saved non-final clue history and no active
+            clue interaction is in progress.
+        """
+        if self.active_question is not None or self.soliciting_player:
+            return False
+        return bool(self.get_recent_score_corrections(limit=1))
+
+    def _history_attempt_order(self, entry: dict, player_results: dict) -> list[int]:
+        """Build a stable player order for one clue's answer attempts.
+
+        Args:
+            entry: Existing clue history entry.
+            player_results: Mapping of player index to corrected result state.
+
+        Returns:
+            Ordered player indices that should appear in ``answer_attempts``.
+        """
+        original_order = [
+            attempt.get("player_index")
+            for attempt in entry.get("answer_attempts", [])
+            if attempt.get("player_index") is not None
+        ]
+        updated_order = [
+            player_index
+            for player_index in original_order
+            if player_results.get(player_index, "no answer") != "no answer"
+        ]
+        remaining_players = sorted(
+            player_index
+            for player_index, result in player_results.items()
+            if result != "no answer" and player_index not in updated_order
+        )
+        return updated_order + remaining_players
+
+    def _history_player_results(self, entry: dict) -> dict[int, str]:
+        """Return per-player result labels for a clue history entry.
+
+        Args:
+            entry: Persisted clue history entry.
+
+        Returns:
+            Mapping of player index to ``correct`` or ``incorrect``.
+        """
+        player_results = {}
+        for attempt in entry.get("answer_attempts", []):
+            player_index = attempt.get("player_index")
+            if player_index is None:
+                continue
+            player_results[player_index] = (
+                "correct" if attempt.get("answer_correct") else "incorrect"
+            )
+        return player_results
+
+    def _history_attempts_by_player(self, entry: dict) -> dict[int, dict]:
+        """Return a lookup of saved answer attempts keyed by player index.
+
+        Args:
+            entry: Persisted clue history entry.
+
+        Returns:
+            Mapping of player index to the saved attempt dictionary.
+        """
+        return {
+            attempt.get("player_index"): deepcopy(attempt)
+            for attempt in entry.get("answer_attempts", [])
+            if attempt.get("player_index") is not None
+        }
+
+    def _question_from_history_entry(self, entry: dict) -> object:
+        """Resolve the question object referenced by a saved clue history entry.
+
+        Args:
+            entry: Persisted clue history entry.
+
+        Returns:
+            Matching question object, or ``None`` when unavailable.
+        """
+        question_index = entry.get("question_index")
+        round_index = entry.get("round_index")
+        if (
+            not self.data
+            or question_index is None
+            or round_index is None
+            or len(question_index) < QUESTION_INDEX_PART_COUNT
+            or round_index >= len(self.data.rounds)
+        ):
+            return None
+        question_coords = question_index[1]
+        if (
+            not isinstance(question_coords, list | tuple)
+            or len(question_coords) != QUESTION_INDEX_PART_COUNT
+        ):
+            return None
+        return self.data.rounds[round_index].get_question(*question_coords)
+
+    def _rebuild_history_entries(self, entries: list[dict]) -> tuple[list[dict], dict]:
+        """Recompute score-before/after values across all saved history events.
+
+        Args:
+            entries: Ordered history records to normalize.
+
+        Returns:
+            Tuple of ``(rewritten_entries, final_scores)``.
+        """
+        rewritten_entries = []
+        scores = {}
+        for entry in entries:
+            updated_entry = deepcopy(entry)
+            if is_manual_score_adjustment(updated_entry):
+                player_index = updated_entry.get("player_index")
+                if player_index is not None:
+                    score_before = scores.get(player_index, 0)
+                    score_after = updated_entry.get(
+                        "new_score",
+                        updated_entry.get("score_after", score_before),
+                    )
+                    updated_entry["score_before"] = score_before
+                    updated_entry["score_after"] = score_after
+                    updated_entry["new_score"] = score_after
+                    scores[player_index] = score_after
+                rewritten_entries.append(updated_entry)
+                continue
+
+            if not is_question_history_entry(updated_entry):
+                rewritten_entries.append(updated_entry)
+                continue
+
+            value = int(updated_entry.get("value", 0) or 0)
+            attempts_by_player = {
+                attempt.get("player_index"): attempt
+                for attempt in updated_entry.get("answer_attempts", [])
+                if attempt.get("player_index") is not None
+            }
+            player_results = self._history_player_results(updated_entry)
+            rebuilt_attempts = []
+            for player_index in self._history_attempt_order(
+                updated_entry, player_results
+            ):
+                original_attempt = attempts_by_player.get(player_index, {})
+                score_before = scores.get(player_index, 0)
+                score_after = (
+                    score_before + value
+                    if player_results[player_index] == "correct"
+                    else score_before - value
+                )
+                rebuilt_attempts.append(
+                    {
+                        **original_attempt,
+                        "player_index": player_index,
+                        "answer_correct": player_results[player_index] == "correct",
+                        "timestamp": original_attempt.get("timestamp", time.time()),
+                        "score_before": score_before,
+                        "score_after": score_after,
+                    }
+                )
+                scores[player_index] = score_after
+            updated_entry["answer_attempts"] = rebuilt_attempts
+            rewritten_entries.append(updated_entry)
+        return rewritten_entries, scores
+
+    def _sync_scores_from_history_entries(self, entries: list[dict]) -> None:
+        """Apply final replayed scores from persisted history to live players.
+
+        Args:
+            entries: Ordered history records that should define live totals.
+
+        Returns:
+            ``None``.
+        """
+        _, final_scores = self._rebuild_history_entries(entries)
+        for player in self.players:
+            self.set_score(player, final_scores.get(player.player_number, 0))
+        self._refresh_score_edit_controls()
+
+    def get_recent_score_corrections(self, limit: int = 5) -> list[dict]:
+        """Return recent standard-clue history entries for the score editor.
+
+        Args:
+            limit: Maximum number of clue entries to return.
+
+        Returns:
+            Newest-first list of score-correction view models.
+        """
+        entries = self._load_question_history()
+        recent_entries = []
+        for entry in entries:
+            if not is_question_history_entry(entry):
+                continue
+            question = self._question_from_history_entry(entry)
+            if question is None or isinstance(
+                self.data.rounds[entry["round_index"]], FinalBoard
+            ):
+                continue
+            player_states = {
+                player.player_number: self._history_player_results(entry).get(
+                    player.player_number, "no answer"
+                )
+                for player in self.players
+            }
+            recent_entries.append(
+                {
+                    "question_number": entry.get("question_number"),
+                    "category": entry.get("category", ""),
+                    "value": entry.get("value", 0),
+                    "answer": question.answer,
+                    "is_daily_double": bool(entry.get("is_daily_double")),
+                    "player_states": player_states,
+                }
+            )
+        recent_entries.sort(
+            key=lambda entry: entry.get("question_number", 0), reverse=True
+        )
+        return recent_entries[:limit]
+
+    def apply_question_history_corrections(self, corrections: list[dict]) -> bool:
+        """Rewrite saved clue history after host score-correction edits.
+
+        Args:
+            corrections: Edited clue payloads keyed by ``question_number``.
+
+        Returns:
+            ``True`` when any saved history changed.
+        """
+        if not corrections:
+            return False
+        correction_map = {
+            correction["question_number"]: correction for correction in corrections
+        }
+        entries = self._load_question_history()
+        changed = False
+        updated_entries = []
+        for entry in entries:
+            if not is_question_history_entry(entry):
+                updated_entries.append(deepcopy(entry))
+                continue
+            question_number = entry.get("question_number")
+            correction = correction_map.get(question_number)
+            updated_entry = deepcopy(entry)
+            if correction is not None:
+                original_player_results = self._history_player_results(entry)
+                original_entry_states = {
+                    player.player_number: original_player_results.get(
+                        player.player_number, "no answer"
+                    )
+                    for player in self.players
+                }
+                corrected_player_results = {
+                    int(player_index): result
+                    for player_index, result in correction["player_states"].items()
+                }
+                if corrected_player_results != original_entry_states:
+                    changed = True
+                attempts_by_player = self._history_attempts_by_player(entry)
+                updated_entry["answer_attempts"] = [
+                    {
+                        **attempts_by_player.get(player_index, {}),
+                        "player_index": player_index,
+                        "answer_correct": corrected_player_results[player_index]
+                        == "correct",
+                        "timestamp": attempts_by_player.get(player_index, {}).get(
+                            "timestamp", time.time()
+                        ),
+                    }
+                    for player_index in self._history_attempt_order(
+                        entry, corrected_player_results
+                    )
+                    if corrected_player_results[player_index] != "no answer"
+                ]
+                if updated_entry.get("is_daily_double"):
+                    corrected_value = int(correction["value"])
+                    if corrected_value != int(entry.get("value", 0) or 0):
+                        changed = True
+                    updated_entry["value"] = corrected_value
+            updated_entries.append(updated_entry)
+
+        if not changed:
+            return False
+        rebuilt_entries, _ = self._rebuild_history_entries(updated_entries)
+        self._write_history_entries(rebuilt_entries)
+        self._sync_scores_from_history_entries(rebuilt_entries)
+        return True
+
+    def apply_manual_score_override(self, player: object, new_score: int) -> bool:
+        """Log and apply a host-entered manual player score override.
+
+        Args:
+            player: Player whose score should be overridden.
+            new_score: Replacement score value.
+
+        Returns:
+            ``True`` when the override was applied.
+        """
+        if player.score == new_score:
+            return False
+        history_entry = {
+            "type": MANUAL_SCORE_ADJUSTMENT_TYPE,
+            "player_index": player.player_number,
+            "timestamp": time.time(),
+            "score_before": player.score,
+            "score_after": new_score,
+            "new_score": new_score,
+        }
+        self._append_history_entry(history_entry)
+        self.set_score(player, new_score)
+        self._refresh_score_edit_controls()
+        return True
+
     def _flush_question_history(self) -> None:
         """Persist the active clue's history and clear per-question buffers.
 
@@ -596,7 +977,9 @@ class Game(QObject):
         if not question_index:
             logging.error("No question index")
             return
-        if not self.active_question.dd and not isinstance(self.current_round, FinalBoard):
+        if not self.active_question.dd and not isinstance(
+            self.current_round, FinalBoard
+        ):
             buzz_phases = self._classify_buzz_phases()
         else:
             buzz_phases = []
@@ -615,19 +998,14 @@ class Game(QObject):
             "answer_attempts": self._answer_attempts.copy(),
             "completed_at": time.time(),
         }
-        history_file = self._game_state_dir / "question_history.jsonl"
-        try:
-            with history_file.open("a") as f:
-                json.dump(entry, f)
-                f.write("\n")
-        except Exception as e:
-            logging.error(f"Error appending question history: {e}")
+        self._append_history_entry(entry)
         self._current_question_history = None
         self._all_buzz_attempts = []
         self._answer_attempts = []
         self._open_responses_times = []
         self._successful_buzz_times = []
         self._question_start_time = None
+        self._refresh_score_edit_controls()
 
     def arrowhints(self, val: object) -> None:
         """Update host UI arrow-key hints.
@@ -663,6 +1041,7 @@ class Game(QObject):
         if not self.buzzer_controller.in_saved_player_reclaim_mode():
             self._update_player_numbers()
         self.dc.scoreboard.refresh_players()
+        self._refresh_score_edit_controls()
         self.host_display.welcome_widget.check_start()
         for player in self.players:
             self._update_lectern_for_player(player)
@@ -680,6 +1059,7 @@ class Game(QObject):
         player.waiter.close()
         self._update_player_numbers()
         self.dc.scoreboard.refresh_players()
+        self._refresh_score_edit_controls()
         self.host_display.welcome_widget.check_start()
         for player in self.players:
             self._update_lectern_for_player(player)
@@ -703,6 +1083,7 @@ class Game(QObject):
             )
             self._update_player_numbers()
             self.dc.scoreboard.refresh_players()
+            self._refresh_score_edit_controls()
             self._update_all_lecterns()
 
     def move_player_down(self, player: object) -> None:
@@ -724,6 +1105,7 @@ class Game(QObject):
             )
             self._update_player_numbers()
             self.dc.scoreboard.refresh_players()
+            self._refresh_score_edit_controls()
             self._update_all_lecterns()
 
     def _update_player_numbers(self) -> None:
@@ -879,6 +1261,7 @@ class Game(QObject):
         if all(q.complete for q in self.current_round.questions):
             logging.info("NEXT ROUND")
             self.keystroke_manager.activate("NEXT_ROUND")
+        self._refresh_score_edit_controls()
 
     def accept_image(self) -> None:
         """Accept the proposed clue image and continue loading the question.
@@ -921,6 +1304,7 @@ class Game(QObject):
             self.start_final()
         else:
             self.dc.board_widget.load_round(self.current_round)
+        self._refresh_score_edit_controls()
 
     def start_final(self) -> None:
         """Begin the Final Jeopardy wagering phase.
@@ -932,6 +1316,7 @@ class Game(QObject):
         for player in self.players:
             self.dc.player_widget(player).set_lights(True)
         self.buzzer_controller.open_wagers()
+        self._refresh_score_edit_controls()
 
     def wager(self, i_player: object, amount: object) -> None:
         """Record a Final Jeopardy wager from a player.
@@ -984,7 +1369,9 @@ class Game(QObject):
                 "round_index": self.data.rounds.index(self.current_round)
                 if self.data and self.current_round
                 else None,
-                "category": self.active_question.category if self.active_question else "",
+                "category": self.active_question.category
+                if self.active_question
+                else "",
                 "value": self.active_question.value if self.active_question else -1,
                 "is_daily_double": False,
             }
@@ -1096,6 +1483,7 @@ class Game(QObject):
         self.accepting_responses = False
         self.dc.borders.flash()
         self.keystroke_manager.activate("FINAL_NEXT_PLAYER")
+        self._refresh_score_edit_controls()
 
     def end_game(self) -> None:
         """Determine winners, update the UI, and move toward score graphs.
@@ -1266,6 +1654,7 @@ class Game(QObject):
         self.responses_open_time = None
         self.dc.restart()
         self.begin()
+        self._refresh_score_edit_controls()
 
     def get_dd_wager(self, player: object) -> bool | None:
         """Prompt the active player for a Daily Double wager.
@@ -1279,6 +1668,7 @@ class Game(QObject):
         """
         self.answering_player = player
         self.soliciting_player = False
+        self._refresh_score_edit_controls()
         try:
             logging.info(f"Current round is: {self.current_round}")
             logging.info(f"Rounds are {self.data.rounds}")
@@ -1300,11 +1690,13 @@ class Game(QObject):
         )
         if not wager_res[1]:
             self.soliciting_player = True
+            self._refresh_score_edit_controls()
             return False
         wager = wager_res[0]
         self.active_question.value = wager
         self.keystroke_manager.activate("CORRECT_ANSWER", "INCORRECT_ANSWER")
         self.dc.question_widget.show_question()
+        self._refresh_score_edit_controls()
 
     def load_image_review_screen(self, q: object) -> None:
         """Open the host-side image review screen for a clue.
@@ -1354,6 +1746,7 @@ class Game(QObject):
             self.keystroke_manager.activate("OPEN_RESPONSES")
         self.dc.load_question(q)
         self.dc.remove_card(q)
+        self._refresh_score_edit_controls()
 
     def open_final(self) -> None:
         """Reveal the Final Jeopardy clue and enable answer entry.
@@ -1496,11 +1889,13 @@ class Game(QObject):
         Returns:
             ``None``.
         """
+        if self.active_question is not None or self.soliciting_player:
+            return
         (new_score, answered) = QInputDialog.getInt(
             self.host_display, "Adjust Score", "Enter a new score:", value=player.score
         )
         if answered:
-            self.set_score(player, new_score)
+            self.apply_manual_score_override(player, new_score)
 
     def close(self) -> None:
         """Stop audio playback and shut down the Qt application.

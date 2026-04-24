@@ -13,6 +13,19 @@ from dataclasses import asdict, dataclass
 from itertools import zip_longest
 from pathlib import Path
 
+QUESTION_HISTORY_ENTRY_TYPE = "question"
+MANUAL_SCORE_ADJUSTMENT_TYPE = "manual_score_adjustment"
+QUESTION_INDEX_TOP_LEVEL_PART_COUNT = 2
+QUESTION_COORD_PART_COUNT = 2
+RESULT_ENTRY_PART_COUNT = 2
+MIN_RACE_BUZZERS = 2
+INITIAL_SCORE = 0
+PERCENT_MULTIPLIER = 100
+JSON_INDENT_SPACES = 2
+PHASE_TIME_PADDING_SECONDS = 1
+FIRST_REBOUND_RESPONSE_INDEX = 1
+SINGLE_WINNER_COUNT = 1
+
 
 @dataclass
 class EndGamePlayerStats:
@@ -32,9 +45,9 @@ class EndGamePlayerStats:
     @property
     def race_win_percentage(self) -> float | None:
         """Return the player's race-win percentage when defined."""
-        if self.race_opportunities == 0:
+        if self.race_opportunities == INITIAL_SCORE:
             return None
-        return (self.race_wins / self.race_opportunities) * 100
+        return (self.race_wins / self.race_opportunities) * PERCENT_MULTIPLIER
 
 
 @dataclass
@@ -96,6 +109,46 @@ def get_current_game_state(game: object) -> object:
     }
 
 
+def get_history_entry_type(entry: dict) -> str:
+    """Return the normalized type marker for a history record.
+
+    Args:
+        entry: Persisted JSONL history entry.
+
+    Returns:
+        The entry type, defaulting legacy clue records to ``"question"``.
+    """
+    if entry.get("type"):
+        return entry["type"]
+    if entry.get("question_index") is not None:
+        return QUESTION_HISTORY_ENTRY_TYPE
+    return QUESTION_HISTORY_ENTRY_TYPE
+
+
+def is_question_history_entry(entry: dict) -> bool:
+    """Return whether a history entry represents a clue event.
+
+    Args:
+        entry: Persisted JSONL history entry.
+
+    Returns:
+        ``True`` when the entry is a normal clue record.
+    """
+    return get_history_entry_type(entry) == QUESTION_HISTORY_ENTRY_TYPE
+
+
+def is_manual_score_adjustment(entry: dict) -> bool:
+    """Return whether a history entry is a manual score override event.
+
+    Args:
+        entry: Persisted JSONL history entry.
+
+    Returns:
+        ``True`` when the entry is a manual score adjustment.
+    """
+    return get_history_entry_type(entry) == MANUAL_SCORE_ADJUSTMENT_TYPE
+
+
 def save_general_state(game: object) -> None:
     """Write the current high-level game session metadata to disk.
 
@@ -113,7 +166,7 @@ def save_general_state(game: object) -> None:
     general_file = game._game_state_dir / "general.json"
     try:
         with Path(general_file).open("w") as file_obj:
-            json.dump(state, file_obj, indent=2)
+            json.dump(state, file_obj, indent=JSON_INDENT_SPACES)
     except Exception as exc:
         logging.error("Error saving general state: %s", exc)
 
@@ -135,7 +188,9 @@ def classify_buzz_phases(game: object) -> object:
         logging.error("No open responses times found after question completed.")
         return []
     current_time = time.time()
-    phase_start_times = [game._question_start_time] + game._open_responses_times[1:]
+    phase_start_times = [game._question_start_time] + game._open_responses_times[
+        FIRST_REBOUND_RESPONSE_INDEX:
+    ]
     phase_boundaries = []
     for phase_start_time, successful_buzz_time in zip_longest(
         phase_start_times, game._successful_buzz_times, fillvalue=current_time
@@ -143,7 +198,10 @@ def classify_buzz_phases(game: object) -> object:
         phase_boundaries.append(
             (
                 max(phase_start_time - 1, game._question_start_time),
-                min(successful_buzz_time + 1, current_time),
+                min(
+                    successful_buzz_time + PHASE_TIME_PADDING_SECONDS,
+                    current_time,
+                ),
             )
         )
     phases = []
@@ -206,40 +264,46 @@ def reconstruct_score_history(game: object) -> object:
     entries = load_question_history(game)
     if not entries:
         return {}
-    entries.sort(key=lambda entry: entry.get("question_number", 0))
     all_players = set()
     score_history = {}
+    scores = {}
+    event_count = 0
+
+    def ensure_player(player_index: int) -> None:
+        if player_index in score_history:
+            return
+        all_players.add(player_index)
+        scores[player_index] = INITIAL_SCORE
+        score_history[player_index] = [INITIAL_SCORE] * (event_count + 1)
+
     for entry in entries:
+        if is_manual_score_adjustment(entry):
+            player_index = entry.get("player_index")
+            if player_index is not None:
+                ensure_player(player_index)
         for attempt in entry.get("answer_attempts", []):
             player_index = attempt.get("player_index")
             if player_index is not None:
-                all_players.add(player_index)
-                score_history.setdefault(player_index, [0])
-    for entry in entries:
-        question_num = entry.get("question_number", 0)
-        if question_num == 0:
-            continue
-        question_scores = {}
-        for attempt in entry.get("answer_attempts", []):
-            player_index = attempt.get("player_index")
-            score_after = attempt.get("score_after", 0)
+                ensure_player(player_index)
+
+        if is_manual_score_adjustment(entry):
+            player_index = entry.get("player_index")
             if player_index is not None:
-                question_scores[player_index] = score_after
+                scores[player_index] = entry.get(
+                    "score_after",
+                    entry.get("new_score", scores.get(player_index, INITIAL_SCORE)),
+                )
+        else:
+            for attempt in entry.get("answer_attempts", []):
+                player_index = attempt.get("player_index")
+                if player_index is not None:
+                    scores[player_index] = attempt.get(
+                        "score_after", scores.get(player_index, INITIAL_SCORE)
+                    )
+
+        event_count += 1
         for player_index in all_players:
-            while len(score_history[player_index]) < question_num:
-                score_history[player_index].append(score_history[player_index][-1])
-            if player_index in question_scores:
-                score_after = question_scores[player_index]
-                if len(score_history[player_index]) == question_num:
-                    score_history[player_index].append(score_after)
-                else:
-                    score_history[player_index][question_num] = score_after
-            else:
-                last_score = score_history[player_index][-1]
-                if len(score_history[player_index]) == question_num:
-                    score_history[player_index].append(last_score)
-                else:
-                    score_history[player_index][question_num] = last_score
+            score_history[player_index].append(scores.get(player_index, INITIAL_SCORE))
     return score_history
 
 
@@ -284,13 +348,16 @@ def _question_for_history_entry(game: object, entry: object) -> object:
     if (
         round_index is None
         or question_index is None
-        or len(question_index) < 2
+        or len(question_index) < QUESTION_INDEX_TOP_LEVEL_PART_COUNT
         or round_index < 0
         or round_index >= len(getattr(game.data, "rounds", []))
     ):
         return None
     question_coords = question_index[1]
-    if not isinstance(question_coords, list | tuple) or len(question_coords) != 2:
+    if (
+        not isinstance(question_coords, list | tuple)
+        or len(question_coords) != QUESTION_COORD_PART_COUNT
+    ):
         return None
     round_data = game.data.rounds[round_index]
     try:
@@ -316,30 +383,37 @@ def reconstruct_original_score_history(game: object) -> dict[str, list[int]]:
     entries.sort(key=lambda entry: entry.get("question_number", 0))
     score_history: dict[str, list[int]] = {}
     for entry in entries:
-        question_number = int(entry.get("question_number", 0) or 0)
-        if question_number <= 0:
+        question_number = int(
+            entry.get("question_number", INITIAL_SCORE) or INITIAL_SCORE
+        )
+        if question_number <= INITIAL_SCORE:
             continue
         clue = _question_for_history_entry(game, entry)
-        actual_results = getattr(clue, "actual_results", None) if clue is not None else None
+        actual_results = (
+            getattr(clue, "actual_results", None) if clue is not None else None
+        )
         question_deltas: dict[str, int] = {}
         if isinstance(actual_results, list):
             for result in actual_results:
-                if not isinstance(result, list | tuple) or len(result) != 2:
+                if (
+                    not isinstance(result, list | tuple)
+                    or len(result) != RESULT_ENTRY_PART_COUNT
+                ):
                     continue
                 player_name, score_delta = result
                 if not player_name:
                     continue
                 player_name = str(player_name)
-                score_history.setdefault(player_name, [0])
+                score_history.setdefault(player_name, [INITIAL_SCORE])
                 while len(score_history[player_name]) < question_number:
                     score_history[player_name].append(score_history[player_name][-1])
-                question_deltas[player_name] = (
-                    question_deltas.get(player_name, 0) + int(score_delta or 0)
-                )
+                question_deltas[player_name] = question_deltas.get(
+                    player_name, INITIAL_SCORE
+                ) + int(score_delta or INITIAL_SCORE)
         for player_name, scores in score_history.items():
             while len(scores) < question_number:
                 scores.append(scores[-1])
-            scores.append(scores[-1] + question_deltas.get(player_name, 0))
+            scores.append(scores[-1] + question_deltas.get(player_name, INITIAL_SCORE))
     return score_history
 
 
@@ -385,11 +459,11 @@ def _victory_summary(
     question_count: int,
 ) -> str:
     """Summarize whether the winner came from behind or led wire to wire."""
-    if len(winner_player_numbers) != 1:
+    if len(winner_player_numbers) != SINGLE_WINNER_COUNT:
         return "Tied finish"
-    winner_player_number = winner_player_numbers[0]
-    winner_scores = score_history.get(winner_player_number, [0])
-    max_trail = 0
+    winner_player_number = winner_player_numbers[INITIAL_SCORE]
+    winner_scores = score_history.get(winner_player_number, [INITIAL_SCORE])
+    max_trail = INITIAL_SCORE
     wire_to_wire = True
     for question_index in range(1, question_count + 1):
         scores_at_point = []
@@ -441,7 +515,9 @@ def build_end_game_summary(game: object) -> EndGameSummary:
                 player_number = buzz_attempt.get("player_index")
                 if player_number is None:
                     continue
-                questions_buzzed_on.setdefault(player_number, set()).add(question_number)
+                questions_buzzed_on.setdefault(player_number, set()).add(
+                    question_number
+                )
                 if buzz_attempt.get("is_early"):
                     early_buzzes[player_number] = early_buzzes.get(player_number, 0) + 1
 
@@ -455,7 +531,7 @@ def build_end_game_summary(game: object) -> EndGameSummary:
                 if buzz_attempt.get("player_index") is not None
                 and not buzz_attempt.get("in_timeout")
             }
-            if len(race_buzzers) < 2:
+            if len(race_buzzers) < MIN_RACE_BUZZERS:
                 continue
             buzzer_races += 1
             for player_number in race_buzzers:
@@ -471,9 +547,7 @@ def build_end_game_summary(game: object) -> EndGameSummary:
             entry.get("round_index") is not None
             and entry.get("round_index") < len(getattr(game.data, "rounds", [])) - 1
             and not entry.get("is_daily_double")
-            and not any(
-                attempt.get("answer_correct") for attempt in answer_attempts
-            )
+            and not any(attempt.get("answer_correct") for attempt in answer_attempts)
         ):
             triple_stumpers += 1
 
@@ -535,21 +609,24 @@ def build_end_game_summary(game: object) -> EndGameSummary:
         EndGameSeries(
             player_number=None,
             name=player_name,
-            scores=list(scores) if scores else [0],
+            scores=list(scores) if scores else [INITIAL_SCORE],
             is_current=False,
             is_original_only=True,
         )
         for player_name, scores in original_score_history.items()
     ]
 
-    top_score = max((player.score for player in game.players), default=0)
+    top_score = max((player.score for player in game.players), default=INITIAL_SCORE)
     winner_player_numbers = [
         player.player_number for player in game.players if player.score == top_score
     ]
-    question_count = max((entry.get("question_number", 0) for entry in entries), default=0)
+    question_count = max(
+        (entry.get("question_number", INITIAL_SCORE) for entry in entries),
+        default=INITIAL_SCORE,
+    )
     return EndGameSummary(
         winner_player_numbers=winner_player_numbers,
-        is_tie=len(winner_player_numbers) != 1,
+        is_tie=len(winner_player_numbers) != SINGLE_WINNER_COUNT,
         question_count=question_count,
         current_players=current_players,
         game_stats=EndGameGameStats(

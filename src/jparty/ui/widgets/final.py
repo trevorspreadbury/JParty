@@ -9,7 +9,7 @@ from __future__ import annotations
 from math import ceil
 
 from PyQt6.QtCore import QPointF, Qt
-from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen, QPalette
+from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPalette, QPen
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from jparty.domain.state import EndGameSeries, EndGameSummary
-from jparty.ui.styles import CARDPAL, JBLUE, MyLabel, WINDOWPAL
+from jparty.ui.styles import CARDPAL, WINDOWPAL, MyLabel
 from jparty.ui.widgets.common import add_shadow
 from jparty.ui.widgets.scoreboard import NameLabel
 
@@ -82,7 +82,10 @@ class SummaryGraphWidget(QWidget):
         max_score += score_padding
 
         max_points = max(
-            [len(series.scores) for series in self.current_series + self.original_series]
+            [
+                len(series.scores)
+                for series in self.current_series + self.original_series
+            ]
             or [1]
         )
         y_ticks = 5
@@ -125,9 +128,13 @@ class SummaryGraphWidget(QWidget):
         if max_points > 1:
             x_step = max(1, ceil(max_points / 8))
             for point_index in range(0, max_points, x_step):
-                painter.drawText(int(x_pos(point_index)) - 8, rect.bottom() + 16, str(point_index))
+                painter.drawText(
+                    int(x_pos(point_index)) - 8, rect.bottom() + 16, str(point_index)
+                )
             if (max_points - 1) % x_step != 0:
-                painter.drawText(rect.right() - 8, rect.bottom() + 16, str(max_points - 1))
+                painter.drawText(
+                    rect.right() - 8, rect.bottom() + 16, str(max_points - 1)
+                )
 
         for series in self.original_series:
             self._draw_series(painter, rect, series, SUMMARY_ORIGINAL_COLOR, 2, 4)
@@ -176,7 +183,9 @@ class SummaryGraphWidget(QWidget):
         painter.drawPath(path)
         painter.setBrush(color)
         for index, score in enumerate(series.scores):
-            painter.drawEllipse(QPointF(x_pos(index), y_pos(score)), marker_size, marker_size)
+            painter.drawEllipse(
+                QPointF(x_pos(index), y_pos(score)), marker_size, marker_size
+            )
 
 
 class LegendEntry(QWidget):
@@ -203,7 +212,9 @@ class LegendEntry(QWidget):
 class PlayerSummaryCard(QWidget):
     """Render one player's end-of-game stat card."""
 
-    def __init__(self, player_stats: object, color: QColor, parent: object = None) -> None:
+    def __init__(
+        self, player_stats: object, color: QColor, parent: object = None
+    ) -> None:
         """Initialize the player stats card."""
         super().__init__(parent)
         self.setObjectName("playerSummaryCard")
@@ -215,8 +226,7 @@ class PlayerSummaryCard(QWidget):
             "background-color: white; "
             "border: 16px solid %s; "
             "border-radius: 18px; "
-            "}"
-            % color.name()
+            "}" % color.name()
         )
         add_shadow(self)
         layout = QHBoxLayout()
@@ -340,7 +350,9 @@ class EndGameSummaryDisplay(QWidget):
         super().__init__(parent)
         self.summary = summary
         self.color_map = {
-            player.player_number: SUMMARY_CURRENT_COLORS[index % len(SUMMARY_CURRENT_COLORS)]
+            player.player_number: SUMMARY_CURRENT_COLORS[
+                index % len(SUMMARY_CURRENT_COLORS)
+            ]
             for index, player in enumerate(self.summary.current_players)
         }
         self.setAutoFillBackground(True)
@@ -371,7 +383,9 @@ class EndGameSummaryDisplay(QWidget):
         right_panel.addStretch(1)
         for player in self.summary.current_players:
             card = PlayerSummaryCard(player, self.color_map[player.player_number], self)
-            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            card.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+            )
             right_panel.addWidget(card, 1)
         right_panel.addStretch(1)
 

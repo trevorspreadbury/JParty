@@ -7,18 +7,21 @@ the buzzer web app.
 
 import logging
 import time
+from pathlib import Path
 from threading import Thread
 
 import qrcode
-from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QDir, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QBrush, QFont, QImage, QPainter, QPalette, QPixmap
 from PyQt6.QtWidgets import (
     QCheckBox,
     QFileDialog,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -28,6 +31,12 @@ from jparty import __version__ as version
 from jparty.app.helptext import helpmsg
 from jparty.domain.models import FinalBoard
 from jparty.services.game_loader import get_game, get_random_game
+from jparty.services.question_media import (
+    detect_question_media,
+    import_question_media,
+    is_local_media_path,
+    local_media_questions,
+)
 from jparty.ui.styles import WINDOWPAL
 from jparty.ui.widgets.common import (
     DynamicButton,
@@ -206,6 +215,7 @@ class Welcome(StartWidget):
         self.resume_path = None
         self._base_summary_text = ""
         self._loading_summary = False
+        self._question_media_status = None
         self.round_checkboxes = []
         main_layout = QVBoxLayout()
         main_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
@@ -236,13 +246,17 @@ class Welcome(StartWidget):
         self.textbox.setFont(f)
         button_layout = QVBoxLayout()
         self.start_button = DynamicButton("Start!", self)
-        self.start_button.clicked.connect(self.game.start_game)
+        self.start_button.clicked.connect(self.on_start_clicked)
         self.start_button.setEnabled(False)
+        self.load_media_button = DynamicButton("Load Question Media", self)
+        self.load_media_button.clicked.connect(self.load_question_media)
         self.resume_button = DynamicButton("Load Saved", self)
         self.resume_button.clicked.connect(self.load_saved_game)
         self.rand_button = DynamicButton("Random", self)
         self.rand_button.clicked.connect(self.random)
         button_layout.addWidget(self.start_button, 10)
+        button_layout.addStretch(1)
+        button_layout.addWidget(self.load_media_button, 10)
         button_layout.addStretch(1)
         button_layout.addWidget(self.resume_button, 10)
         button_layout.addStretch(1)
@@ -355,6 +369,7 @@ QLabel {{
 
     def __random(self) -> None:
         """Return random."""
+        game_id = ""
         try:
             self.resume_path = None
             self.game.clear_resume_state()
@@ -367,10 +382,12 @@ QLabel {{
                 else:
                     time.sleep(0.25)
             self.gameid_trigger.emit(str(game_id))
+            self._question_media_status = detect_question_media(game_id)
             self.summary_trigger.emit(self.build_summary_text())
         except Exception as e:
             logging.error(e)
-            self.summary_trigger.emit("Cannot get game")
+            media_status = self.question_media_summary_text(game_id)
+            self.summary_trigger.emit("\n\n".join(["Cannot get game", media_status]))
 
     def random(self, checked: object) -> None:
         """Begin asynchronously loading a random game.
@@ -390,6 +407,9 @@ QLabel {{
     def __show_summary(self) -> None:
         """Return show summary."""
         game_id = self.textbox.text()
+        self._question_media_status = (
+            detect_question_media(game_id) if game_id else None
+        )
         try:
             self.resume_path = None
             self.game.clear_resume_state()
@@ -397,10 +417,16 @@ QLabel {{
             if self.game.valid_game():
                 self.summary_trigger.emit(self.build_summary_text())
             else:
-                self.summary_trigger.emit("Cannot load game")
+                self.summary_trigger.emit(
+                    "\n\n".join(
+                        ["Cannot load game", self.question_media_summary_text()]
+                    )
+                )
         except Exception as e:
             logging.error(e)
-            self.summary_trigger.emit("Cannot get game")
+            self.summary_trigger.emit(
+                "\n\n".join(["Cannot get game", self.question_media_summary_text()])
+            )
         self.check_start()
 
     def build_summary_text(self) -> str:
@@ -428,7 +454,22 @@ QLabel {{
         )()
         if has_missing_daily_double:
             summary_lines.extend(["", MISSING_DAILY_DOUBLE_WARNING])
+        media_status = self.question_media_summary_text()
+        if media_status:
+            summary_lines.extend(["", media_status])
         return "\n".join(str(line) for line in summary_lines if line is not None)
+
+    def question_media_summary_text(self, game_id: object = None) -> str:
+        """Return a status line describing local question-media availability."""
+        game_id = str(game_id if game_id is not None else self.textbox.text()).strip()
+        if not game_id:
+            return ""
+        status = self._question_media_status
+        if status is None:
+            status = detect_question_media(game_id)
+            if game_id == self.textbox.text().strip():
+                self._question_media_status = status
+        return status.summary_text()
 
     def set_summary(self, text: object) -> None:
         """Update the summary text shown on the welcome screen.
@@ -466,6 +507,7 @@ QLabel {{
             self.resume_path = None
             self.game.clear_resume_state()
             self.start_button.setText("Start!")
+        self._question_media_status = None
         self.clear_round_selector()
         self.debounce_timer.start(2000)
 
@@ -489,6 +531,57 @@ QLabel {{
         t = Thread(target=self.__show_summary)
         t.start()
         self.check_start()
+
+    def on_start_clicked(self, checked: object = False) -> None:
+        """Start the game or open the local-media preview when available."""
+        if self.resume_path is None:
+            preview_questions = self.preview_questions()
+            if preview_questions and hasattr(
+                self.parent(), "load_question_media_preview"
+            ):
+                self.parent().load_question_media_preview(preview_questions)
+                return
+        self.game.start_game()
+
+    def load_question_media(self, checked: object = False) -> None:
+        """Import question media for the currently typed game id."""
+        game_id = self.textbox.text().strip()
+        if not game_id:
+            QMessageBox.warning(
+                self,
+                "Question Media",
+                "Enter a game id before loading question media.",
+            )
+            return
+        selected_path = self.select_question_media_path()
+        if not selected_path:
+            return
+        try:
+            import_question_media(selected_path, game_id)
+        except Exception as e:
+            logging.error(e)
+            QMessageBox.warning(self, "Question Media", str(e))
+            return
+        self._question_media_status = detect_question_media(game_id)
+        if self.game.valid_game():
+            self.set_summary(self.build_summary_text())
+        else:
+            self.set_summary(self.question_media_summary_text(game_id))
+
+    def select_question_media_path(self) -> str:
+        """Open a dialog that allows choosing a directory or zip file."""
+        dialog = QFileDialog(self, "Select Question Media")
+        dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
+        dialog.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot)
+        dialog.setNameFilter(
+            "Question media (*.zip *.png *.jpg *.jpeg *.webp *.gif *.bmp);;All files (*)"
+        )
+        if dialog.exec():
+            selected_files = dialog.selectedFiles()
+            if selected_files:
+                return selected_files[0]
+        return ""
 
     def load_saved_game(self, checked: object = False) -> None:
         """Prompt for and prepare a saved game session to resume.
@@ -543,7 +636,9 @@ QLabel {{
                 self.game, "resume_claim_status", lambda: (0, 0)
             )()
             if summary_text:
-                summary_text += f"\nClaimed {claimed_count} of {total_count} saved players."
+                summary_text += (
+                    f"\nClaimed {claimed_count} of {total_count} saved players."
+                )
         if rounds_selected and summary_text:
             self.summary_label.setText(summary_text)
         if self.game.startable() and rounds_selected:
@@ -563,7 +658,9 @@ QLabel {{
                 and not rounds_selected
                 and self._base_summary_text
             ):
-                self.summary_label.setText(summary_text + "\n\nSelect at least one round to play.")
+                self.summary_label.setText(
+                    summary_text + "\n\nSelect at least one round to play."
+                )
 
     def restart(self) -> None:
         """Reset the welcome screen to its initial fresh-game state.
@@ -573,6 +670,7 @@ QLabel {{
         """
         self.resume_path = None
         self._base_summary_text = ""
+        self._question_media_status = None
         self.game.clear_resume_state()
         self.start_button.setText("Start!")
         self.clear_round_selector()
@@ -657,9 +755,7 @@ QLabel {{
         """
         for checkbox in self.round_checkboxes:
             round_label = checkbox.property("round_label") or checkbox.text()
-            checkbox.setText(
-                f"[{'x' if checkbox.isChecked() else ' '}] {round_label}"
-            )
+            checkbox.setText(f"[{'x' if checkbox.isChecked() else ' '}] {round_label}")
         selected_indices = [
             index
             for index, checkbox in enumerate(self.round_checkboxes)
@@ -668,6 +764,142 @@ QLabel {{
         if hasattr(self.game, "set_selected_round_indices"):
             self.game.set_selected_round_indices(selected_indices)
         self.check_start()
+
+    def preview_questions(self) -> list[tuple[int, object]]:
+        """Return local-media-backed questions from the selected rounds."""
+        return local_media_questions(self.game, self.game.selected_round_indices())
+
+
+class QuestionMediaPreview(StartWidget):
+    """Host-side preview of imported local question media before game start."""
+
+    def __init__(
+        self,
+        game: object,
+        preview_questions: list[tuple[int, object]],
+        on_back: object,
+        on_start: object,
+        parent: object = None,
+    ) -> None:
+        """Initialize the preview widget."""
+        super().__init__(parent)
+        self.game = game
+        self.preview_questions = preview_questions
+        self.on_back = on_back
+        self.on_start = on_start
+        self.cards = []
+        self.setPalette(WINDOWPAL)
+        main_layout = QVBoxLayout()
+        main_layout.addStretch(1)
+        main_layout.addLayout(self.icon_layout, 3)
+        self.title_label = DynamicLabel(
+            "Question Media Preview", lambda: self.height() * 0.08, self
+        )
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(self.title_label, 1)
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setStyleSheet(
+            """
+QScrollArea {
+    background: #f7f7f7;
+    border: 1px solid #d8d8d8;
+}
+QScrollArea > QWidget > QWidget {
+    background: #f7f7f7;
+}
+QScrollBar:vertical {
+    background: #e0e0e0;
+    width: 18px;
+    margin: 0px;
+    border-left: 1px solid #c6c6c6;
+}
+QScrollBar::handle:vertical {
+    background: #9a9a9a;
+    min-height: 36px;
+    border-radius: 8px;
+    margin: 2px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #7f7f7f;
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: #e0e0e0;
+    height: 0px;
+}
+"""
+        )
+        self.scroll_container = QWidget(self.scroll_area)
+        self.scroll_container.setAutoFillBackground(True)
+        self.scroll_container.setPalette(WINDOWPAL)
+        self.grid_layout = QGridLayout(self.scroll_container)
+        self.grid_layout.setSpacing(18)
+        self.scroll_area.setWidget(self.scroll_container)
+        self.populate_cards()
+        main_layout.addWidget(self.scroll_area, 10)
+        button_layout = QHBoxLayout()
+        button_layout.addStretch(3)
+        self.back_button = DynamicButton("Back", self)
+        self.back_button.clicked.connect(self.on_back)
+        button_layout.addWidget(self.back_button, 2)
+        button_layout.addStretch(1)
+        self.start_button = DynamicButton("Start Game", self)
+        self.start_button.clicked.connect(self.on_start)
+        button_layout.addWidget(self.start_button, 2)
+        button_layout.addStretch(3)
+        main_layout.addLayout(button_layout, 2)
+        main_layout.addStretch(1)
+        self.setLayout(main_layout)
+
+    def populate_cards(self) -> None:
+        """Render the preview grid."""
+        column_count = 3
+        for item_index, (_, question) in enumerate(self.preview_questions):
+            row = item_index // column_count
+            column = item_index % column_count
+            card = self.build_card(question)
+            self.cards.append(card)
+            self.grid_layout.addWidget(card, row, column)
+
+    def build_card(self, question: object) -> QWidget:
+        """Create one preview card containing the image and answer."""
+        card = QWidget(self.scroll_container)
+        card.setAutoFillBackground(True)
+        card.setPalette(WINDOWPAL)
+        layout = QVBoxLayout()
+        image_label = QLabel(card)
+        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        image_label.setMinimumHeight(180)
+        image_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        if is_local_media_path(question.image_url):
+            pixmap = QPixmap(str(question.image_url))
+            if not pixmap.isNull():
+                image_label.setPixmap(
+                    pixmap.scaled(
+                        320,
+                        220,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
+            else:
+                image_label.setText(Path(question.image_url).name)
+        else:
+            image_label.setText("Missing local media")
+        answer_label = QLabel(question.answer, card)
+        answer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        answer_label.setWordWrap(True)
+        answer_label.setStyleSheet("QLabel { color: black; font-size: 18px; }")
+        layout.addWidget(image_label, 6)
+        layout.addWidget(answer_label, 2)
+        card.setLayout(layout)
+        return card
 
 
 class QRWidget(StartWidget):
