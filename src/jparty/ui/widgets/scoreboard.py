@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import QHBoxLayout, QPushButton, QSizePolicy, QVBoxLayout, 
 
 from jparty.ui.styles import MyLabel
 from jparty.ui.widgets.common import resource_path
+from jparty.ui.widgets.score_correction import ScoreCorrectionDialog
 
 
 class NameLabel(MyLabel):
@@ -236,7 +237,8 @@ class PlayerWidget(QWidget):
         if self.game.soliciting_player:
             self.game.get_dd_wager(self.player)
             return None
-        self.game.adjust_score(self.player)
+        if self.game.active_question is None:
+            self.game.adjust_score(self.player)
 
     def paintEvent(self, event: object) -> None:
         """Paint the current podium background image.
@@ -430,6 +432,23 @@ class ScoreBoard(QWidget):
 class HostScoreBoard(ScoreBoard):
     """Scoreboard variant that uses host-specific player widgets."""
 
+    def __init__(self, game: object, parent: object = None) -> None:
+        """Initialize the host scoreboard with score-correction controls.
+
+        Args:
+            game: Active game instance whose players are displayed.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__(game, parent)
+        self.edit_score_button = QPushButton("Edit Score", self)
+        self.edit_score_button.clicked.connect(self.open_score_editor)
+        self.player_layout.insertWidget(0, self.edit_score_button)
+        self.score_correction_dialog = None
+        self.refresh_score_edit_button()
+
     def create_player_widget(self, player: object) -> object:
         """Create a host podium widget for one player.
 
@@ -440,6 +459,32 @@ class HostScoreBoard(ScoreBoard):
             A ``HostPlayerWidget`` instance.
         """
         return HostPlayerWidget(self.game, player, self)
+
+    def refresh_score_edit_button(self) -> None:
+        """Refresh whether the score-correction button is enabled.
+
+        Returns:
+            ``None``.
+        """
+        self.edit_score_button.setEnabled(self.game.can_open_score_editor())
+
+    def open_score_editor(self) -> None:
+        """Open the host score-correction dialog and apply any saved edits.
+
+        Returns:
+            ``None``.
+        """
+        entries = self.game.get_recent_score_corrections()
+        if not entries:
+            self.refresh_score_edit_button()
+            return
+        self.score_correction_dialog = ScoreCorrectionDialog(
+            entries, self.game.players, self
+        )
+        if self.score_correction_dialog.exec():
+            corrections = self.score_correction_dialog.collect_changes()
+            self.game.apply_question_history_corrections(corrections)
+        self.refresh_score_edit_button()
 
     def hide_close_buttons(self) -> None:
         """Hide player removal and reorder controls after the game starts.
