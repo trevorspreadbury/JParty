@@ -3,11 +3,27 @@
 from types import SimpleNamespace
 
 import pytest
+from PyQt6.QtCore import QByteArray, QBuffer, QIODevice
+from PyQt6.QtGui import QColor, QImage
+from PyQt6.QtWidgets import QLabel, QRadioButton
 
 from jparty.domain.models import Player
+from jparty.ui.widgets.score_correction import ScoreCorrectionDialog
 from jparty.ui.widgets.scoreboard import HostPlayerWidget, HostScoreBoard
 
 pytestmark = pytest.mark.qt
+
+
+def _signature_name() -> str:
+    """Return a tiny PNG data URL for signature-image widget tests."""
+    image = QImage(8, 8, QImage.Format.Format_ARGB32)
+    image.fill(QColor("white"))
+    byte_array = QByteArray()
+    buffer = QBuffer(byte_array)
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    image.save(buffer, "PNG")
+    buffer.close()
+    return "data:image/png;base64," + bytes(byte_array.toBase64()).decode("ascii")
 
 
 class StubScoreGame:
@@ -81,6 +97,22 @@ def test_host_scoreboard_edit_button_tracks_enabled_state(qtbot: object) -> None
     scoreboard.refresh_score_edit_button()
 
     assert scoreboard.edit_score_button.isEnabled() is True
+    assert scoreboard.player_layout.indexOf(scoreboard.edit_score_button) == -1
+
+
+def test_host_scoreboard_keeps_edit_button_centered_without_joining_layout(
+    qtbot: object,
+) -> None:
+    """Test the edit button is overlaid in the bottom-left corner."""
+    game = StubScoreGame()
+    scoreboard = HostScoreBoard(game)
+    qtbot.addWidget(scoreboard)
+    scoreboard.resize(1000, 240)
+
+    button_rect = scoreboard.edit_score_button.geometry()
+    assert button_rect.left() < scoreboard.width() * 0.1
+    assert button_rect.bottom() > scoreboard.height() * 0.7
+    assert scoreboard.player_layout.indexOf(scoreboard.edit_score_button) == -1
 
 
 def test_host_scoreboard_opens_score_dialog_with_five_recent_entries(
@@ -130,3 +162,49 @@ def test_host_player_click_adjusts_score_only_when_no_question_active(
     game.active_question = object()
     widget.mousePressEvent(None)
     assert game.adjust_calls == [0]
+
+
+def test_score_correction_dialog_uses_labelled_radio_buttons(qtbot: object) -> None:
+    """Test score corrections render player-labelled radio choices."""
+    game = StubScoreGame()
+    dialog = ScoreCorrectionDialog(
+        game.get_recent_score_corrections(limit=1), game.players
+    )
+    qtbot.addWidget(dialog)
+
+    label_texts = [label.text() for label in dialog.findChildren(QLabel)]
+    radio_texts = [button.text() for button in dialog.findChildren(QRadioButton)]
+
+    assert "Alice:" in label_texts
+    assert "Bob:" in label_texts
+    assert radio_texts.count("No Answer") == 2
+    assert radio_texts.count("Correct") == 2
+    assert radio_texts.count("Incorrect") == 2
+    assert all(button.styleSheet() for button in dialog.findChildren(QRadioButton))
+
+
+def test_score_correction_dialog_renders_signature_images_for_player_names(
+    qtbot: object,
+) -> None:
+    """Test signature-style player names render as images instead of raw data."""
+    game = StubScoreGame()
+    game.players[0] = Player(
+        _signature_name(),
+        SimpleNamespace(send=lambda *args, **kwargs: None),
+        0,
+    )
+    dialog = ScoreCorrectionDialog(
+        game.get_recent_score_corrections(limit=1), game.players
+    )
+    qtbot.addWidget(dialog)
+
+    labels = dialog.findChildren(QLabel)
+    signature_labels = [label for label in labels if label.pixmap() is not None]
+    raw_data_labels = [
+        label
+        for label in labels
+        if label.text().startswith("data:image/png;base64")
+    ]
+
+    assert signature_labels
+    assert not raw_data_labels

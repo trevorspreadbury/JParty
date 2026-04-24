@@ -1,14 +1,17 @@
 """Host-side widgets for editing recent score history."""
 
+from base64 import urlsafe_b64decode
+
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
-    QComboBox,
+    QButtonGroup,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QRadioButton,
     QScrollArea,
     QSpinBox,
     QVBoxLayout,
@@ -16,6 +19,33 @@ from PyQt6.QtWidgets import (
 )
 
 RESULT_OPTIONS = ("no answer", "correct", "incorrect")
+SIGNATURE_PREFIX = "data:image/png;base64"
+PLAYER_NAME_IMAGE_HEIGHT = 40
+PLAYER_NAME_IMAGE_WIDTH = 120
+RADIO_BUTTON_STYLE = """
+QRadioButton {
+    color: white;
+    font-weight: 700;
+    background-color: #18354a;
+    border: 1px solid #6db3e4;
+    border-radius: 8px;
+    padding: 6px 12px;
+}
+QRadioButton::indicator {
+    width: 18px;
+    height: 18px;
+}
+QRadioButton::indicator:unchecked {
+    border: 2px solid #f3c969;
+    background: #09131d;
+    border-radius: 9px;
+}
+QRadioButton::indicator:checked {
+    border: 2px solid #f3c969;
+    background: #f3c969;
+    border-radius: 9px;
+}
+"""
 
 
 class ScoreCorrectionDialog(QDialog):
@@ -68,6 +98,37 @@ class ScoreCorrectionDialog(QDialog):
         layout.addWidget(button_box)
         self.setLayout(layout)
 
+    def _create_player_identity_widget(self, player: object, parent: object) -> object:
+        """Create a label widget for a player's typed name or signature image.
+
+        Args:
+            player: Player shown in the correction dialog.
+            parent: Parent widget.
+
+        Returns:
+            Configured ``QLabel`` for the player's identity.
+        """
+        player_label = QLabel(parent)
+        player_label.setMinimumWidth(PLAYER_NAME_IMAGE_WIDTH)
+        player_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        if str(player.name).startswith(SIGNATURE_PREFIX):
+            image = QImage()
+            image.loadFromData(urlsafe_b64decode(str(player.name)[22:]), "PNG")
+            pixmap = QPixmap.fromImage(image)
+            if not pixmap.isNull():
+                player_label.setPixmap(
+                    pixmap.scaledToHeight(
+                        PLAYER_NAME_IMAGE_HEIGHT,
+                        mode=Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
+                return player_label
+        player_label.setText(f"{player.name}:")
+        player_label.setStyleSheet("color: white; font-weight: 700;")
+        return player_label
+
     def _build_entry_group(self, entry: dict) -> object:
         """Create one clue editor section.
 
@@ -99,17 +160,29 @@ class ScoreCorrectionDialog(QDialog):
         answer_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         group_layout.addWidget(answer_label)
 
-        form_layout = QFormLayout()
+        player_rows_layout = QVBoxLayout()
         player_controls = {}
         for player in self.players:
-            combo = QComboBox(group)
-            combo.addItems(list(RESULT_OPTIONS))
-            combo.setCurrentText(
-                entry["player_states"].get(player.player_number, "no answer")
+            row_layout = QHBoxLayout()
+            player_label = self._create_player_identity_widget(player, group)
+            row_layout.addWidget(player_label)
+
+            button_group = QButtonGroup(group)
+            radio_buttons = {}
+            current_value = entry["player_states"].get(
+                player.player_number, "no answer"
             )
-            form_layout.addRow(player.name, combo)
-            player_controls[player.player_number] = combo
-        group_layout.addLayout(form_layout)
+            for option in RESULT_OPTIONS:
+                radio = QRadioButton(option.title(), group)
+                radio.setChecked(option == current_value)
+                radio.setStyleSheet(RADIO_BUTTON_STYLE)
+                button_group.addButton(radio)
+                radio_buttons[option] = radio
+                row_layout.addWidget(radio)
+            row_layout.addStretch()
+            player_rows_layout.addLayout(row_layout)
+            player_controls[player.player_number] = radio_buttons
+        group_layout.addLayout(player_rows_layout)
         group.setLayout(group_layout)
 
         self._entry_widgets.append(
@@ -133,7 +206,11 @@ class ScoreCorrectionDialog(QDialog):
         changes = []
         for widget_state in self._entry_widgets:
             updated_player_states = {
-                player_index: control.currentText()
+                player_index: next(
+                    option
+                    for option, radio in control.items()
+                    if radio.isChecked()
+                )
                 for player_index, control in widget_state["player_controls"].items()
             }
             updated_value = (
