@@ -36,6 +36,7 @@ The host sees the answer on the laptop screen and can adjudicate with the arrow 
 - Scrape games from https://jeopardylabs.com using this <a href="https://chrome.google.com/webstore/detail/jeopardy-labs-to-csv/biijijhfghhckhlkjbonjedmgnkmenlk?hl=en&authuser=0">Google Chrome extension</a>
 - Final Jeopardy, Daily Doubles, Double Jeopardy
 - Visual Clues
+- Host score correction tools with history-backed audit logging
 
 ## Visual Clues
 
@@ -111,6 +112,15 @@ uv run jparty download games.txt
 ```
 
 If you are using conda instead of `uv`, use the same commands without the `uv run` prefix.
+
+## Score Corrections
+
+Hosts can correct scoring in two ways once a game is in progress:
+
+- Click `Edit Score` on the host scoreboard to review the previous five played clues. Each clue shows its category, value, correct response, and one selector per player with `no answer`, `correct`, and `incorrect`. Daily Doubles also expose an editable clue value so the wager can be fixed. Saving rewrites the relevant clue entries in `question_history.jsonl` and recalculates every downstream score.
+- Click a player's podium when no clue is active to enter a manual score override directly. These overrides are appended to `question_history.jsonl` as `manual_score_adjustment` events so resumed games preserve the manual total.
+
+The `Edit Score` button is disabled while a clue is active, while selecting a Daily Double player, or when there is no saved clue history yet.
 
 ## Build
 To build from source, run:

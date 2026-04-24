@@ -103,3 +103,52 @@ def test_classify_buzz_phases_splits_main_and_rebound(game: object) -> None:
     assert [phase["phase_type"] for phase in phases] == ["main", "rebound"]
     assert phases[0]["buzz_attempts"][0]["player_index"] == 0
     assert phases[1]["buzz_attempts"][0]["player_index"] == 1
+
+
+def test_reconstruct_score_history_includes_manual_adjustments(
+    game: object, temp_dir: object
+) -> None:
+    """Test manual score adjustment entries participate in replay."""
+    game._game_state_dir = temp_dir / "saved"
+    game._game_state_dir.mkdir()
+    history_file = game._game_state_dir / "question_history.jsonl"
+    history_file.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "question_index": [0, [0, 0]],
+                        "question_number": 1,
+                        "round_index": 0,
+                        "category": "Cat 0",
+                        "value": 200,
+                        "is_daily_double": False,
+                        "buzz_phases": [],
+                        "answer_attempts": [
+                            {
+                                "player_index": 0,
+                                "answer_correct": True,
+                                "timestamp": 1000.0,
+                                "score_before": 0,
+                                "score_after": 200,
+                            }
+                        ],
+                        "completed_at": 1001.0,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "manual_score_adjustment",
+                        "player_index": 0,
+                        "timestamp": 1002.0,
+                        "score_before": 200,
+                        "score_after": 900,
+                        "new_score": 900,
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+    score_history = game._reconstruct_score_history()
+    assert score_history[0] == [0, 200, 900]

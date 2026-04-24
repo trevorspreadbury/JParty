@@ -152,10 +152,13 @@ class DisplayWindow(QMainWindow):
             )
             * self.welcome_margin_scale()
         )
+        welcome_rect = (fullrect - margins).translated(
+            0, int(fullrect.height() * self.welcome_vertical_offset_scale())
+        )
         if self.welcome_widget is not None:
-            self.welcome_widget.setGeometry(fullrect - margins)
+            self.welcome_widget.setGeometry(welcome_rect)
         if getattr(self, "preview_widget", None) is not None:
-            self.preview_widget.setGeometry(fullrect - margins)
+            self.preview_widget.setGeometry(welcome_rect)
         if self.final_display is not None:
             self.final_display.setGeometry(fullrect)
 
@@ -166,6 +169,14 @@ class DisplayWindow(QMainWindow):
             Fractional inset applied on each side of the welcome widget.
         """
         return 0.3
+
+    def welcome_vertical_offset_scale(self) -> float:
+        """Return the vertical shift applied to the welcome overlay geometry.
+
+        Returns:
+            Fractional screen-height offset for the welcome widget.
+        """
+        return 0.0
 
     def show_welcome_widgets(self) -> None:
         """Show and reset the startup widget.
@@ -349,6 +360,14 @@ class HostDisplayWindow(DisplayWindow):
             Fractional inset applied on each side of the host welcome widget.
         """
         return 0.16
+
+    def welcome_vertical_offset_scale(self) -> float:
+        """Shift the host welcome widget upward to clear the lecterns.
+
+        Returns:
+            Negative fractional screen-height offset.
+        """
+        return -0.08
 
     def create_start_menu(self) -> object:
         """Create the host welcome screen.

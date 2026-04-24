@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import QHBoxLayout, QPushButton, QSizePolicy, QVBoxLayout, 
 
 from jparty.ui.styles import MyLabel
 from jparty.ui.widgets.common import resource_path
+from jparty.ui.widgets.score_correction import ScoreCorrectionDialog
 
 
 class NameLabel(MyLabel):
@@ -236,7 +237,8 @@ class PlayerWidget(QWidget):
         if self.game.soliciting_player:
             self.game.get_dd_wager(self.player)
             return None
-        self.game.adjust_score(self.player)
+        if self.game.active_question is None:
+            self.game.adjust_score(self.player)
 
     def paintEvent(self, event: object) -> None:
         """Paint the current podium background image.
@@ -430,6 +432,57 @@ class ScoreBoard(QWidget):
 class HostScoreBoard(ScoreBoard):
     """Scoreboard variant that uses host-specific player widgets."""
 
+    button_width_scale = 0.18
+    button_height_scale = 0.18
+    button_left_margin_scale = 0.02
+    button_bottom_margin_scale = 0.06
+
+    def __init__(self, game: object, parent: object = None) -> None:
+        """Initialize the host scoreboard with score-correction controls.
+
+        Args:
+            game: Active game instance whose players are displayed.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__(game, parent)
+        self.edit_score_button = QPushButton("Edit Score", self)
+        self.edit_score_button.clicked.connect(self.open_score_editor)
+        self.score_correction_dialog = None
+        self.edit_score_button.raise_()
+        self._position_edit_score_button()
+        self.refresh_score_edit_button()
+
+    def resizeEvent(self, event: object) -> None:
+        """Keep the score-edit button centered without affecting podium layout.
+
+        Args:
+            event: Qt resize event object.
+
+        Returns:
+            ``None``.
+        """
+        super().resizeEvent(event)
+        self._position_edit_score_button()
+
+    def _position_edit_score_button(self) -> None:
+        """Position the overlay score-edit button at the bottom-left.
+
+        Returns:
+            ``None``.
+        """
+        if not hasattr(self, "edit_score_button"):
+            return
+        button_width = max(120, int(self.width() * self.button_width_scale))
+        button_height = max(34, int(self.height() * self.button_height_scale))
+        button_x = max(0, int(self.width() * self.button_left_margin_scale))
+        button_y = max(
+            0, self.height() - button_height - int(self.height() * self.button_bottom_margin_scale)
+        )
+        self.edit_score_button.setGeometry(button_x, button_y, button_width, button_height)
+
     def create_player_widget(self, player: object) -> object:
         """Create a host podium widget for one player.
 
@@ -440,6 +493,38 @@ class HostScoreBoard(ScoreBoard):
             A ``HostPlayerWidget`` instance.
         """
         return HostPlayerWidget(self.game, player, self)
+
+    def refresh_score_edit_button(self) -> None:
+        """Refresh whether the score-correction button is enabled.
+
+        Returns:
+            ``None``.
+        """
+        self._position_edit_score_button()
+        can_open = (
+            self.game.can_open_score_editor()
+            if hasattr(self.game, "can_open_score_editor")
+            else False
+        )
+        self.edit_score_button.setEnabled(can_open)
+
+    def open_score_editor(self) -> None:
+        """Open the host score-correction dialog and apply any saved edits.
+
+        Returns:
+            ``None``.
+        """
+        entries = self.game.get_recent_score_corrections()
+        if not entries:
+            self.refresh_score_edit_button()
+            return
+        self.score_correction_dialog = ScoreCorrectionDialog(
+            entries, self.game.players, self
+        )
+        if self.score_correction_dialog.exec():
+            corrections = self.score_correction_dialog.collect_changes()
+            self.game.apply_question_history_corrections(corrections)
+        self.refresh_score_edit_button()
 
     def hide_close_buttons(self) -> None:
         """Hide player removal and reorder controls after the game starts.

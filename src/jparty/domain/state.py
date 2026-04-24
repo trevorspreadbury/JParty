@@ -13,6 +13,9 @@ from dataclasses import asdict
 from itertools import zip_longest
 from pathlib import Path
 
+QUESTION_HISTORY_ENTRY_TYPE = "question"
+MANUAL_SCORE_ADJUSTMENT_TYPE = "manual_score_adjustment"
+
 
 def get_current_game_state(game: object) -> object:
     """Build a serializable summary of the current game session.
@@ -36,6 +39,46 @@ def get_current_game_state(game: object) -> object:
         "started_at": game._game_started_at or current_time,
         "last_updated": current_time,
     }
+
+
+def get_history_entry_type(entry: dict) -> str:
+    """Return the normalized type marker for a history record.
+
+    Args:
+        entry: Persisted JSONL history entry.
+
+    Returns:
+        The entry type, defaulting legacy clue records to ``"question"``.
+    """
+    if entry.get("type"):
+        return entry["type"]
+    if entry.get("question_index") is not None:
+        return QUESTION_HISTORY_ENTRY_TYPE
+    return QUESTION_HISTORY_ENTRY_TYPE
+
+
+def is_question_history_entry(entry: dict) -> bool:
+    """Return whether a history entry represents a clue event.
+
+    Args:
+        entry: Persisted JSONL history entry.
+
+    Returns:
+        ``True`` when the entry is a normal clue record.
+    """
+    return get_history_entry_type(entry) == QUESTION_HISTORY_ENTRY_TYPE
+
+
+def is_manual_score_adjustment(entry: dict) -> bool:
+    """Return whether a history entry is a manual score override event.
+
+    Args:
+        entry: Persisted JSONL history entry.
+
+    Returns:
+        ``True`` when the entry is a manual score adjustment.
+    """
+    return get_history_entry_type(entry) == MANUAL_SCORE_ADJUSTMENT_TYPE
 
 
 def save_general_state(game: object) -> None:
@@ -148,40 +191,46 @@ def reconstruct_score_history(game: object) -> object:
     entries = load_question_history(game)
     if not entries:
         return {}
-    entries.sort(key=lambda entry: entry.get("question_number", 0))
     all_players = set()
     score_history = {}
+    scores = {}
+    event_count = 0
+
+    def ensure_player(player_index: int) -> None:
+        if player_index in score_history:
+            return
+        all_players.add(player_index)
+        scores[player_index] = 0
+        score_history[player_index] = [0] * (event_count + 1)
+
     for entry in entries:
+        if is_manual_score_adjustment(entry):
+            player_index = entry.get("player_index")
+            if player_index is not None:
+                ensure_player(player_index)
         for attempt in entry.get("answer_attempts", []):
             player_index = attempt.get("player_index")
             if player_index is not None:
-                all_players.add(player_index)
-                score_history.setdefault(player_index, [0])
-    for entry in entries:
-        question_num = entry.get("question_number", 0)
-        if question_num == 0:
-            continue
-        question_scores = {}
-        for attempt in entry.get("answer_attempts", []):
-            player_index = attempt.get("player_index")
-            score_after = attempt.get("score_after", 0)
+                ensure_player(player_index)
+
+        if is_manual_score_adjustment(entry):
+            player_index = entry.get("player_index")
             if player_index is not None:
-                question_scores[player_index] = score_after
+                scores[player_index] = entry.get(
+                    "score_after",
+                    entry.get("new_score", scores.get(player_index, 0)),
+                )
+        else:
+            for attempt in entry.get("answer_attempts", []):
+                player_index = attempt.get("player_index")
+                if player_index is not None:
+                    scores[player_index] = attempt.get(
+                        "score_after", scores.get(player_index, 0)
+                    )
+
+        event_count += 1
         for player_index in all_players:
-            while len(score_history[player_index]) < question_num:
-                score_history[player_index].append(score_history[player_index][-1])
-            if player_index in question_scores:
-                score_after = question_scores[player_index]
-                if len(score_history[player_index]) == question_num:
-                    score_history[player_index].append(score_after)
-                else:
-                    score_history[player_index][question_num] = score_after
-            else:
-                last_score = score_history[player_index][-1]
-                if len(score_history[player_index]) == question_num:
-                    score_history[player_index].append(last_score)
-                else:
-                    score_history[player_index][question_num] = last_score
+            score_history[player_index].append(scores.get(player_index, 0))
     return score_history
 
 
