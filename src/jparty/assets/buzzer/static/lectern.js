@@ -136,29 +136,33 @@ var updater = {
             [],            // Stage 0: no lights
         ];
 
-        // Start animation sequence
-        this.lightsInterval = setInterval(function() {
-            if (self.currentLightStage < lightPatterns.length) {
-                // Clear all lights
-                lights.forEach(function(light) {
-                    light.classList.remove('active');
-                });
-                
-                // Activate lights for current stage
-                var currentPattern = lightPatterns[self.currentLightStage];
-                currentPattern.forEach(function(lightNum) {
-                    var lightToActivate = document.querySelector('.light[data-light="' + lightNum + '"]');
-                    if (lightToActivate) {
-                        lightToActivate.classList.add('active');
-                    }
-                });
-                
-                self.currentLightStage++;
-            } else {
-                // All lights are on, stop the interval
+        function applyCurrentLightStage() {
+            if (self.currentLightStage >= lightPatterns.length) {
                 clearInterval(self.lightsInterval);
                 self.lightsInterval = null;
+                return;
             }
+
+            // Clear all lights before drawing the next countdown frame.
+            lights.forEach(function(light) {
+                light.classList.remove('active');
+            });
+
+            var currentPattern = lightPatterns[self.currentLightStage];
+            currentPattern.forEach(function(lightNum) {
+                var lightToActivate = document.querySelector('.light[data-light="' + lightNum + '"]');
+                if (lightToActivate) {
+                    lightToActivate.classList.add('active');
+                }
+            });
+
+            self.currentLightStage++;
+        }
+
+        // Draw the first frame immediately so the red countdown begins with buzz-in.
+        applyCurrentLightStage();
+        this.lightsInterval = setInterval(function() {
+            applyCurrentLightStage();
         }, 1000); // 1 second per stage, matching PlayerWidget timing
     },
 
