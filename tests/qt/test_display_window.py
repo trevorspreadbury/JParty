@@ -51,6 +51,8 @@ def _stub_game() -> object:
         prepare_resume_from_dir=lambda selected_dir: {},
         set_selected_round_indices=lambda indices: None,
         selected_round_indices=lambda: [],
+        set_reveal_answers_after_triple_stumper=lambda enabled: None,
+        reveal_answers_after_triple_stumper_enabled=lambda: False,
         expected_player_count=lambda: None,
         resume_claim_status=lambda: (0, 0),
         startable=lambda: False,

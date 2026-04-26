@@ -42,6 +42,7 @@ class StubGame:
         self.start_game_calls = 0
         self.clear_resume_state_calls = 0
         self._selected_round_indices = None
+        self._reveal_answers_after_triple_stumper = False
         self.resume_claimed = 0
 
     def start_game(self) -> None:
@@ -68,6 +69,7 @@ class StubGame:
             "general_state": {
                 "players": [{"name": "Alice"}, {"name": "Bob"}],
                 "selected_round_indices": [0, 2],
+                "reveal_answers_after_triple_stumper": True,
             },
         }
 
@@ -86,6 +88,14 @@ class StubGame:
         if self._selected_round_indices is None:
             return []
         return self._selected_round_indices
+
+    def set_reveal_answers_after_triple_stumper(self, enabled: bool) -> None:
+        """Test storing the triple-stumper reveal preference."""
+        self._reveal_answers_after_triple_stumper = bool(enabled)
+
+    def reveal_answers_after_triple_stumper_enabled(self) -> bool:
+        """Test reading the triple-stumper reveal preference."""
+        return self._reveal_answers_after_triple_stumper
 
     def expected_player_count(self) -> object:
         """Test expected player count."""
@@ -151,6 +161,7 @@ def test_load_saved_game_requires_matching_player_count(
     ]
     assert all(checkbox.isChecked() for checkbox in widget.round_checkboxes)
     assert all(not checkbox.isEnabled() for checkbox in widget.round_checkboxes)
+    assert widget.reveal_answers_radio.isChecked() is True
     assert "Claimed 0 of 2 saved players" in widget.summary_label.text()
     assert (
         "Claim every saved player profile to resume (0/2)."
@@ -270,6 +281,16 @@ def test_build_summary_text_flags_missing_daily_double(qtbot: object) -> None:
     qtbot.addWidget(widget)
     summary = widget.build_summary_text()
     assert "CRITICAL: Missing Daily Double" in summary
+
+
+def test_welcome_radio_updates_triple_stumper_reveal_option(qtbot: object) -> None:
+    """Test the welcome radio toggles the reveal-answer game option."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    assert widget.reveal_answers_radio.isChecked() is False
+    widget.reveal_answers_radio.setChecked(True)
+    assert game.reveal_answers_after_triple_stumper_enabled() is True
 
 
 def test_build_summary_text_includes_question_media_status(

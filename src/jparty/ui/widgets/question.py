@@ -41,6 +41,7 @@ class QuestionWidget(QWidget):
         """
         super().__init__(parent)
         self.question = question
+        self.answer_revealed = False
         self.setAutoFillBackground(True)
         text_only_question = self.isQuestionTypeTextOnly()
         self.main_layout = QVBoxLayout()
@@ -74,6 +75,11 @@ class QuestionWidget(QWidget):
             return False
         else:
             return True
+
+    def reveal_answer(self) -> None:
+        """Replace the clue text with the correct response."""
+        self.answer_revealed = True
+        self.question_label.setText(self.question.answer)
 
 
 class HostQuestionWidget(QuestionWidget):
@@ -111,6 +117,10 @@ class HostQuestionWidget(QuestionWidget):
         qp.setPen(QPen(QColor("white")))
         line_y = self.main_layout.itemAt(1).geometry().top()
         qp.drawLine(0, line_y, self.width(), line_y)
+
+    def reveal_answer(self) -> None:
+        """Leave the host clue layout unchanged when revealing the answer."""
+        return None
 
     def isQuestionTypeTextOnly(self) -> bool:
         """Host always see only text"""

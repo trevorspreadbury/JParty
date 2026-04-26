@@ -160,11 +160,16 @@ class FakeQuestionWidget:
     def __init__(self) -> None:
         """Test init."""
         self.show_question_calls = 0
+        self.reveal_answer_calls = 0
         self.hint_label = FakeLabel()
 
     def show_question(self) -> None:
         """Test show question."""
         self.show_question_calls += 1
+
+    def reveal_answer(self) -> None:
+        """Test reveal answer."""
+        self.reveal_answer_calls += 1
 
 
 class FakeFinalWindow:

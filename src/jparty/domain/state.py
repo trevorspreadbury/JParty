@@ -104,6 +104,9 @@ def get_current_game_state(game: object) -> object:
             {"name": p.name, "player_number": p.player_number} for p in game.players
         ],
         "selected_round_indices": selected_round_indices,
+        "reveal_answers_after_triple_stumper": (
+            game.reveal_answers_after_triple_stumper_enabled()
+        ),
         "started_at": game._game_started_at or current_time,
         "last_updated": current_time,
     }

@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QRadioButton,
     QScrollArea,
     QSizePolicy,
     QVBoxLayout,
@@ -280,6 +281,21 @@ class Welcome(StartWidget):
         self.rounds_layout.setSpacing(12)
         self.rounds_widget.setLayout(self.rounds_layout)
         self.rounds_widget.setVisible(False)
+        self.reveal_answers_radio = QRadioButton(
+            "Reveal Answers after Triple Stumper", self
+        )
+        self.reveal_answers_radio.setChecked(
+            bool(
+                getattr(
+                    self.game,
+                    "reveal_answers_after_triple_stumper_enabled",
+                    lambda: False,
+                )()
+            )
+        )
+        self.reveal_answers_radio.toggled.connect(
+            self.update_reveal_answers_after_triple_stumper
+        )
         self.quit_button = DynamicButton("Quit", self)
         self.quit_button.clicked.connect(self.game.close)
         self.help_button = DynamicButton("Show help", self)
@@ -299,11 +315,15 @@ class Welcome(StartWidget):
         main_layout.addStretch(1)
         main_layout.addWidget(self.summary_label, 7)
         main_layout.addWidget(self.rounds_widget, 4)
+        main_layout.addWidget(self.reveal_answers_radio, 2)
         main_layout.addLayout(footer_layout, 3)
         main_layout.addStretch(3)
         self.gameid_trigger.connect(self.set_gameid)
         self.summary_trigger.connect(self.set_summary)
         self.setLayout(main_layout)
+        self.update_reveal_answers_after_triple_stumper(
+            self.reveal_answers_radio.isChecked()
+        )
         self.show()
 
     def show_help(self) -> None:
@@ -360,6 +380,16 @@ QLabel {{
     font-weight: 700;
 }}
 """
+        radio_font_size = max(int(self.height() * 0.024), 18)
+        self.reveal_answers_radio.setStyleSheet(
+            f"""
+QRadioButton {{
+    color: black;
+    font-size: {radio_font_size}px;
+    font-weight: 600;
+}}
+"""
+        )
         for index in range(self.rounds_layout.count()):
             widget = self.rounds_layout.itemAt(index).widget()
             if isinstance(widget, QCheckBox):
@@ -606,6 +636,13 @@ QLabel {{
         self.resume_path = selected_dir
         self.start_button.setText("Resume!")
         saved_players = resume_state["general_state"].get("players", [])
+        self.reveal_answers_radio.setChecked(
+            bool(
+                resume_state["general_state"].get(
+                    "reveal_answers_after_triple_stumper", False
+                )
+            )
+        )
         self.configure_round_selector(enabled=False)
         self._base_summary_text = "\n".join(
             [
@@ -675,6 +712,12 @@ QLabel {{
         self.start_button.setText("Start!")
         self.clear_round_selector()
         self.show_summary(self)
+
+    def update_reveal_answers_after_triple_stumper(self, checked: bool) -> None:
+        """Push the triple-stumper reveal option into the active game object."""
+        setter = getattr(self.game, "set_reveal_answers_after_triple_stumper", None)
+        if setter is not None:
+            setter(checked)
 
     def clear_round_selector(self) -> None:
         """Remove any existing round-selection checkboxes.
