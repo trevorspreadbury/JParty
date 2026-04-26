@@ -96,6 +96,12 @@ class Game(QObject):
             "BACK_TO_BOARD", Qt.Key.Key_Space, self.back_to_board, self.spacehints
         )
         self.keystroke_manager.addEvent(
+            "REVEAL_STUMPED_ANSWER",
+            Qt.Key.Key_Space,
+            self.reveal_stumped_answer,
+            self.spacehints,
+        )
+        self.keystroke_manager.addEvent(
             "OPEN_RESPONSES", Qt.Key.Key_Space, self.open_responses, self.spacehints
         )
         self.keystroke_manager.addEvent(
@@ -168,6 +174,8 @@ class Game(QObject):
         self._game_started_at = None
         self._resume_state = None
         self._selected_round_indices = None
+        self._reveal_answers_after_triple_stumper = False
+        self._awaiting_stumped_answer_reveal = False
 
     def startable(self) -> bool:
         """Determine whether the game can start with the current connections.
@@ -246,6 +254,21 @@ class Game(QObject):
             return
         self._selected_round_indices = sorted({int(index) for index in indices})
 
+    def set_reveal_answers_after_triple_stumper(self, enabled: bool) -> None:
+        """Store whether triple-stumper clues should reveal their answer.
+
+        Args:
+            enabled: ``True`` to reveal the answer before leaving the clue.
+
+        Returns:
+            ``None``.
+        """
+        self._reveal_answers_after_triple_stumper = bool(enabled)
+
+    def reveal_answers_after_triple_stumper_enabled(self) -> bool:
+        """Return whether triple-stumper clues reveal the answer first."""
+        return self._reveal_answers_after_triple_stumper
+
     def selected_round_indices(self) -> list[int]:
         """Return the configured original round indices for this session.
 
@@ -309,6 +332,9 @@ class Game(QObject):
             raise ValueError("Saved game metadata is missing player information")
         self.data = get_game(game_id)
         self.set_selected_round_indices(general_state.get("selected_round_indices"))
+        self.set_reveal_answers_after_triple_stumper(
+            general_state.get("reveal_answers_after_triple_stumper", False)
+        )
         self._apply_selected_rounds_to_data()
         if not self.valid_game():
             raise ValueError("Saved game points to an invalid or incomplete game")
@@ -467,6 +493,7 @@ class Game(QObject):
             self.question_number = 1
         self.current_round = self._get_resume_round()
         self.active_question = None
+        self._awaiting_stumped_answer_reveal = False
         self.answering_player = None
         self.previous_answerers = set()
         self.early_buzzes = set()
@@ -1244,6 +1271,7 @@ class Game(QObject):
             ``None``.
         """
         logging.info("back_to_board")
+        self._awaiting_stumped_answer_reveal = False
         self._flush_question_history()
         self.question_number += 1
         self.dc.hide_question()
@@ -1720,6 +1748,7 @@ class Game(QObject):
             ``None``.
         """
         self.active_question = q
+        self._awaiting_stumped_answer_reveal = False
         self._question_start_time = time.time()
         self._all_buzz_attempts = []
         self._answer_attempts = []
@@ -1817,6 +1846,23 @@ class Game(QObject):
         self.accepting_responses = False
         sa.WaveObject.from_wave_file(resource_path("stumped.wav")).play()
         self.dc.borders.flash()
+        if self.reveal_answers_after_triple_stumper_enabled():
+            self._awaiting_stumped_answer_reveal = True
+            self.keystroke_manager.activate("REVEAL_STUMPED_ANSWER")
+            return
+        self._awaiting_stumped_answer_reveal = False
+        self.keystroke_manager.activate("BACK_TO_BOARD")
+
+    def reveal_stumped_answer(self) -> None:
+        """Reveal the current clue answer before returning to the board.
+
+        Returns:
+            ``None``.
+        """
+        if not self._awaiting_stumped_answer_reveal or self.active_question is None:
+            return
+        self._awaiting_stumped_answer_reveal = False
+        self.dc.question_widget.reveal_answer()
         self.keystroke_manager.activate("BACK_TO_BOARD")
 
     def __toolate(self) -> None:

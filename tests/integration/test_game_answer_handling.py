@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from PyQt6.QtCore import Qt
 
 pytestmark = pytest.mark.integration
 
@@ -56,10 +57,45 @@ def test_stumped_closes_responses_and_enables_return_to_board(
     game.open_responses()
     game.stumped()
     assert game.accepting_responses is False
+    assert game.wave.play_calls == 1
     assert game.dc.borders.flash_calls == 1
     assert (
         game.keystroke_manager._KeystrokeManager__events["BACK_TO_BOARD"].active is True
     )
+
+
+def test_stumped_can_reveal_answer_before_returning_to_board(
+    game_with_players: object,
+) -> None:
+    """Test triple-stumper reveal mode uses two space presses."""
+    game = game_with_players
+    game.set_reveal_answers_after_triple_stumper(True)
+    question = game.current_round.get_question(0, 0)
+    game.load_question(question)
+    game.open_responses()
+
+    game.stumped()
+
+    assert game.wave.play_calls == 1
+    assert (
+        game.keystroke_manager._KeystrokeManager__events["REVEAL_STUMPED_ANSWER"].active
+        is True
+    )
+    assert (
+        game.keystroke_manager._KeystrokeManager__events["BACK_TO_BOARD"].active
+        is False
+    )
+
+    game.keystroke_manager.call(Qt.Key.Key_Space)
+    assert game.dc.question_widget.reveal_answer_calls == 1
+    assert (
+        game.keystroke_manager._KeystrokeManager__events["BACK_TO_BOARD"].active is True
+    )
+    assert game.dc.hidden_question == 0
+
+    game.keystroke_manager.call(Qt.Key.Key_Space)
+    assert game.dc.hidden_question == 1
+    assert game.active_question is None
 
 
 def test_set_score_updates_widget_and_lectern_state(game_with_players: object) -> None:
