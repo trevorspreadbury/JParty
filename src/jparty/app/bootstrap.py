@@ -7,10 +7,13 @@ application entry point and the rest of the runtime services.
 """
 
 import argparse
+import json
 import logging
+import os
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import requests
 from PyQt6.QtGui import QFont, QFontDatabase
@@ -20,14 +23,18 @@ from simpleaudio._simpleaudio import SimpleaudioError
 from jparty.app.config import DEBUG_MODE, PORT
 from jparty.app.paths import SAVED_GAMES
 from jparty.domain.game_engine import Game
+from jparty.domain.state import build_end_game_summary, reconstruct_score_history
 from jparty.services.archive_client import get_game_html, process_game_board_from_html
 from jparty.ui.styles import JPartyStyle
 from jparty.ui.widgets.common import resource_path
+from jparty.ui.widgets.final import EndGameSummaryDisplay
 from jparty.ui.windows.display import DisplayWindow, HostDisplayWindow
 from jparty.web.controller import BuzzerController
 
 REQUEST_TIMEOUT_SECONDS = 10
 MIN_MONITORS = 2
+SUMMARY_IMAGE_NAME = "summary.png"
+SUMMARY_IMAGE_SIZE = (1920, 1080)
 
 
 def check_internet() -> None:
@@ -184,7 +191,148 @@ def build_parser() -> object:
         nargs="+",
         help="game ids or text files containing one game id per line",
     )
+    summary_parser = subparsers.add_parser(
+        "summary",
+        help="render an end-of-game summary image from a saved game-state directory",
+    )
+    summary_parser.add_argument(
+        "--game-state-directory",
+        required=True,
+        help="path to a saved game-state directory containing general.json",
+    )
+    summary_parser.add_argument(
+        "--output-file",
+        help="output image path (defaults to <game-state-directory>/summary.png)",
+    )
     return parser
+
+
+def summary_output_path(
+    game_state_directory: object, output_file: object = None
+) -> Path:
+    """Resolve the image path for a rendered summary command.
+
+    Args:
+        game_state_directory: Base saved game-state directory.
+        output_file: Optional explicit output path from the CLI.
+
+    Returns:
+        Path to the summary image that should be written.
+    """
+    game_state_path = Path(game_state_directory)
+    if output_file:
+        return Path(output_file)
+    return game_state_path / SUMMARY_IMAGE_NAME
+
+
+def load_summary_from_game_state_directory(game_state_directory: object) -> object:
+    """Build an end-game summary payload from a saved game-state directory.
+
+    Args:
+        game_state_directory: Directory containing ``general.json`` and
+            ``question_history.jsonl``.
+
+    Returns:
+        An ``EndGameSummary`` payload matching the in-app audience summary.
+
+    Raises:
+        FileNotFoundError: If the required metadata file is missing.
+        ValueError: If the game state metadata cannot be used to build a
+            playable summary.
+    """
+    from jparty.services.game_loader import get_game
+
+    game_state_path = Path(game_state_directory)
+    general_file = game_state_path / "general.json"
+    if not general_file.exists():
+        raise FileNotFoundError("Saved game folder must contain general.json")
+    with general_file.open(encoding="utf-8") as file_obj:
+        general_state = json.load(file_obj)
+
+    game_id = str(general_state.get("game_id", "")).strip()
+    if not game_id:
+        raise ValueError("Saved game metadata is missing a game_id")
+
+    data = get_game(game_id)
+    if data is None:
+        raise ValueError("Saved game points to an invalid or incomplete game")
+
+    selected_round_indices = general_state.get("selected_round_indices")
+    if selected_round_indices is not None:
+        data.rounds = [
+            data.rounds[int(index)]
+            for index in selected_round_indices
+            if 0 <= int(index) < len(data.rounds)
+        ]
+
+    summary_game = SimpleNamespace(
+        _game_state_dir=game_state_path,
+        data=data,
+        players=[],
+    )
+    score_history = reconstruct_score_history(summary_game)
+    players = []
+    for saved_player in general_state.get("players", []):
+        player_number = int(saved_player.get("player_number", 0))
+        players.append(
+            SimpleNamespace(
+                player_number=player_number,
+                name=str(saved_player.get("name", f"Player {player_number}")),
+                score=score_history.get(player_number, [0])[-1],
+            )
+        )
+    summary_game.players = players
+    return build_end_game_summary(summary_game)
+
+
+def render_summary_image(summary: object, output_file: object) -> Path:
+    """Render an end-game summary payload to an image file.
+
+    Args:
+        summary: ``EndGameSummary`` payload to render.
+        output_file: Destination image path.
+
+    Returns:
+        The written output path.
+
+    Raises:
+        ValueError: If the widget cannot be saved to the requested output path.
+    """
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+        QApplication.setStyle(JPartyStyle())
+        app.setFont(QFont("Verdana"))
+        QFontDatabase.addApplicationFont(resource_path("ITC_ Korinna Normal.ttf"))
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    widget = EndGameSummaryDisplay(summary)
+    widget.resize(*SUMMARY_IMAGE_SIZE)
+    widget.show()
+    app.processEvents()
+    pixmap = widget.grab()
+    widget.close()
+    if not pixmap.save(str(output_path)):
+        raise ValueError(f"Could not save summary image to {output_path}")
+    return output_path
+
+
+def generate_summary_image(
+    game_state_directory: object, output_file: object = None
+) -> Path:
+    """Generate an end-game summary image from a saved game-state directory.
+
+    Args:
+        game_state_directory: Directory containing persisted game state.
+        output_file: Optional destination path for the rendered image.
+
+    Returns:
+        The output path that was written.
+    """
+    summary = load_summary_from_game_state_directory(game_state_directory)
+    resolved_output = summary_output_path(game_state_directory, output_file)
+    return render_summary_image(summary, resolved_output)
 
 
 def launch_gui() -> None:
@@ -246,5 +394,11 @@ def main(argv: object = None) -> int | None:
     args = parser.parse_args(argv)
     if args.command == "download":
         download_games(args.inputs)
+        return 0
+    if args.command == "summary":
+        output_path = generate_summary_image(
+            args.game_state_directory, args.output_file
+        )
+        print(f"Wrote summary image to {output_path}")
         return 0
     launch_gui()

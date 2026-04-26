@@ -3,13 +3,12 @@
 from types import SimpleNamespace
 
 import pytest
-from PyQt6.QtCore import QByteArray, QBuffer, QIODevice
-from PyQt6.QtGui import QColor, QImage
-from PyQt6.QtWidgets import QLabel, QRadioButton
-
 from jparty.domain.models import Player
 from jparty.ui.widgets.score_correction import ScoreCorrectionDialog
 from jparty.ui.widgets.scoreboard import HostPlayerWidget, HostScoreBoard
+from PyQt6.QtCore import QBuffer, QByteArray, QIODevice
+from PyQt6.QtGui import QColor, QImage
+from PyQt6.QtWidgets import QLabel, QRadioButton
 
 pytestmark = pytest.mark.qt
 
@@ -137,7 +136,9 @@ def test_host_scoreboard_opens_score_dialog_with_five_recent_entries(
             """Close the modal without saving."""
             return 0
 
-    monkeypatch.setattr("jparty.ui.widgets.scoreboard.ScoreCorrectionDialog", FakeDialog)
+    monkeypatch.setattr(
+        "jparty.ui.widgets.scoreboard.ScoreCorrectionDialog", FakeDialog
+    )
     scoreboard = HostScoreBoard(game)
     qtbot.addWidget(scoreboard)
 
@@ -145,7 +146,13 @@ def test_host_scoreboard_opens_score_dialog_with_five_recent_entries(
 
     assert game.last_limit == 5
     assert len(captured["entries"]) == 5
-    assert [entry["question_number"] for entry in captured["entries"]] == [6, 5, 4, 3, 2]
+    assert [entry["question_number"] for entry in captured["entries"]] == [
+        6,
+        5,
+        4,
+        3,
+        2,
+    ]
 
 
 def test_host_player_click_adjusts_score_only_when_no_question_active(
@@ -201,9 +208,7 @@ def test_score_correction_dialog_renders_signature_images_for_player_names(
     labels = dialog.findChildren(QLabel)
     signature_labels = [label for label in labels if label.pixmap() is not None]
     raw_data_labels = [
-        label
-        for label in labels
-        if label.text().startswith("data:image/png;base64")
+        label for label in labels if label.text().startswith("data:image/png;base64")
     ]
 
     assert signature_labels

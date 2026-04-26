@@ -15,8 +15,8 @@ from PyQt6.QtCore import QDir, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QBrush, QFont, QImage, QPainter, QPalette, QPixmap
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QGridLayout,
     QFileDialog,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -407,7 +407,9 @@ QLabel {{
     def __show_summary(self) -> None:
         """Return show summary."""
         game_id = self.textbox.text()
-        self._question_media_status = detect_question_media(game_id) if game_id else None
+        self._question_media_status = (
+            detect_question_media(game_id) if game_id else None
+        )
         try:
             self.resume_path = None
             self.game.clear_resume_state()
@@ -416,7 +418,9 @@ QLabel {{
                 self.summary_trigger.emit(self.build_summary_text())
             else:
                 self.summary_trigger.emit(
-                    "\n\n".join(["Cannot load game", self.question_media_summary_text()])
+                    "\n\n".join(
+                        ["Cannot load game", self.question_media_summary_text()]
+                    )
                 )
         except Exception as e:
             logging.error(e)
@@ -532,7 +536,9 @@ QLabel {{
         """Start the game or open the local-media preview when available."""
         if self.resume_path is None:
             preview_questions = self.preview_questions()
-            if preview_questions and hasattr(self.parent(), "load_question_media_preview"):
+            if preview_questions and hasattr(
+                self.parent(), "load_question_media_preview"
+            ):
                 self.parent().load_question_media_preview(preview_questions)
                 return
         self.game.start_game()
@@ -568,7 +574,9 @@ QLabel {{
         dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
         dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
         dialog.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot)
-        dialog.setNameFilter("Question media (*.zip *.png *.jpg *.jpeg *.webp *.gif *.bmp);;All files (*)")
+        dialog.setNameFilter(
+            "Question media (*.zip *.png *.jpg *.jpeg *.webp *.gif *.bmp);;All files (*)"
+        )
         if dialog.exec():
             selected_files = dialog.selectedFiles()
             if selected_files:
@@ -628,7 +636,9 @@ QLabel {{
                 self.game, "resume_claim_status", lambda: (0, 0)
             )()
             if summary_text:
-                summary_text += f"\nClaimed {claimed_count} of {total_count} saved players."
+                summary_text += (
+                    f"\nClaimed {claimed_count} of {total_count} saved players."
+                )
         if rounds_selected and summary_text:
             self.summary_label.setText(summary_text)
         if self.game.startable() and rounds_selected:
@@ -648,7 +658,9 @@ QLabel {{
                 and not rounds_selected
                 and self._base_summary_text
             ):
-                self.summary_label.setText(summary_text + "\n\nSelect at least one round to play.")
+                self.summary_label.setText(
+                    summary_text + "\n\nSelect at least one round to play."
+                )
 
     def restart(self) -> None:
         """Reset the welcome screen to its initial fresh-game state.
@@ -743,9 +755,7 @@ QLabel {{
         """
         for checkbox in self.round_checkboxes:
             round_label = checkbox.property("round_label") or checkbox.text()
-            checkbox.setText(
-                f"[{'x' if checkbox.isChecked() else ' '}] {round_label}"
-            )
+            checkbox.setText(f"[{'x' if checkbox.isChecked() else ' '}] {round_label}")
         selected_indices = [
             index
             for index, checkbox in enumerate(self.round_checkboxes)

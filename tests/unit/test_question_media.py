@@ -6,7 +6,9 @@ from zipfile import ZipFile
 from jparty.services import question_media
 
 
-def test_detect_question_media_reports_directory_and_zip(temp_dir: object, monkeypatch: object) -> None:
+def test_detect_question_media_reports_directory_and_zip(
+    temp_dir: object, monkeypatch: object
+) -> None:
     """Detection should distinguish directory and zip presence."""
     media_root = temp_dir / "question_media"
     media_root.mkdir()
@@ -18,7 +20,9 @@ def test_detect_question_media_reports_directory_and_zip(temp_dir: object, monke
     status = question_media.detect_question_media("4453")
     assert status.has_directory is True
     assert status.has_zip is True
-    assert status.summary_text() == "Question media status: found folder and zip archive."
+    assert (
+        status.summary_text() == "Question media status: found folder and zip archive."
+    )
 
 
 def test_import_question_media_directory_copies_supported_files(
@@ -64,7 +68,9 @@ def test_find_question_media_file_matches_supported_extensions(
     expected_path = game_dir / "1-0-0.webp"
     expected_path.write_bytes(b"image")
     monkeypatch.setattr(question_media, "QUESTION_MEDIA", media_root)
-    assert question_media.find_question_media_file("4453", 1, (0, 0)) == str(expected_path)
+    assert question_media.find_question_media_file("4453", 1, (0, 0)) == str(
+        expected_path
+    )
 
 
 def test_find_question_media_file_extracts_same_name_zip_when_needed(

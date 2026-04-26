@@ -292,6 +292,7 @@ class FakeDisplay:
         self.removed_cards = []
         self.loaded_final_judgement = 0
         self.loaded_final_graphs = 0
+        self.loaded_end_game_summaries = []
         self.restart_calls = 0
         self.image_review_questions = []
 
@@ -320,6 +321,10 @@ class FakeDisplay:
     def load_final_graphs(self) -> None:
         """Test load final graphs."""
         self.loaded_final_graphs += 1
+
+    def load_end_game_summary(self, summary: object) -> None:
+        """Test load end game summary."""
+        self.loaded_end_game_summaries.append(summary)
 
     def remove_card(self, question: object) -> None:
         """Test remove card."""
@@ -555,7 +560,7 @@ def game(
         load_image_review_screen=lambda question: None,
         borders=FakeBorders(),
     )
-    main_display = SimpleNamespace()
+    main_display = FakeDisplay(game)
     display = FakeDisplay(game)
     game.host_display = host_display
     game.main_display = main_display

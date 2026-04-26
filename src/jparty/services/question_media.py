@@ -77,7 +77,9 @@ def is_supported_media_file(path: Path) -> bool:
     return path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
 
 
-def find_question_media_file(game_id: object, board_index: int, index: tuple) -> str | bool:
+def find_question_media_file(
+    game_id: object, board_index: int, index: tuple
+) -> str | bool:
     """Return a local media path for a clue, if one exists."""
     media_dir = ensure_question_media_dir(game_id)
     if media_dir is None:
@@ -117,7 +119,9 @@ def ensure_question_media_dir(game_id: object) -> Path | None:
     return None
 
 
-def local_media_questions(game: object, round_indices: object) -> list[tuple[int, object]]:
+def local_media_questions(
+    game: object, round_indices: object
+) -> list[tuple[int, object]]:
     """Return selected-round questions backed by local media files."""
     if not getattr(game, "data", None):
         return []

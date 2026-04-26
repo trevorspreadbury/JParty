@@ -113,3 +113,16 @@ def test_end_game_handles_tie_and_single_winner(game_with_players: object) -> No
     game.players[1].score = 500
     game.end_game()
     assert game.dc.final_window.winner is game.players[0]
+
+
+def test_generate_end_game_summary_loads_audience_display(
+    game_with_players: object,
+) -> None:
+    """Test post-winner action loads the audience end-game summary."""
+    game = game_with_players
+    game.players[0].score = 1200
+    game.players[1].score = 600
+    game._save_general_state()
+    game.end_game()
+    game.generate_final_score_graphs()
+    assert len(game.main_display.loaded_end_game_summaries) == 1

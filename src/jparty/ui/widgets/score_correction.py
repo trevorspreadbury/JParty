@@ -157,7 +157,9 @@ class ScoreCorrectionDialog(QDialog):
 
         answer_label = QLabel(f"Answer: {entry['answer']}", group)
         answer_label.setWordWrap(True)
-        answer_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        answer_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         group_layout.addWidget(answer_label)
 
         player_rows_layout = QVBoxLayout()
@@ -207,9 +209,7 @@ class ScoreCorrectionDialog(QDialog):
         for widget_state in self._entry_widgets:
             updated_player_states = {
                 player_index: next(
-                    option
-                    for option, radio in control.items()
-                    if radio.isChecked()
+                    option for option, radio in control.items() if radio.isChecked()
                 )
                 for player_index, control in widget_state["player_controls"].items()
             }

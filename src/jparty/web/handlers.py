@@ -214,7 +214,9 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         except (TypeError, ValueError):
             self.send(
                 "SHOW_CHOOSER",
-                tornado.escape.json_encode(self.controller.saved_player_choices_payload()),
+                tornado.escape.json_encode(
+                    self.controller.saved_player_choices_payload()
+                ),
             )
             return
         player = self.controller.claim_saved_player(self, saved_player_number)

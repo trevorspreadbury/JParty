@@ -155,7 +155,8 @@ def test_apply_question_history_correction_updates_daily_double_value(
     question = game.current_round.get_question(0, 0)
     question.dd = True
     monkeypatch.setattr(
-        "jparty.domain.game_engine.QInputDialog.getInt", lambda *args, **kwargs: (600, True)
+        "jparty.domain.game_engine.QInputDialog.getInt",
+        lambda *args, **kwargs: (600, True),
     )
     game.load_question(question)
     game.get_dd_wager(game.players[0])
@@ -179,12 +180,15 @@ def test_apply_question_history_correction_updates_daily_double_value(
     assert lines[0]["answer_attempts"][0]["score_after"] == 1000
 
 
-def test_adjust_score_logs_manual_override(game_with_players: object, monkeypatch: object) -> None:
+def test_adjust_score_logs_manual_override(
+    game_with_players: object, monkeypatch: object
+) -> None:
     """Test host score overrides append manual adjustment history events."""
     game = game_with_players
     player = game.players[0]
     monkeypatch.setattr(
-        "jparty.domain.game_engine.QInputDialog.getInt", lambda *args, **kwargs: (900, True)
+        "jparty.domain.game_engine.QInputDialog.getInt",
+        lambda *args, **kwargs: (900, True),
     )
 
     game.adjust_score(player)

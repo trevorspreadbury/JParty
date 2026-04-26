@@ -479,9 +479,14 @@ class HostScoreBoard(ScoreBoard):
         button_height = max(34, int(self.height() * self.button_height_scale))
         button_x = max(0, int(self.width() * self.button_left_margin_scale))
         button_y = max(
-            0, self.height() - button_height - int(self.height() * self.button_bottom_margin_scale)
+            0,
+            self.height()
+            - button_height
+            - int(self.height() * self.button_bottom_margin_scale),
         )
-        self.edit_score_button.setGeometry(button_x, button_y, button_width, button_height)
+        self.edit_score_button.setGeometry(
+            button_x, button_y, button_width, button_height
+        )
 
     def create_player_widget(self, player: object) -> object:
         """Create a host podium widget for one player.

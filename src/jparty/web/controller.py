@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import logging
 import socket
+from collections.abc import Iterable
 from dataclasses import dataclass
 from threading import Thread
-from typing import TYPE_CHECKING, Iterable, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 import tornado.escape
 import tornado.ioloop
@@ -23,7 +24,7 @@ from jparty.web.app import Application
 
 if TYPE_CHECKING:
     from jparty.domain.game_engine import Game
-    from jparty.web.handlers import LecternSocketHandler
+    from jparty.web.handlers import BuzzerSocketHandler, LecternSocketHandler
 
 define("port", default=PORT, help="run on the given port", type=int)
 
@@ -78,7 +79,7 @@ class BuzzerController:
     connected_players: list[Player]
     accepting_players: bool
     lectern_connections: dict[int, LecternSocketHandler]
-    active_buzzer_sockets: set["BuzzerSocketHandler"]
+    active_buzzer_sockets: set[BuzzerSocketHandler]
     saved_player_profiles: dict[int, SavedPlayerProfile]
     resume_mode_active: bool
 
@@ -146,7 +147,7 @@ class BuzzerController:
         self.accepting_players = True
         self.clear_saved_player_reclaim()
 
-    def register_socket(self, socket_handler: "BuzzerSocketHandler") -> None:
+    def register_socket(self, socket_handler: BuzzerSocketHandler) -> None:
         """Track an open player websocket connection.
 
         Args:
@@ -157,7 +158,7 @@ class BuzzerController:
         """
         self.active_buzzer_sockets.add(socket_handler)
 
-    def unregister_socket(self, socket_handler: "BuzzerSocketHandler") -> None:
+    def unregister_socket(self, socket_handler: BuzzerSocketHandler) -> None:
         """Stop tracking a player websocket connection.
 
         Args:
@@ -192,7 +193,9 @@ class BuzzerController:
             Count of claimed saved-player profiles.
         """
         return sum(
-            1 for profile in self.saved_player_profiles.values() if profile.player is not None
+            1
+            for profile in self.saved_player_profiles.values()
+            if profile.player is not None
         )
 
     def saved_player_total_count(self) -> int:
@@ -226,7 +229,8 @@ class BuzzerController:
                 "claimed": profile.player is not None,
             }
             for profile in sorted(
-                self.saved_player_profiles.values(), key=lambda profile: profile.player_number
+                self.saved_player_profiles.values(),
+                key=lambda profile: profile.player_number,
             )
         ]
         return {
@@ -287,7 +291,7 @@ class BuzzerController:
             socket_handler.send("SHOW_CHOOSER", payload)
 
     def claim_saved_player(
-        self, socket_handler: "BuzzerSocketHandler", player_number: int
+        self, socket_handler: BuzzerSocketHandler, player_number: int
     ) -> Player | None:
         """Claim one saved-player profile for a phone in resume mode.
 
@@ -302,11 +306,17 @@ class BuzzerController:
             return None
         profile = self.saved_player_profiles.get(player_number)
         if profile is None:
-            socket_handler.send("SHOW_CHOOSER", tornado.escape.json_encode(self.saved_player_choices_payload()))
+            socket_handler.send(
+                "SHOW_CHOOSER",
+                tornado.escape.json_encode(self.saved_player_choices_payload()),
+            )
             return None
         if profile.player is not None and profile.player.waiter is not socket_handler:
             socket_handler.send("PLAYER_TAKEN")
-            socket_handler.send("SHOW_CHOOSER", tornado.escape.json_encode(self.saved_player_choices_payload()))
+            socket_handler.send(
+                "SHOW_CHOOSER",
+                tornado.escape.json_encode(self.saved_player_choices_payload()),
+            )
             return None
         if profile.player is None:
             player = Player(profile.name, socket_handler, profile.player_number)
@@ -319,7 +329,9 @@ class BuzzerController:
             player.connected = True
         socket_handler.player = player
         player.page = "buzz"
-        self.connected_players.sort(key=lambda current_player: current_player.player_number)
+        self.connected_players.sort(
+            key=lambda current_player: current_player.player_number
+        )
         self.game.new_player_trigger.emit()
         self.push_saved_player_choices()
         return player
@@ -347,7 +359,8 @@ class BuzzerController:
         return [
             profile.player
             for profile in sorted(
-                self.saved_player_profiles.values(), key=lambda profile: profile.player_number
+                self.saved_player_profiles.values(),
+                key=lambda profile: profile.player_number,
             )
             if profile.player is not None
         ]

@@ -152,7 +152,10 @@ def test_load_saved_game_requires_matching_player_count(
     assert all(checkbox.isChecked() for checkbox in widget.round_checkboxes)
     assert all(not checkbox.isEnabled() for checkbox in widget.round_checkboxes)
     assert "Claimed 0 of 2 saved players" in widget.summary_label.text()
-    assert "Claim every saved player profile to resume (0/2)." in widget.summary_label.text()
+    assert (
+        "Claim every saved player profile to resume (0/2)."
+        in widget.summary_label.text()
+    )
     game.resume_claimed = 2
     widget.check_start()
     assert widget.start_button.isEnabled() is True
@@ -286,7 +289,9 @@ def test_build_summary_text_includes_question_media_status(
     assert "Question media status: no folder or zip archive found." in summary
 
 
-def test_load_question_media_requires_game_id(qtbot: object, monkeypatch: object) -> None:
+def test_load_question_media_requires_game_id(
+    qtbot: object, monkeypatch: object
+) -> None:
     """Import should warn when no destination game id has been typed."""
     game = StubGame()
     widget = Welcome(game)
@@ -306,7 +311,9 @@ def test_load_question_media_imports_directory_and_refreshes_status(
     source_dir.mkdir()
     media_file = source_dir / "0-0-0.png"
     media_file.write_bytes(b"png")
-    monkeypatch.setattr("jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media")
+    monkeypatch.setattr(
+        "jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media"
+    )
     widget = Welcome(game)
     qtbot.addWidget(widget)
     widget.textbox.setText("4453")
@@ -326,7 +333,9 @@ def test_load_question_media_imports_zip_and_refreshes_status(
     source_zip = temp_dir / "media.zip"
     with ZipFile(source_zip, "w") as archive:
         archive.writestr("1-2-3.jpg", b"jpg")
-    monkeypatch.setattr("jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media")
+    monkeypatch.setattr(
+        "jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media"
+    )
     widget = Welcome(game)
     qtbot.addWidget(widget)
     widget.textbox.setText("4453")
@@ -354,7 +363,9 @@ def test_start_click_opens_preview_for_selected_round_local_media(
     qtbot.addWidget(parent)
     widget = Welcome(game, parent)
     qtbot.addWidget(widget)
-    widget._question_media_status = QuestionMediaStatus(directory=temp_dir, zip_file=None)
+    widget._question_media_status = QuestionMediaStatus(
+        directory=temp_dir, zip_file=None
+    )
     widget.on_start_clicked()
     assert game.start_game_calls == 0
     assert len(parent.preview_requests) == 1
@@ -363,7 +374,10 @@ def test_start_click_opens_preview_for_selected_round_local_media(
     qtbot.addWidget(parent.preview_widget)
     assert parent.preview_widget.cards
     answer_labels = parent.preview_widget.cards[0].findChildren(QLabel)
-    assert any(label.text() == game.data.rounds[0].questions[0].answer for label in answer_labels)
+    assert any(
+        label.text() == game.data.rounds[0].questions[0].answer
+        for label in answer_labels
+    )
 
 
 def test_preview_buttons_go_back_or_start_game(qtbot: object, temp_dir: object) -> None:

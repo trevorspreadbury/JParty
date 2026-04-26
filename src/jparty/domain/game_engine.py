@@ -32,6 +32,7 @@ from jparty.domain.input import (
 from jparty.domain.models import BuzzAttempt, FinalBoard, GameData
 from jparty.domain.state import (
     MANUAL_SCORE_ADJUSTMENT_TYPE,
+    build_end_game_summary,
     classify_buzz_phases,
     get_current_game_state,
     is_manual_score_adjustment,
@@ -789,7 +790,9 @@ class Game(QObject):
             }
             player_results = self._history_player_results(updated_entry)
             rebuilt_attempts = []
-            for player_index in self._history_attempt_order(updated_entry, player_results):
+            for player_index in self._history_attempt_order(
+                updated_entry, player_results
+            ):
                 original_attempt = attempts_by_player.get(player_index, {})
                 score_before = scores.get(player_index, 0)
                 score_after = (
@@ -841,7 +844,9 @@ class Game(QObject):
             if not is_question_history_entry(entry):
                 continue
             question = self._question_from_history_entry(entry)
-            if question is None or isinstance(self.data.rounds[entry["round_index"]], FinalBoard):
+            if question is None or isinstance(
+                self.data.rounds[entry["round_index"]], FinalBoard
+            ):
                 continue
             player_states = {
                 player.player_number: self._history_player_results(entry).get(
@@ -859,7 +864,9 @@ class Game(QObject):
                     "player_states": player_states,
                 }
             )
-        recent_entries.sort(key=lambda entry: entry.get("question_number", 0), reverse=True)
+        recent_entries.sort(
+            key=lambda entry: entry.get("question_number", 0), reverse=True
+        )
         return recent_entries[:limit]
 
     def apply_question_history_corrections(self, corrections: list[dict]) -> bool:
@@ -970,7 +977,9 @@ class Game(QObject):
         if not question_index:
             logging.error("No question index")
             return
-        if not self.active_question.dd:
+        if not self.active_question.dd and not isinstance(
+            self.current_round, FinalBoard
+        ):
             buzz_phases = self._classify_buzz_phases()
         else:
             buzz_phases = []
@@ -1348,6 +1357,24 @@ class Game(QObject):
         Returns:
             ``None``.
         """
+        self._all_buzz_attempts = []
+        self._answer_attempts = []
+        self._open_responses_times = []
+        self._successful_buzz_times = []
+        question_index = self._get_question_index()
+        if question_index:
+            self._current_question_history = {
+                "question_index": list(question_index),
+                "question_number": self.question_number,
+                "round_index": self.data.rounds.index(self.current_round)
+                if self.data and self.current_round
+                else None,
+                "category": self.active_question.category
+                if self.active_question
+                else "",
+                "value": self.active_question.value if self.active_question else -1,
+                "is_daily_double": False,
+            }
         self.dc.borders.lights(True)
         self.buzzer_controller.prompt_answers()
         self.song_player.final()
@@ -1397,8 +1424,18 @@ class Game(QObject):
             ``None``.
         """
         ap = self.answering_player
-        ap.score + ap.wager
-        self.set_score(ap, ap.score + ap.wager)
+        old_score = ap.score
+        new_score = ap.score + ap.wager
+        self._answer_attempts.append(
+            {
+                "player_index": ap.player_number,
+                "answer_correct": True,
+                "timestamp": time.time(),
+                "score_before": old_score,
+                "score_after": new_score,
+            }
+        )
+        self.set_score(ap, new_score)
         self.final_judgement_given()
 
     def final_incorrect_answer(self) -> None:
@@ -1408,7 +1445,17 @@ class Game(QObject):
             ``None``.
         """
         ap = self.answering_player
+        old_score = ap.score
         new_score = ap.score - ap.wager
+        self._answer_attempts.append(
+            {
+                "player_index": ap.player_number,
+                "answer_correct": False,
+                "timestamp": time.time(),
+                "score_before": old_score,
+                "score_after": new_score,
+            }
+        )
         self.set_score(ap, new_score)
         self.final_judgement_given()
 
@@ -1444,6 +1491,12 @@ class Game(QObject):
         Returns:
             ``None``.
         """
+        if (
+            isinstance(self.current_round, FinalBoard)
+            and self.active_question is not None
+            and self._current_question_history
+        ):
+            self._flush_question_history()
         top_score = max([p.score for p in self.players])
         winners = [p for p in self.players if p.score == top_score]
         for w in winners:
@@ -1456,16 +1509,15 @@ class Game(QObject):
         self.keystroke_manager.activate("GENERATE_GRAPHS")
 
     def generate_final_score_graphs(self) -> None:
-        """Generate all supported end-of-game score graph variants.
+        """Build and show the end-of-game audience summary screen.
 
         Returns:
             ``None``.
         """
         self.keystroke_manager.deactivate("GENERATE_GRAPHS")
-        for player_set in ["original", "current", "all"]:
-            self.generate_final_score_graph(player_set)
+        summary = build_end_game_summary(self)
         QApplication.processEvents()
-        self.dc.load_final_graphs()
+        self.main_display.load_end_game_summary(summary)
         self.keystroke_manager.activate("CLOSE_GAME")
 
     def _load_question_history(self) -> object:

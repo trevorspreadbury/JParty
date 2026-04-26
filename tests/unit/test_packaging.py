@@ -1,5 +1,6 @@
 """Test packaging module."""
 
+import json
 import os
 import subprocess
 import sys
@@ -88,6 +89,34 @@ def test_main_download_dispatches_to_downloader(monkeypatch: object) -> None:
     assert recorded == {"inputs": ["4453", "4454"], "delay": 5}
 
 
+def test_main_summary_dispatches_to_generator(monkeypatch: object) -> None:
+    """Test summary subcommand dispatches to the summary image generator."""
+    recorded = {}
+    monkeypatch.setattr(
+        bootstrap,
+        "generate_summary_image",
+        lambda game_state_directory, output_file=None: recorded.update(
+            {
+                "game_state_directory": game_state_directory,
+                "output_file": output_file,
+            }
+        )
+        or Path("summary.png"),
+    )
+    result = bootstrap.main(["summary", "--game-state-directory", "C:/saved-game"])
+    assert result == 0
+    assert recorded == {
+        "game_state_directory": "C:/saved-game",
+        "output_file": None,
+    }
+
+
+def test_summary_output_path_defaults_to_summary_png(temp_dir: object) -> None:
+    """Test summary output path defaults inside the game-state directory."""
+    output_path = bootstrap.summary_output_path(temp_dir)
+    assert output_path == temp_dir / "summary.png"
+
+
 def test_download_games_skips_existing_and_supports_file_inputs(
     temp_dir: object, monkeypatch: object, capsys: object
 ) -> None:
@@ -110,3 +139,108 @@ def test_download_games_skips_existing_and_supports_file_inputs(
     assert downloaded == ["4454"]
     assert "Game already saved" in captured.out
     assert (saved_dir / "4454.html").read_text(encoding="utf-8") == "<html>4454</html>"
+
+
+def test_load_summary_from_game_state_directory_uses_saved_state(
+    sample_saved_game_dir: object, monkeypatch: object
+) -> None:
+    """Test summary loading rebuilds a summary from saved game state."""
+    fake_data = bootstrap.process_game_board_from_html(
+        (Path("tests") / "fixtures" / "4453.html").read_text(encoding="utf-8"),
+        4453,
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game", lambda game_id: fake_data
+    )
+    summary = bootstrap.load_summary_from_game_state_directory(sample_saved_game_dir)
+    assert summary.current_players
+    assert summary.question_count == 3
+
+
+def test_load_summary_counts_race_when_saved_player_buzzes_early_in_same_phase(
+    temp_dir: object, monkeypatch: object
+) -> None:
+    """Test saved-summary race stats count same-phase early buzzes as races."""
+    saved_game_dir = temp_dir / "game-state"
+    saved_game_dir.mkdir()
+    (saved_game_dir / "general.json").write_text(
+        json.dumps(
+            {
+                "game_id": "4453",
+                "players": [
+                    {"name": "Player 0", "player_number": 0},
+                    {"name": "Player 2", "player_number": 2},
+                ],
+                "selected_round_indices": [0, 1],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (saved_game_dir / "question_history.jsonl").write_text(
+        json.dumps(
+            {
+                "question_index": [0, [0, 0]],
+                "question_number": 1,
+                "round_index": 0,
+                "category": "Cat 0",
+                "value": 400,
+                "is_daily_double": False,
+                "buzz_phases": [
+                    {
+                        "phase_type": "main",
+                        "start_time": 1.0,
+                        "end_time": 2.0,
+                        "buzz_attempts": [
+                            {
+                                "player_index": 2,
+                                "question_index": [0, [0, 0]],
+                                "timestamp": 1.1,
+                                "is_early": True,
+                                "is_success": False,
+                                "is_rebound": False,
+                                "in_timeout": False,
+                            },
+                            {
+                                "player_index": 0,
+                                "question_index": [0, [0, 0]],
+                                "timestamp": 1.9,
+                                "is_early": False,
+                                "is_success": True,
+                                "is_rebound": False,
+                                "in_timeout": False,
+                            },
+                        ],
+                    }
+                ],
+                "answer_attempts": [
+                    {
+                        "player_index": 0,
+                        "answer_correct": True,
+                        "timestamp": 2.1,
+                        "score_before": 0,
+                        "score_after": 400,
+                    }
+                ],
+                "completed_at": 2.2,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    fake_data = bootstrap.process_game_board_from_html(
+        (Path("tests") / "fixtures" / "4453.html").read_text(encoding="utf-8"),
+        4453,
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game", lambda game_id: fake_data
+    )
+
+    summary = bootstrap.load_summary_from_game_state_directory(saved_game_dir)
+    stats_by_player = {
+        player.player_number: player for player in summary.current_players
+    }
+
+    assert stats_by_player[0].race_wins == 1
+    assert stats_by_player[0].race_opportunities == 1
+    assert stats_by_player[2].race_wins == 0
+    assert stats_by_player[2].race_opportunities == 1
