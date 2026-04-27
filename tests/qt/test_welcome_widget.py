@@ -353,6 +353,124 @@ def test_advanced_options_compose_frankenstein_board(
     assert "Final 1: 222 - Final Jeopardy!" in widget.summary_label.text()
 
 
+def test_advanced_options_replace_regular_workflow(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced mode should hide the regular picker and use row-local actions."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda _: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+
+    assert widget.regular_workflow_widget.isHidden() is True
+    assert widget.advanced_controls_widget.isHidden() is False
+    assert widget.advanced_start_button.isVisible() is True
+    assert "random_button" in widget._advanced_rows[0]
+    assert "load_media_button" in widget._advanced_rows[0]
+
+
+def test_advanced_row_layout_keeps_compact_game_id_and_wider_action_buttons(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced rows should favor usable action buttons over oversized id fields."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda _: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.resize(1600, 1000)
+    widget.advanced_options_checkbox.setChecked(True)
+    row = widget._advanced_rows[0]
+
+    assert row["gameid_edit"].maximumWidth() <= 260
+    assert row["random_button"].minimumWidth() >= 130
+    assert row["load_media_button"].minimumWidth() >= 130
+
+
+def test_advanced_row_random_populates_matching_board_type(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced row Random should load a source game that matches the slot type."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    standard_source = game.data
+    final_only = GameData(
+        [game.data.rounds[2]],
+        "January 3, 2026",
+        "Final-only fixture",
+    )
+    random_ids = iter(["333", "111"])
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_random_game", lambda: next(random_ids)
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": standard_source, "333": final_only}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": standard_source, "333": final_only}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget.random_advanced_row(0)
+
+    assert widget._advanced_rows[0]["gameid_edit"].text() == "111"
+
+
+def test_advanced_row_load_media_uses_row_game_id(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced row media import should target that row's source game id."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    imported = []
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.import_question_media",
+        lambda source_path, game_id: imported.append((source_path, game_id)),
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: "C:/media")
+
+    widget.load_advanced_question_media(0)
+
+    assert imported == [("C:/media", "111")]
+
+
 def test_advanced_options_validate_board_type(
     qtbot: object, monkeypatch: object
 ) -> None:
@@ -425,6 +543,45 @@ def test_advanced_options_preserve_existing_rows_when_board_counts_change(
     assert widget._advanced_rows[0]["gameid_edit"].text() == "111"
     assert widget._advanced_rows[0]["value_edits"][0].text() == "300"
     assert widget._advanced_rows[1]["gameid_edit"].text() == ""
+
+
+def test_advanced_options_require_all_rows_before_start_enables(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced mode should not become startable until every slot is filled."""
+    game = StubGame()
+    game.startable = lambda: True
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source, "222": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source, "222": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(2)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+
+    assert game.board_selection_configs() == []
+    assert widget.advanced_start_button.isEnabled() is False
+    assert "Fill every board slot before starting" in widget.summary_label.text()
+
+    widget._advanced_rows[1]["gameid_edit"].setText("222")
+    widget.refresh_advanced_row(1)
+
+    assert len(game.board_selection_configs()) == 2
+    assert widget.advanced_start_button.isEnabled() is True
 
 
 def test_disabling_advanced_options_clears_advanced_state_and_returns_to_standard_mode(

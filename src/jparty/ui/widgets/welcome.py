@@ -7,6 +7,7 @@ the buzzer web app.
 
 import logging
 import time
+from functools import partial
 from pathlib import Path
 from threading import Thread
 
@@ -245,7 +246,9 @@ class Welcome(StartWidget):
         )
         self.version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.version_label.setStyleSheet("QLabel { color : grey}")
+        self.regular_workflow_widget = QWidget(self)
         select_layout = QHBoxLayout()
+        self.regular_workflow_widget.setLayout(select_layout)
         template_url = "https://docs.google.com/spreadsheets/d/1_vBBsWn-EVc7npamLnOKHs34Mc2iAmd9hOGSzxHQX0Y/edit#gid=0"
         gameid_text = f'Game ID (from J-Archive URL)<br>or <a href="{template_url}">GSheet ID for custom game</a>'
         self.gameid_label = DynamicLabel(gameid_text, lambda: self.height() * 0.1, self)
@@ -331,6 +334,13 @@ class Welcome(StartWidget):
         advanced_header_layout.addSpacing(20)
         advanced_header_layout.addWidget(self.final_board_count_label)
         advanced_header_layout.addWidget(self.final_board_count_spinbox)
+        advanced_header_layout.addSpacing(20)
+        self.advanced_start_button = DynamicButton(
+            "Start!", self.advanced_controls_widget
+        )
+        self.advanced_start_button.clicked.connect(self.on_start_clicked)
+        self.advanced_start_button.setEnabled(False)
+        advanced_header_layout.addWidget(self.advanced_start_button)
         advanced_header_layout.addStretch(1)
         self.advanced_controls_layout.addLayout(advanced_header_layout)
         self.advanced_scroll = QScrollArea(self.advanced_controls_widget)
@@ -380,7 +390,7 @@ class Welcome(StartWidget):
         main_layout.addWidget(self.title_label, 3)
         main_layout.addWidget(self.version_label, 1)
         main_layout.addStretch(1)
-        main_layout.addLayout(select_layout, 5)
+        main_layout.addWidget(self.regular_workflow_widget, 5)
         main_layout.addStretch(1)
         main_layout.addWidget(self.summary_label, 7)
         main_layout.addWidget(self.rounds_widget, 4)
@@ -483,6 +493,8 @@ QCheckBox {{
         self.final_board_count_spinbox.setStyleSheet(
             f"QSpinBox {{ font-size: {radio_font_size}px; min-height: {radio_font_size + 10}px; }}"
         )
+        advanced_start_width = max(int(self.width() * 0.11), 150)
+        self.advanced_start_button.setMinimumWidth(advanced_start_width)
         self.summary_label.setMaximumHeight(
             int(
                 self.height()
@@ -499,6 +511,9 @@ QCheckBox {{
                 widget.setStyleSheet(rounds_label_style)
         advanced_status_font_size = max(int(self.height() * 0.018), 14)
         advanced_value_font_size = max(int(self.height() * 0.02), 14)
+        advanced_gameid_width = min(max(int(self.width() * 0.18), 180), 260)
+        advanced_action_width = min(max(int(self.width() * 0.11), 130), 180)
+        advanced_value_width = min(max(int(self.width() * 0.055), 60), 85)
         for row in self._advanced_rows:
             row["title_label"].setStyleSheet(
                 f"QLabel {{ color: black; font-size: {radio_font_size}px; font-weight: 700; }}"
@@ -509,10 +524,17 @@ QCheckBox {{
             row["gameid_edit"].setStyleSheet(
                 f"QLineEdit {{ font-size: {advanced_value_font_size}px; }}"
             )
+            row["gameid_edit"].setMinimumWidth(advanced_gameid_width)
+            row["gameid_edit"].setMaximumWidth(advanced_gameid_width)
+            row["random_button"].setMinimumWidth(advanced_action_width)
+            row["random_button"].setMaximumWidth(advanced_action_width)
+            row["load_media_button"].setMinimumWidth(advanced_action_width)
+            row["load_media_button"].setMaximumWidth(advanced_action_width)
             for value_edit in row["value_edits"]:
                 value_edit.setStyleSheet(
-                    f"QLineEdit {{ font-size: {advanced_value_font_size}px; min-width: 70px; }}"
+                    f"QLineEdit {{ font-size: {advanced_value_font_size}px; min-width: {advanced_value_width}px; }}"
                 )
+                value_edit.setMaximumWidth(advanced_value_width)
             for button in row["board_radios"]:
                 button.setStyleSheet(
                     f"QRadioButton {{ color: black; font-size: {advanced_status_font_size}px; font-weight: 600; }}"
@@ -665,6 +687,7 @@ QCheckBox {{
         if not enabled:
             self.clear_advanced_configuration()
         self.advanced_controls_widget.setVisible(enabled)
+        self.regular_workflow_widget.setVisible(not enabled)
         if enabled:
             self.rounds_widget.setVisible(False)
         else:
@@ -806,16 +829,26 @@ QCheckBox {{
         title_label = QLabel(title_text, row_widget)
         row_layout.addWidget(title_label)
         controls_layout = QGridLayout()
+        controls_layout.setColumnStretch(0, 0)
+        controls_layout.setColumnStretch(1, 0)
+        controls_layout.setColumnStretch(2, 0)
+        controls_layout.setColumnStretch(3, 1)
         controls_layout.addWidget(QLabel("Game ID", row_widget), 0, 0)
         gameid_edit = QLineEdit(row_widget)
         gameid_edit.setPlaceholderText("Enter game id")
+        gameid_edit.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         controls_layout.addWidget(gameid_edit, 0, 1)
+        random_button = DynamicButton("Random", row_widget)
+        load_media_button = DynamicButton("Load Media", row_widget)
+        controls_layout.addWidget(random_button, 0, 2)
+        controls_layout.addWidget(load_media_button, 0, 3)
         value_edits = []
         if board_type == "standard":
             controls_layout.addWidget(QLabel("Point Values", row_widget), 1, 0)
             values_widget = QWidget(row_widget)
             values_layout = QHBoxLayout()
             values_layout.setContentsMargins(0, 0, 0, 0)
+            values_layout.setSpacing(8)
             values_widget.setLayout(values_layout)
             for value in self.default_values_for_board(board_index, board_count):
                 value_edit = QLineEdit(str(value), row_widget)
@@ -823,7 +856,7 @@ QCheckBox {{
                 value_edit.editingFinished.connect(self.sync_active_configuration)
                 values_layout.addWidget(value_edit)
                 value_edits.append(value_edit)
-            controls_layout.addWidget(values_widget, 1, 1)
+            controls_layout.addWidget(values_widget, 1, 1, 1, 3)
         row_layout.addLayout(controls_layout)
         board_radio_widget = QWidget(row_widget)
         board_radio_layout = QHBoxLayout()
@@ -839,6 +872,8 @@ QCheckBox {{
             "widget": row_widget,
             "title_label": title_label,
             "gameid_edit": gameid_edit,
+            "random_button": random_button,
+            "load_media_button": load_media_button,
             "value_edits": value_edits,
             "board_radio_widget": board_radio_widget,
             "board_radio_layout": board_radio_layout,
@@ -848,7 +883,11 @@ QCheckBox {{
         }
         row_index = row["index"]
         gameid_edit.editingFinished.connect(
-            lambda bound_row_index=row_index: self.refresh_advanced_row(bound_row_index)
+            partial(self.refresh_advanced_row, row_index)
+        )
+        random_button.clicked.connect(partial(self.random_advanced_row, row_index))
+        load_media_button.clicked.connect(
+            partial(self.load_advanced_question_media, row_index)
         )
         self._advanced_rows.append(row)
         self.advanced_rows_layout.addWidget(row_widget)
@@ -927,6 +966,59 @@ QCheckBox {{
             row["board_radios"].append(radio)
         self.resizeEvent(None)
         self.sync_active_configuration()
+
+    def random_advanced_row(self, row_index: int, checked: object = False) -> None:
+        """Load a random source game into one advanced row."""
+        if not 0 <= row_index < len(self._advanced_rows):
+            return
+        row = self._advanced_rows[row_index]
+        while True:
+            game_id = get_random_game()
+            try:
+                data = get_game(game_id)
+            except Exception as exc:
+                logging.error(exc)
+                data = None
+            if data is None:
+                continue
+            has_matching_round = any(
+                self.round_matches_expected_type(round_data, row["board_type"])
+                for round_data in data.rounds
+            )
+            if not has_matching_round:
+                continue
+            self._advanced_game_cache[game_id] = data
+            self._advanced_media_status_cache[game_id] = detect_question_media(game_id)
+            row["gameid_edit"].setText(str(game_id))
+            self.refresh_advanced_row(row_index)
+            break
+
+    def load_advanced_question_media(
+        self, row_index: int, checked: object = False
+    ) -> None:
+        """Import question media for one advanced row's source game id."""
+        if not 0 <= row_index < len(self._advanced_rows):
+            return
+        row = self._advanced_rows[row_index]
+        game_id = row["gameid_edit"].text().strip()
+        if not game_id:
+            QMessageBox.warning(
+                self,
+                "Question Media",
+                "Enter a game id for this advanced board before loading question media.",
+            )
+            return
+        selected_path = self.select_question_media_path()
+        if not selected_path:
+            return
+        try:
+            import_question_media(selected_path, game_id)
+        except Exception as exc:
+            logging.error(exc)
+            QMessageBox.warning(self, "Question Media", str(exc))
+            return
+        self._advanced_media_status_cache[game_id] = detect_question_media(game_id)
+        self.refresh_advanced_row(row_index)
 
     def round_matches_expected_type(self, round_data: object, board_type: str) -> bool:
         """Return whether a round matches the requested advanced slot type."""
@@ -1053,8 +1145,11 @@ QCheckBox {{
                     "row_values": row_values,
                 }
             )
+        configuration_complete = len(board_selections) == len(self._advanced_rows)
         if hasattr(self.game, "set_board_selection_configs"):
-            self.game.set_board_selection_configs(board_selections or None)
+            self.game.set_board_selection_configs(
+                board_selections if configuration_complete else None
+            )
         session_game_id = self.compose_session_game_id(board_selections)
         if hasattr(self.game, "set_session_game_id"):
             self.game.set_session_game_id(session_game_id)
@@ -1062,14 +1157,14 @@ QCheckBox {{
             self.game.set_selected_round_indices(list(range(len(board_selections))))
         composed_data = build_game_from_board_selection_configs(board_selections)
         self.game.data = composed_data
-        if board_selections and composed_data is not None:
+        if configuration_complete and composed_data is not None:
             self._advanced_mode_summary_text = self.build_advanced_summary_text(
                 board_selections, composed_data
             )
             self.summary_label.setText(self._advanced_mode_summary_text)
         elif self.advanced_options_checkbox.isChecked():
             self._advanced_mode_summary_text = (
-                "Configure one source game per board slot to build a Frankenstein game."
+                "Fill every board slot before starting the Frankenstein game."
             )
             self.summary_label.setText(self._advanced_mode_summary_text)
         self.check_start()
@@ -1290,8 +1385,10 @@ QCheckBox {{
             self.summary_label.setText(summary_text)
         if self.game.startable() and rounds_selected:
             self.start_button.setEnabled(True)
+            self.advanced_start_button.setEnabled(True)
         else:
             self.start_button.setEnabled(False)
+            self.advanced_start_button.setEnabled(False)
             if expected_player_count is not None:
                 claimed_count, total_count = getattr(
                     self.game, "resume_claim_status", lambda: (0, 0)
