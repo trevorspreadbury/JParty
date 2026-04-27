@@ -1062,6 +1062,8 @@ QCheckBox {{
 
     def sync_regular_configuration(self) -> None:
         """Persist the standard single-game startup selection as board configs."""
+        if self.resume_path is not None:
+            return
         game_id = self.textbox.text().strip()
         if not game_id or not getattr(self.game, "data", None):
             if hasattr(self.game, "set_board_selection_configs"):

@@ -1,6 +1,7 @@
 """Test game resume and logging module."""
 
 import json
+from copy import deepcopy
 
 import pytest
 from jparty.domain.models import FinalBoard, Player
@@ -162,6 +163,107 @@ def test_resume_into_final_starts_final_flow(
     assert isinstance(game.current_round, FinalBoard)
     assert game.active_question is game.current_round.question
     assert game.buzzer_controller.open_wagers_calls
+
+
+def test_resume_preserves_frankenstein_board_selections_and_round_sources(
+    game: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """Resuming a mixed-source game should not collapse it to one source board."""
+    from jparty.services import game_loader
+
+    source_a = deepcopy(game.data)
+    source_b = deepcopy(game.data)
+    source_a.date = "January 1, 2026"
+    source_b.date = "January 2, 2026"
+    source_a.comments = "Source A"
+    source_b.comments = "Source B"
+    source_a.rounds[0].categories[0] = "A Category"
+    source_a.rounds[0].questions[0].text = "A Jeopardy clue"
+    source_a.rounds[2].category = "A Final Category"
+    source_b.rounds[1].categories[0] = "B Category"
+    source_b.rounds[1].questions[0].text = "B Double Jeopardy clue"
+    monkeypatch.setattr(
+        game_loader,
+        "get_game",
+        lambda game_id: {"111": source_a, "222": source_b}[game_id],
+    )
+
+    board_selections = [
+        {
+            "game_id": "111",
+            "source_round_index": 0,
+            "source_round_label": "Jeopardy!",
+            "board_type": "standard",
+            "row_values": [200, 400, 600, 800, 1000],
+        },
+        {
+            "game_id": "222",
+            "source_round_index": 1,
+            "source_round_label": "Double Jeopardy!",
+            "board_type": "standard",
+            "row_values": [400, 800, 1200, 1600, 2000],
+        },
+        {
+            "game_id": "111",
+            "source_round_index": 2,
+            "source_round_label": "Final Jeopardy!",
+            "board_type": "final",
+            "row_values": [],
+        },
+    ]
+    saved_dir = temp_dir / "mixed_saved"
+    saved_dir.mkdir()
+    with (saved_dir / "general.json").open("w") as file_obj:
+        json.dump(
+            {
+                "game_id": "frankenstein-111-222-111",
+                "players": [
+                    {"name": "Alice", "player_number": 0},
+                    {"name": "Bob", "player_number": 1},
+                ],
+                "selected_round_indices": [0, 1, 2],
+                "board_selections": board_selections,
+                "started_at": 1700000000.0,
+                "last_updated": 1700000300.0,
+            },
+            file_obj,
+        )
+    with (saved_dir / "question_history.jsonl").open("w") as file_obj:
+        json.dump(
+            {
+                "question_index": [0, [0, 0]],
+                "question_number": 1,
+                "round_index": 0,
+                "category": "A Category",
+                "value": 200,
+                "is_daily_double": False,
+                "buzz_phases": [],
+                "answer_attempts": [],
+                "completed_at": 1700000001.0,
+            },
+            file_obj,
+        )
+        file_obj.write("\n")
+
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(saved_dir)
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+    game.start_game()
+
+    rewritten_general = json.loads((saved_dir / "general.json").read_text())
+    assert [
+        selection["game_id"] for selection in rewritten_general["board_selections"]
+    ] == [
+        "111",
+        "222",
+        "111",
+    ]
+    assert game.data.rounds[0].questions[0].text == "A Jeopardy clue"
+    assert game.data.rounds[1].questions[0].text == "B Double Jeopardy clue"
+    assert game.data.rounds[2].category == "A Final Category"
+    assert game.current_round is game.data.rounds[0]
 
 
 def test_close_game_resets_state(game_with_players: object) -> None:

@@ -618,6 +618,40 @@ def test_disabling_advanced_options_clears_advanced_state_and_returns_to_standar
     assert widget._advanced_rows[1]["gameid_edit"].text() == ""
 
 
+def test_resume_round_selector_does_not_clear_saved_board_selections(
+    qtbot: object,
+) -> None:
+    """Resume-mode round UI should not overwrite a saved Frankenstein config."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.resume_path = "C:/saved"
+    game.set_board_selection_configs(
+        [
+            {
+                "game_id": "111",
+                "source_round_index": 0,
+                "source_round_label": "Jeopardy!",
+                "board_type": "standard",
+                "row_values": [200, 400, 600, 800, 1000],
+            },
+            {
+                "game_id": "222",
+                "source_round_index": 1,
+                "source_round_label": "Double Jeopardy!",
+                "board_type": "standard",
+                "row_values": [400, 800, 1200, 1600, 2000],
+            },
+        ]
+    )
+    widget.configure_round_selector(enabled=False)
+
+    assert [selection["game_id"] for selection in game.board_selection_configs()] == [
+        "111",
+        "222",
+    ]
+
+
 def test_build_summary_text_includes_question_media_status(
     qtbot: object, monkeypatch: object
 ) -> None:
