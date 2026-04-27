@@ -334,7 +334,8 @@ def test_advanced_options_compose_frankenstein_board(
     )
 
     widget.advanced_options_checkbox.setChecked(True)
-    widget.board_count_spinbox.setValue(2)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(1)
     widget._advanced_rows[0]["gameid_edit"].setText("111")
     widget.refresh_advanced_row(0)
     widget._advanced_rows[1]["gameid_edit"].setText("222")
@@ -345,9 +346,119 @@ def test_advanced_options_compose_frankenstein_board(
     assert len(game.board_selection_configs()) == 2
     assert game.board_selection_configs()[0]["game_id"] == "111"
     assert game.board_selection_configs()[1]["game_id"] == "222"
+    assert game.board_selection_configs()[0]["board_type"] == "standard"
+    assert game.board_selection_configs()[1]["board_type"] == "final"
     assert game.data.rounds[0].get_question(0, 0).value == 300
     assert "Board 1: 111 - Jeopardy!" in widget.summary_label.text()
-    assert "Board 2: 222 - Final Jeopardy!" in widget.summary_label.text()
+    assert "Final 1: 222 - Final Jeopardy!" in widget.summary_label.text()
+
+
+def test_advanced_options_validate_board_type(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced rows should reject source games without the expected board type."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    final_only = GameData(
+        [game.data.rounds[2]],
+        "January 3, 2026",
+        "Final-only fixture",
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"333": final_only}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"333": final_only}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("333")
+    widget.refresh_advanced_row(0)
+
+    assert (
+        "No Jeopardy board found in this source game."
+        in widget._advanced_rows[0]["status_label"].text()
+    )
+    assert game.board_selection_configs() == []
+    assert widget.start_button.isEnabled() is False
+
+
+def test_advanced_options_preserve_existing_rows_when_board_counts_change(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Changing advanced board counts should preserve existing row data."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+    widget._advanced_rows[0]["value_edits"][0].setText("300")
+
+    widget.standard_board_count_spinbox.setValue(2)
+
+    assert widget._advanced_rows[0]["gameid_edit"].text() == "111"
+    assert widget._advanced_rows[0]["value_edits"][0].text() == "300"
+    assert widget._advanced_rows[1]["gameid_edit"].text() == ""
+
+
+def test_disabling_advanced_options_clears_advanced_state_and_returns_to_standard_mode(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Turning off advanced options should reset the welcome screen."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda _: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+    widget.textbox.setText("4453")
+    widget.set_summary("January 1, 2026\nFixture game")
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget._advanced_rows[1]["gameid_edit"].setText("222")
+    widget.advanced_options_checkbox.setChecked(False)
+
+    assert widget.advanced_controls_widget.isVisible() is False
+    assert widget.standard_board_count_spinbox.value() == 2
+    assert widget.final_board_count_spinbox.value() == 1
+    assert widget.textbox.text() == ""
+    assert widget.summary_label.text() == ""
+    assert widget.rounds_widget.isHidden() is True
+    assert widget.round_checkboxes == []
+    assert game.board_selection_configs() == []
+    assert widget.start_button.isEnabled() is False
+
+    widget.advanced_options_checkbox.setChecked(True)
+    assert widget._advanced_rows[0]["gameid_edit"].text() == ""
+    assert widget._advanced_rows[1]["gameid_edit"].text() == ""
 
 
 def test_build_summary_text_includes_question_media_status(

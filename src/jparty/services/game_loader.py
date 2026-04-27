@@ -53,6 +53,15 @@ def clone_round(round_data: object) -> object:
     )
 
 
+def round_matches_board_type(round_data: object, board_type: object) -> bool:
+    """Return whether one source round matches the requested selection type."""
+    if board_type == "final":
+        return isinstance(round_data, FinalBoard)
+    if board_type == "standard":
+        return not isinstance(round_data, FinalBoard)
+    return True
+
+
 def default_board_row_values(
     standard_board_position: int, standard_board_count: int
 ) -> list[int]:
@@ -109,9 +118,10 @@ def build_game_from_board_selection_configs(board_selections: object) -> object:
             return None
         if not 0 <= source_round_index < len(game_data.rounds):
             return None
-        resolved_boards.append(
-            (selection, game_data, game_data.rounds[source_round_index])
-        )
+        source_round = game_data.rounds[source_round_index]
+        if not round_matches_board_type(source_round, selection.get("board_type")):
+            return None
+        resolved_boards.append((selection, game_data, source_round))
 
     standard_board_count = sum(
         1

@@ -85,6 +85,7 @@ MISSING_DAILY_DOUBLE_WARNING = "CRITICAL: Missing Daily Double"
 ADVANCED_BOARD_SLOT_COUNT_MIN = 1
 ADVANCED_BOARD_SLOT_COUNT_MAX = 5
 ADVANCED_STANDARD_VALUE_COUNT = 5
+ADVANCED_FINAL_BOARD_SLOT_COUNT_MIN = 0
 
 
 class Image(qrcode.image.base.BaseImage):
@@ -230,6 +231,8 @@ class Welcome(StartWidget):
         self._advanced_rows = []
         self._advanced_game_cache = {}
         self._advanced_media_status_cache = {}
+        self._advanced_mode_summary_text = ""
+        self._resetting_advanced_configuration = False
         main_layout = QVBoxLayout()
         main_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         self.title_font = QFont()
@@ -303,15 +306,31 @@ class Welcome(StartWidget):
         self.advanced_controls_widget.setLayout(self.advanced_controls_layout)
         self.advanced_controls_widget.setVisible(False)
         advanced_header_layout = QHBoxLayout()
-        self.board_count_label = QLabel("Boards:", self.advanced_controls_widget)
-        self.board_count_spinbox = QSpinBox(self.advanced_controls_widget)
-        self.board_count_spinbox.setRange(
+        self.standard_board_count_label = QLabel(
+            "Jeopardy Boards:", self.advanced_controls_widget
+        )
+        self.standard_board_count_spinbox = QSpinBox(self.advanced_controls_widget)
+        self.standard_board_count_spinbox.setRange(
             ADVANCED_BOARD_SLOT_COUNT_MIN, ADVANCED_BOARD_SLOT_COUNT_MAX
         )
-        self.board_count_spinbox.setValue(3)
-        self.board_count_spinbox.valueChanged.connect(self.rebuild_advanced_rows)
-        advanced_header_layout.addWidget(self.board_count_label)
-        advanced_header_layout.addWidget(self.board_count_spinbox)
+        self.standard_board_count_spinbox.setValue(2)
+        self.standard_board_count_spinbox.valueChanged.connect(
+            self.rebuild_advanced_rows
+        )
+        self.final_board_count_label = QLabel(
+            "Final Boards:", self.advanced_controls_widget
+        )
+        self.final_board_count_spinbox = QSpinBox(self.advanced_controls_widget)
+        self.final_board_count_spinbox.setRange(
+            ADVANCED_FINAL_BOARD_SLOT_COUNT_MIN, ADVANCED_BOARD_SLOT_COUNT_MAX
+        )
+        self.final_board_count_spinbox.setValue(1)
+        self.final_board_count_spinbox.valueChanged.connect(self.rebuild_advanced_rows)
+        advanced_header_layout.addWidget(self.standard_board_count_label)
+        advanced_header_layout.addWidget(self.standard_board_count_spinbox)
+        advanced_header_layout.addSpacing(20)
+        advanced_header_layout.addWidget(self.final_board_count_label)
+        advanced_header_layout.addWidget(self.final_board_count_spinbox)
         advanced_header_layout.addStretch(1)
         self.advanced_controls_layout.addLayout(advanced_header_layout)
         self.advanced_scroll = QScrollArea(self.advanced_controls_widget)
@@ -452,10 +471,16 @@ QCheckBox {{
 }}
 """
         )
-        self.board_count_label.setStyleSheet(
+        self.standard_board_count_label.setStyleSheet(
             f"QLabel {{ color: black; font-size: {radio_font_size}px; font-weight: 700; }}"
         )
-        self.board_count_spinbox.setStyleSheet(
+        self.standard_board_count_spinbox.setStyleSheet(
+            f"QSpinBox {{ font-size: {radio_font_size}px; min-height: {radio_font_size + 10}px; }}"
+        )
+        self.final_board_count_label.setStyleSheet(
+            f"QLabel {{ color: black; font-size: {radio_font_size}px; font-weight: 700; }}"
+        )
+        self.final_board_count_spinbox.setStyleSheet(
             f"QSpinBox {{ font-size: {radio_font_size}px; min-height: {radio_font_size + 10}px; }}"
         )
         self.summary_label.setMaximumHeight(
@@ -637,8 +662,15 @@ QCheckBox {{
     def toggle_advanced_options(self, _: object = None) -> None:
         """Show or hide the advanced Frankenstein-board controls."""
         enabled = self.advanced_options_checkbox.isChecked()
+        if not enabled:
+            self.clear_advanced_configuration()
         self.advanced_controls_widget.setVisible(enabled)
-        self.rounds_widget.setVisible((not enabled) and bool(self.round_checkboxes))
+        if enabled:
+            self.rounds_widget.setVisible(False)
+        else:
+            self.rounds_widget.setVisible(bool(self.round_checkboxes))
+            if self.round_checkboxes:
+                self.rounds_widget.show()
         if enabled:
             self.summary_label.setWordWrap(True)
             self.summary_label.setMaximumHeight(int(self.height() * 0.16))
@@ -649,30 +681,142 @@ QCheckBox {{
 
     def rebuild_advanced_rows(self, _: object = None) -> None:
         """Recreate the advanced board rows for the selected board count."""
+        row_snapshots = (
+            {"standard": [], "final": []}
+            if self._resetting_advanced_configuration
+            else self.snapshot_advanced_rows()
+        )
         while self.advanced_rows_layout.count():
             item = self.advanced_rows_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
         self._advanced_rows = []
-        board_count = self.board_count_spinbox.value()
-        for board_index in range(board_count):
-            row_widget = QWidget(self.advanced_rows_widget)
-            row_layout = QVBoxLayout()
-            row_widget.setLayout(row_layout)
-            title_label = QLabel(f"Board {board_index + 1}", row_widget)
-            row_layout.addWidget(title_label)
-            controls_layout = QGridLayout()
-            controls_layout.addWidget(QLabel("Game ID", row_widget), 0, 0)
-            gameid_edit = QLineEdit(row_widget)
-            gameid_edit.setPlaceholderText("Enter game id")
-            controls_layout.addWidget(gameid_edit, 0, 1)
+        standard_board_count = self.standard_board_count_spinbox.value()
+        final_board_count = self.final_board_count_spinbox.value()
+        for board_index in range(standard_board_count):
+            self._add_advanced_row(
+                board_index=board_index,
+                board_count=standard_board_count,
+                board_type="standard",
+                display_index=board_index + 1,
+            )
+        for board_index in range(final_board_count):
+            self._add_advanced_row(
+                board_index=board_index,
+                board_count=final_board_count,
+                board_type="final",
+                display_index=board_index + 1,
+            )
+        self.restore_advanced_rows(row_snapshots)
+        self.resizeEvent(None)
+        self.sync_active_configuration()
+
+    def snapshot_advanced_rows(self) -> dict[str, list[dict]]:
+        """Return the current advanced row state grouped by slot type."""
+        snapshots = {"standard": [], "final": []}
+        for row in self._advanced_rows:
+            board_type = row["board_type"]
+            selected_round_index = next(
+                (
+                    int(radio.property("source_round_index"))
+                    for radio in row["board_radios"]
+                    if radio.isChecked()
+                ),
+                None,
+            )
+            snapshots.setdefault(board_type, []).append(
+                {
+                    "game_id": row["gameid_edit"].text(),
+                    "values": [edit.text() for edit in row["value_edits"]],
+                    "selected_round_index": selected_round_index,
+                }
+            )
+        return snapshots
+
+    def restore_advanced_rows(self, snapshots: dict[str, list[dict]]) -> None:
+        """Restore preserved advanced row state after resizing slot counts."""
+        row_positions = {"standard": 0, "final": 0}
+        for row in self._advanced_rows:
+            board_type = row["board_type"]
+            snapshot_list = snapshots.get(board_type, [])
+            position = row_positions.get(board_type, 0)
+            row_positions[board_type] = position + 1
+            if position >= len(snapshot_list):
+                continue
+            snapshot = snapshot_list[position]
+            row["gameid_edit"].setText(snapshot.get("game_id", ""))
+            for value_edit, value in zip(
+                row["value_edits"], snapshot.get("values", [])
+            ):
+                value_edit.setText(value)
+            if row["gameid_edit"].text().strip():
+                self.refresh_advanced_row(row["index"])
+                selected_round_index = snapshot.get("selected_round_index")
+                if selected_round_index is not None:
+                    for radio in row["board_radios"]:
+                        if (
+                            int(radio.property("source_round_index"))
+                            == selected_round_index
+                        ):
+                            radio.setChecked(True)
+                            break
+
+    def clear_advanced_configuration(self) -> None:
+        """Discard advanced configuration and reset the welcome screen."""
+        self._resetting_advanced_configuration = True
+        self._advanced_game_cache = {}
+        self._advanced_media_status_cache = {}
+        self._advanced_mode_summary_text = ""
+        self.standard_board_count_spinbox.setValue(2)
+        self.final_board_count_spinbox.setValue(1)
+        self.rebuild_advanced_rows()
+        self.resume_path = None
+        self._loading_summary = False
+        self._question_media_status = None
+        self._base_summary_text = ""
+        self.summary_label.setText("")
+        self.textbox.blockSignals(True)
+        self.textbox.setText("")
+        self.textbox.blockSignals(False)
+        self.game.data = None
+        self.start_button.setText("Start!")
+        self.start_button.setEnabled(False)
+        self.clear_round_selector()
+        self.rounds_widget.setVisible(False)
+        self.game.clear_resume_state()
+        if hasattr(self.game, "set_board_selection_configs"):
+            self.game.set_board_selection_configs(None)
+        if hasattr(self.game, "set_session_game_id"):
+            self.game.set_session_game_id("")
+        self._resetting_advanced_configuration = False
+
+    def _add_advanced_row(
+        self, board_index: int, board_count: int, board_type: str, display_index: int
+    ) -> None:
+        """Create one advanced configuration row."""
+        row_widget = QWidget(self.advanced_rows_widget)
+        row_layout = QVBoxLayout()
+        row_widget.setLayout(row_layout)
+        title_text = (
+            f"Jeopardy Board {display_index}"
+            if board_type == "standard"
+            else f"Final Jeopardy Board {display_index}"
+        )
+        title_label = QLabel(title_text, row_widget)
+        row_layout.addWidget(title_label)
+        controls_layout = QGridLayout()
+        controls_layout.addWidget(QLabel("Game ID", row_widget), 0, 0)
+        gameid_edit = QLineEdit(row_widget)
+        gameid_edit.setPlaceholderText("Enter game id")
+        controls_layout.addWidget(gameid_edit, 0, 1)
+        value_edits = []
+        if board_type == "standard":
             controls_layout.addWidget(QLabel("Point Values", row_widget), 1, 0)
             values_widget = QWidget(row_widget)
             values_layout = QHBoxLayout()
             values_layout.setContentsMargins(0, 0, 0, 0)
             values_widget.setLayout(values_layout)
-            value_edits = []
             for value in self.default_values_for_board(board_index, board_count):
                 value_edit = QLineEdit(str(value), row_widget)
                 value_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -680,34 +824,34 @@ QCheckBox {{
                 values_layout.addWidget(value_edit)
                 value_edits.append(value_edit)
             controls_layout.addWidget(values_widget, 1, 1)
-            row_layout.addLayout(controls_layout)
-            board_radio_widget = QWidget(row_widget)
-            board_radio_layout = QHBoxLayout()
-            board_radio_layout.setContentsMargins(0, 0, 0, 0)
-            board_radio_widget.setLayout(board_radio_layout)
-            row_layout.addWidget(board_radio_widget)
-            status_label = QLabel("Enter a source game id.", row_widget)
-            status_label.setWordWrap(True)
-            row_layout.addWidget(status_label)
-            row = {
-                "index": board_index,
-                "widget": row_widget,
-                "title_label": title_label,
-                "gameid_edit": gameid_edit,
-                "value_edits": value_edits,
-                "board_radio_widget": board_radio_widget,
-                "board_radio_layout": board_radio_layout,
-                "board_radios": [],
-                "status_label": status_label,
-                "loaded_data": None,
-            }
-            gameid_edit.editingFinished.connect(
-                lambda row_index=board_index: self.refresh_advanced_row(row_index)
-            )
-            self._advanced_rows.append(row)
-            self.advanced_rows_layout.addWidget(row_widget)
-        self.resizeEvent(None)
-        self.sync_active_configuration()
+        row_layout.addLayout(controls_layout)
+        board_radio_widget = QWidget(row_widget)
+        board_radio_layout = QHBoxLayout()
+        board_radio_layout.setContentsMargins(0, 0, 0, 0)
+        board_radio_widget.setLayout(board_radio_layout)
+        row_layout.addWidget(board_radio_widget)
+        status_label = QLabel("Enter a source game id.", row_widget)
+        status_label.setWordWrap(True)
+        row_layout.addWidget(status_label)
+        row = {
+            "index": len(self._advanced_rows),
+            "board_type": board_type,
+            "widget": row_widget,
+            "title_label": title_label,
+            "gameid_edit": gameid_edit,
+            "value_edits": value_edits,
+            "board_radio_widget": board_radio_widget,
+            "board_radio_layout": board_radio_layout,
+            "board_radios": [],
+            "status_label": status_label,
+            "loaded_data": None,
+        }
+        row_index = row["index"]
+        gameid_edit.editingFinished.connect(
+            lambda bound_row_index=row_index: self.refresh_advanced_row(bound_row_index)
+        )
+        self._advanced_rows.append(row)
+        self.advanced_rows_layout.addWidget(row_widget)
 
     def default_values_for_board(self, board_index: int, board_count: int) -> list[int]:
         """Return the default clue values shown for one advanced board row."""
@@ -746,22 +890,52 @@ QCheckBox {{
             )
             self.sync_active_configuration()
             return
+        matching_rounds = [
+            (round_index, round_data)
+            for round_index, round_data in enumerate(data.rounds)
+            if self.round_matches_expected_type(round_data, row["board_type"])
+        ]
+        if not matching_rounds:
+            expected_label = self.expected_board_type_label(row["board_type"])
+            row["status_label"].setText(
+                "\n".join(
+                    [
+                        self.build_source_game_summary_text(
+                            game_id, data, media_status
+                        ),
+                        "",
+                        f"No {expected_label} found in this source game.",
+                    ]
+                ).strip()
+            )
+            self.sync_active_configuration()
+            return
         row["loaded_data"] = data
         row["status_label"].setText(
             self.build_source_game_summary_text(game_id, data, media_status)
         )
-        default_selection = min(row_index, len(data.rounds) - 1)
-        for round_index, round_data in enumerate(data.rounds):
+        default_selection = min(row_index, len(matching_rounds) - 1)
+        for radio_index, (round_index, round_data) in enumerate(matching_rounds):
             radio = QRadioButton(
                 self.describe_round_for_data(data, round_data, round_index),
                 row["board_radio_widget"],
             )
-            radio.setChecked(round_index == default_selection)
+            radio.setProperty("source_round_index", round_index)
+            radio.setChecked(radio_index == default_selection)
             radio.toggled.connect(self.sync_active_configuration)
             row["board_radio_layout"].addWidget(radio)
             row["board_radios"].append(radio)
         self.resizeEvent(None)
         self.sync_active_configuration()
+
+    def round_matches_expected_type(self, round_data: object, board_type: str) -> bool:
+        """Return whether a round matches the requested advanced slot type."""
+        is_final = isinstance(round_data, FinalBoard)
+        return is_final if board_type == "final" else not is_final
+
+    def expected_board_type_label(self, board_type: str) -> str:
+        """Return the user-facing label for an advanced slot type."""
+        return "Final Jeopardy board" if board_type == "final" else "Jeopardy board"
 
     def _clear_advanced_row_radios(self, row: dict) -> None:
         """Remove any previous round-selection radios from one advanced row."""
@@ -828,6 +1002,9 @@ QCheckBox {{
                     "source_round_label": self.describe_round(
                         round_data, int(round_index)
                     ),
+                    "board_type": (
+                        "final" if isinstance(round_data, FinalBoard) else "standard"
+                    ),
                     "row_values": row_values,
                 }
             )
@@ -845,8 +1022,8 @@ QCheckBox {{
                 continue
             selected_round_index = next(
                 (
-                    index
-                    for index, radio in enumerate(row["board_radios"])
+                    int(radio.property("source_round_index"))
+                    for radio in row["board_radios"]
                     if radio.isChecked()
                 ),
                 None,
@@ -864,9 +1041,15 @@ QCheckBox {{
                 {
                     "game_id": game_id,
                     "source_round_index": selected_round_index,
-                    "source_round_label": row["board_radios"][
-                        selected_round_index
-                    ].text(),
+                    "source_round_label": next(
+                        (
+                            radio.text()
+                            for radio in row["board_radios"]
+                            if radio.isChecked()
+                        ),
+                        "",
+                    ),
+                    "board_type": row["board_type"],
                     "row_values": row_values,
                 }
             )
@@ -880,15 +1063,15 @@ QCheckBox {{
         composed_data = build_game_from_board_selection_configs(board_selections)
         self.game.data = composed_data
         if board_selections and composed_data is not None:
-            self._base_summary_text = self.build_advanced_summary_text(
+            self._advanced_mode_summary_text = self.build_advanced_summary_text(
                 board_selections, composed_data
             )
-            self.summary_label.setText(self._base_summary_text)
+            self.summary_label.setText(self._advanced_mode_summary_text)
         elif self.advanced_options_checkbox.isChecked():
-            self._base_summary_text = (
+            self._advanced_mode_summary_text = (
                 "Configure one source game per board slot to build a Frankenstein game."
             )
-            self.summary_label.setText(self._base_summary_text)
+            self.summary_label.setText(self._advanced_mode_summary_text)
         self.check_start()
 
     def compose_session_game_id(self, board_selections: list[dict]) -> str:
@@ -922,10 +1105,19 @@ QCheckBox {{
     ) -> str:
         """Return the summary text for the current Frankenstein composition."""
         summary_lines = [composed_data.date, composed_data.comments, ""]
-        for board_index, selection in enumerate(board_selections, start=1):
+        standard_index = 0
+        final_index = 0
+        for selection in board_selections:
             values = ", ".join(str(value) for value in selection.get("row_values", []))
+            if selection.get("board_type") == "final":
+                final_index += 1
+                board_label = f"Final {final_index}"
+            else:
+                standard_index += 1
+                board_label = f"Board {standard_index}"
             summary_lines.append(
-                f"Board {board_index}: {selection.get('game_id')} - {selection.get('source_round_label')} ({values})"
+                f"{board_label}: {selection.get('game_id')} - {selection.get('source_round_label')}"
+                + (f" ({values})" if values else "")
             )
         missing_question_count = getattr(
             composed_data, "missing_question_count", lambda: 0
