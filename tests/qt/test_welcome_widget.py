@@ -42,6 +42,8 @@ class StubGame:
         self.start_game_calls = 0
         self.clear_resume_state_calls = 0
         self._selected_round_indices = None
+        self._board_selection_configs = []
+        self._session_game_id = ""
         self._reveal_answers_after_triple_stumper = False
         self.resume_claimed = 0
 
@@ -88,6 +90,18 @@ class StubGame:
         if self._selected_round_indices is None:
             return []
         return self._selected_round_indices
+
+    def set_board_selection_configs(self, configs: object) -> None:
+        """Test storing board-selection configs."""
+        self._board_selection_configs = list(configs) if configs is not None else []
+
+    def board_selection_configs(self) -> object:
+        """Test reading board-selection configs."""
+        return self._board_selection_configs
+
+    def set_session_game_id(self, game_id: object) -> None:
+        """Test storing the current session game id."""
+        self._session_game_id = str(game_id)
 
     def set_reveal_answers_after_triple_stumper(self, enabled: bool) -> None:
         """Test storing the triple-stumper reveal preference."""
@@ -291,6 +305,49 @@ def test_welcome_radio_updates_triple_stumper_reveal_option(qtbot: object) -> No
     assert widget.reveal_answers_radio.isChecked() is False
     widget.reveal_answers_radio.setChecked(True)
     assert game.reveal_answers_after_triple_stumper_enabled() is True
+
+
+def test_advanced_options_compose_frankenstein_board(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced options should compose multiple boards into one game config."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    source_a = game.data
+    source_b = GameData(
+        [source_a.rounds[0], source_a.rounds[2]],
+        "January 2, 2026",
+        "Second fixture",
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source_a, "222": source_b}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source_a, "222": source_b}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.board_count_spinbox.setValue(2)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+    widget._advanced_rows[1]["gameid_edit"].setText("222")
+    widget.refresh_advanced_row(1)
+    widget._advanced_rows[0]["value_edits"][0].setText("300")
+    widget.sync_advanced_configuration()
+
+    assert len(game.board_selection_configs()) == 2
+    assert game.board_selection_configs()[0]["game_id"] == "111"
+    assert game.board_selection_configs()[1]["game_id"] == "222"
+    assert game.data.rounds[0].get_question(0, 0).value == 300
+    assert "Board 1: 111 - Jeopardy!" in widget.summary_label.text()
+    assert "Board 2: 222 - Final Jeopardy!" in widget.summary_label.text()
 
 
 def test_build_summary_text_includes_question_media_status(
