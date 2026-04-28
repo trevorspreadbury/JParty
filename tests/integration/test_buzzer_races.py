@@ -59,3 +59,17 @@ def test_winning_buzz_updates_lectern_state(game_with_players: object) -> None:
     assert player_number == 1
     assert state["buzzed"] is True
     assert state["active"] is True
+
+
+def test_invalid_player_index_buzz_is_ignored(game_with_players: object) -> None:
+    """Test out-of-range buzz indexes do not crash the game."""
+    game = game_with_players
+    question = game.current_round.get_question(0, 0)
+    game.load_question(question)
+    game.open_responses()
+
+    game.buzz(len(game.players))
+
+    assert game.answering_player is None
+    assert game.accepting_responses is True
+    assert game._all_buzz_attempts == []

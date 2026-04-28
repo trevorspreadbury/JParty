@@ -1260,6 +1260,9 @@ class Game(QObject):
         Returns:
             ``None``.
         """
+        if not isinstance(i_player, int) or not 0 <= i_player < len(self.players):
+            logging.warning(f"Ignoring buzz for invalid player index: {i_player}")
+            return
         player = self.players[i_player]
         if self.active_question is None:
             self.dc.player_widget(player).buzz_hint()
