@@ -106,6 +106,9 @@ def get_current_game_state(game: object) -> object:
         ],
         "selected_round_indices": selected_round_indices,
         "board_selections": board_selections,
+        "history_round_indices_original": getattr(
+            game, "_history_round_indices_original", False
+        ),
         "reveal_answers_after_triple_stumper": (
             game.reveal_answers_after_triple_stumper_enabled()
         ),

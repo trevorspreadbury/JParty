@@ -176,6 +176,7 @@ class Game(QObject):
         self._resume_state = None
         self._selected_round_indices = None
         self._board_selection_configs = None
+        self._history_round_indices_original = False
         self._session_game_id = ""
         self._reveal_answers_after_triple_stumper = False
         self._awaiting_stumped_answer_reveal = False
@@ -217,6 +218,7 @@ class Game(QObject):
         self._resume_state = None
         self._selected_round_indices = None
         self._board_selection_configs = None
+        self._history_round_indices_original = False
         self._session_game_id = ""
         if self.buzzer_controller:
             self.buzzer_controller.clear_saved_player_reclaim()
@@ -356,28 +358,57 @@ class Game(QObject):
             raise ValueError(f"Could not load saved game metadata: {e}") from e
         game_id = str(general_state.get("game_id", "")).strip()
         saved_players = general_state.get("players", [])
+        self._history_round_indices_original = bool(
+            general_state.get("history_round_indices_original", False)
+        )
         if not game_id:
             raise ValueError("Saved game metadata is missing a game_id")
         if not saved_players:
             raise ValueError("Saved game metadata is missing player information")
         board_selection_configs = general_state.get("board_selections")
+        selected_round_indices = general_state.get("selected_round_indices")
+        original_data = None
+        is_original_subset_resume = False
         if board_selection_configs:
-            self.data = build_game_from_board_selection_configs(board_selection_configs)
-            self.set_board_selection_configs(board_selection_configs)
+            source_game_ids = {
+                str(selection.get("game_id", "")).strip()
+                for selection in board_selection_configs
+            }
+            if source_game_ids == {game_id}:
+                original_data = get_game(game_id)
+                is_original_subset_resume = (
+                    self._board_selections_match_original_game_subset(
+                        game_id,
+                        original_data,
+                        board_selection_configs,
+                        selected_round_indices,
+                    )
+                )
+            if is_original_subset_resume:
+                self.data = original_data
+                self.set_selected_round_indices(selected_round_indices)
+                self.set_board_selection_configs(board_selection_configs)
+                self._normalize_resume_history_round_indices(
+                    saved_game_path, general_state
+                )
+            else:
+                self.data = build_game_from_board_selection_configs(
+                    board_selection_configs
+                )
+                self.set_board_selection_configs(board_selection_configs)
         else:
             self.data = get_game(game_id)
-            self.set_selected_round_indices(general_state.get("selected_round_indices"))
+            self.set_selected_round_indices(selected_round_indices)
             self.set_board_selection_configs(None)
+            self._normalize_resume_history_round_indices(saved_game_path, general_state)
         self.set_reveal_answers_after_triple_stumper(
             general_state.get("reveal_answers_after_triple_stumper", False)
         )
         self.set_session_game_id(general_state.get("game_id", game_id))
-        if board_selection_configs:
+        if board_selection_configs and not is_original_subset_resume:
             self.set_selected_round_indices(
                 list(range(len(self.data.rounds))) if self.data else []
             )
-        else:
-            self._apply_selected_rounds_to_data()
         if not self.valid_game():
             raise ValueError("Saved game points to an invalid or incomplete game")
         self._resume_state = {
@@ -389,6 +420,131 @@ class Game(QObject):
         if self.buzzer_controller:
             self.buzzer_controller.begin_saved_player_reclaim(saved_players)
         return self._resume_state
+
+    def _board_selections_match_original_game_subset(
+        self,
+        game_id: str,
+        game_data: object,
+        board_selection_configs: list[dict],
+        selected_round_indices: object,
+    ) -> bool:
+        """Return whether saved board selections describe a simple original-game subset."""
+        if not game_data or selected_round_indices is None:
+            return False
+        normalized_indices = [int(index) for index in selected_round_indices]
+        if len(board_selection_configs) != len(normalized_indices):
+            return False
+        for selection, round_index in zip(
+            board_selection_configs, normalized_indices, strict=False
+        ):
+            if str(selection.get("game_id", "")).strip() != game_id:
+                return False
+            if int(selection.get("source_round_index", -1)) != round_index:
+                return False
+            if not 0 <= round_index < len(game_data.rounds):
+                return False
+            round_data = game_data.rounds[round_index]
+            expected_board_type = (
+                "final" if isinstance(round_data, FinalBoard) else "standard"
+            )
+            if selection.get("board_type") != expected_board_type:
+                return False
+            expected_row_values = (
+                []
+                if isinstance(round_data, FinalBoard)
+                else [
+                    question.value
+                    for question in sorted(
+                        getattr(round_data, "questions", []),
+                        key=lambda question: question.index,
+                    )
+                ][:5]
+            )
+            if list(selection.get("row_values", [])) != expected_row_values:
+                return False
+        return True
+
+    def _normalize_resume_history_round_indices(
+        self, saved_game_path: Path, general_state: dict
+    ) -> None:
+        """Rewrite legacy filtered-round history indices to original indices."""
+        if self._history_round_indices_original:
+            return
+        selected_round_indices = general_state.get("selected_round_indices") or []
+        if not selected_round_indices:
+            self._history_round_indices_original = True
+            return
+        selected_round_indices = [int(index) for index in selected_round_indices]
+        history_file = saved_game_path / "question_history.jsonl"
+        if not history_file.exists():
+            self._history_round_indices_original = True
+            return
+        entries = [
+            json.loads(line)
+            for line in history_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if not entries:
+            self._history_round_indices_original = True
+            return
+
+        def _legacy_index_detected(index: object) -> bool:
+            return (
+                isinstance(index, int)
+                and 0 <= index < len(selected_round_indices)
+                and index not in selected_round_indices
+            )
+
+        needs_remap = any(
+            _legacy_index_detected(entry.get("round_index"))
+            or _legacy_index_detected(
+                entry.get("question_index", [None])[0]
+                if isinstance(entry.get("question_index"), list | tuple)
+                and entry.get("question_index")
+                else None
+            )
+            or any(
+                _legacy_index_detected(
+                    buzz_attempt.get("question_index", [None])[0]
+                    if isinstance(buzz_attempt.get("question_index"), list | tuple)
+                    and buzz_attempt.get("question_index")
+                    else None
+                )
+                for phase in entry.get("buzz_phases", [])
+                for buzz_attempt in phase.get("buzz_attempts", [])
+            )
+            for entry in entries
+        )
+        if not needs_remap:
+            self._history_round_indices_original = True
+            return
+
+        def _remap_index(index: object) -> object:
+            if isinstance(index, int) and 0 <= index < len(selected_round_indices):
+                return selected_round_indices[index]
+            return index
+
+        for entry in entries:
+            entry["round_index"] = _remap_index(entry.get("round_index"))
+            question_index = entry.get("question_index")
+            if isinstance(question_index, list) and question_index:
+                question_index[0] = _remap_index(question_index[0])
+            for phase in entry.get("buzz_phases", []):
+                for buzz_attempt in phase.get("buzz_attempts", []):
+                    buzz_question_index = buzz_attempt.get("question_index")
+                    if isinstance(buzz_question_index, list) and buzz_question_index:
+                        buzz_question_index[0] = _remap_index(buzz_question_index[0])
+
+        history_file.write_text(
+            "\n".join(json.dumps(entry) for entry in entries) + "\n",
+            encoding="utf-8",
+        )
+        general_state["history_round_indices_original"] = True
+        (saved_game_path / "general.json").write_text(
+            json.dumps(general_state, indent=2),
+            encoding="utf-8",
+        )
+        self._history_round_indices_original = True
 
     def begin(self) -> None:
         """Begin the pre-game lobby state by starting the intro music.
@@ -519,10 +675,26 @@ class Game(QObject):
         Returns:
             The current round object that gameplay should resume from.
         """
-        for round_data in self.data.rounds[:-1]:
+        playable_round_indices = self._playable_round_indices()
+        if not playable_round_indices:
+            return self.data.rounds[-1]
+        for round_index in playable_round_indices:
+            round_data = self.data.rounds[round_index]
+            if isinstance(round_data, FinalBoard):
+                continue
             if not self._round_is_complete(round_data):
                 return round_data
-        return self.data.rounds[-1]
+        return self.data.rounds[playable_round_indices[-1]]
+
+    def _playable_round_indices(self) -> list[int]:
+        """Return the currently selected round indices that are valid for play."""
+        if not self.data:
+            return []
+        return [
+            index
+            for index in self.selected_round_indices()
+            if 0 <= index < len(self.data.rounds)
+        ]
 
     def _start_resumed_game(self) -> None:
         """Restore UI and runtime state from the prepared resume metadata.
@@ -1376,14 +1548,18 @@ class Game(QObject):
             ``None``.
         """
         logging.info("next round")
+        playable_round_indices = self._playable_round_indices()
         i = self.data.rounds.index(self.current_round)
         logging.info(f"ROUND {i}")
-        if i + 1 >= len(self.data.rounds):
+        future_round_indices = [
+            round_index for round_index in playable_round_indices if round_index > i
+        ]
+        if not future_round_indices:
             if getattr(self.dc, "final_window", None) is None:
                 self.dc.load_final_judgement()
             self.end_game()
             return
-        self.current_round = self.data.rounds[i + 1]
+        self.current_round = self.data.rounds[future_round_indices[0]]
         if isinstance(self.current_round, FinalBoard):
             self.dc.load_final(self.current_round.question)
             self.active_question = self.current_round.question
