@@ -503,7 +503,9 @@ def build_end_game_summary(game: object) -> EndGameSummary:
     all_player_numbers = sorted(current_player_map)
 
     questions_buzzed_on = {player_number: set() for player_number in all_player_numbers}
-    early_buzzes = {player_number: 0 for player_number in all_player_numbers}
+    early_buzz_questions = {
+        player_number: set() for player_number in all_player_numbers
+    }
     race_wins = {player_number: 0 for player_number in all_player_numbers}
     race_opportunities = {player_number: 0 for player_number in all_player_numbers}
     right_count = {player_number: 0 for player_number in all_player_numbers}
@@ -524,7 +526,9 @@ def build_end_game_summary(game: object) -> EndGameSummary:
                     question_number
                 )
                 if buzz_attempt.get("is_early"):
-                    early_buzzes[player_number] = early_buzzes.get(player_number, 0) + 1
+                    early_buzz_questions.setdefault(player_number, set()).add(
+                        question_number
+                    )
 
         answer_attempts = entry.get("answer_attempts", [])
         for phase_index, phase in enumerate(buzz_phases):
@@ -588,7 +592,7 @@ def build_end_game_summary(game: object) -> EndGameSummary:
                 right_count=right_count.get(player_number, 0),
                 wrong_count=wrong_count.get(player_number, 0),
                 questions_buzzed_on=len(questions_buzzed_on.get(player_number, set())),
-                early_buzzes=early_buzzes.get(player_number, 0),
+                early_buzzes=len(early_buzz_questions.get(player_number, set())),
                 race_wins=race_wins.get(player_number, 0),
                 race_opportunities=race_opportunities.get(player_number, 0),
             )
