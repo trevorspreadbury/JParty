@@ -61,11 +61,7 @@ class StubGame:
         """Test prepare resume from dir."""
         self.resume_expected = 2
         self.resume_claimed = 0
-        self.data = GameData(
-            [self.data.rounds[0], self.data.rounds[2]],
-            self.data.date,
-            self.data.comments,
-        )
+        self.set_selected_round_indices([0, 2])
         return {
             "game_id": "4453",
             "general_state": {
@@ -171,10 +167,15 @@ def test_load_saved_game_requires_matching_player_count(
     assert widget.start_button.isEnabled() is False
     assert [checkbox.text() for checkbox in widget.round_checkboxes] == [
         "[x] Jeopardy!",
+        "[ ] Double Jeopardy!",
         "[x] Final Jeopardy!",
     ]
-    assert all(checkbox.isChecked() for checkbox in widget.round_checkboxes)
-    assert all(not checkbox.isEnabled() for checkbox in widget.round_checkboxes)
+    assert [checkbox.isChecked() for checkbox in widget.round_checkboxes] == [
+        True,
+        False,
+        True,
+    ]
+    assert all(checkbox.isEnabled() for checkbox in widget.round_checkboxes)
     assert widget.reveal_answers_radio.isChecked() is True
     assert "Claimed 0 of 2 saved players" in widget.summary_label.text()
     assert (
@@ -184,6 +185,75 @@ def test_load_saved_game_requires_matching_player_count(
     game.resume_claimed = 2
     widget.check_start()
     assert widget.start_button.isEnabled() is True
+
+
+def test_load_saved_game_round_checkboxes_remain_editable(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Resumed games should restore and still allow changing saved round picks."""
+    game = StubGame()
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved"
+    )
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+
+    widget.load_saved_game()
+    widget.round_checkboxes[1].setChecked(True)
+
+    assert game.selected_round_indices() == [0, 1, 2]
+    assert widget.round_checkboxes[1].text() == "[x] Double Jeopardy!"
+
+
+def test_load_saved_game_preserves_double_and_final_subset_labels(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Subset resumes should still show the full original round list."""
+    game = StubGame()
+
+    def prepare_resume_from_dir(selected_dir: object) -> object:
+        game.resume_expected = 1
+        game.resume_claimed = 0
+        game.set_selected_round_indices([1, 2])
+        return {
+            "game_id": "4453",
+            "general_state": {
+                "players": [{"name": "Alice"}],
+                "selected_round_indices": [1, 2],
+                "board_selections": [
+                    {
+                        "game_id": "4453",
+                        "source_round_index": 1,
+                        "source_round_label": "Double Jeopardy!",
+                        "board_type": "standard",
+                        "row_values": [400, 800, 1200, 1600, 2000],
+                    },
+                    {
+                        "game_id": "4453",
+                        "source_round_index": 2,
+                        "source_round_label": "Final Jeopardy!",
+                        "board_type": "final",
+                        "row_values": [],
+                    },
+                ],
+            },
+        }
+
+    game.prepare_resume_from_dir = prepare_resume_from_dir
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved"
+    )
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+
+    widget.load_saved_game()
+
+    assert [checkbox.text() for checkbox in widget.round_checkboxes] == [
+        "[ ] Jeopardy!",
+        "[x] Double Jeopardy!",
+        "[x] Final Jeopardy!",
+    ]
+    assert game.selected_round_indices() == [1, 2]
 
 
 def test_load_saved_game_invalid_folder_shows_warning(
@@ -237,6 +307,24 @@ def test_welcome_round_checkboxes_update_selected_rounds(qtbot: object) -> None:
     widget.round_checkboxes[1].setChecked(True)
     assert widget.round_checkboxes[1].text() == "[x] Double Jeopardy!"
     assert game.selected_round_indices() == [0, 1, 2]
+
+
+def test_welcome_round_checkboxes_survive_summary_rebuild(qtbot: object) -> None:
+    """Refreshing the summary should preserve an existing round selection."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.set_summary("January 1, 2026\nFixture game")
+    widget.round_checkboxes[0].setChecked(False)
+
+    widget.set_summary("January 1, 2026\nFixture game")
+
+    assert [checkbox.isChecked() for checkbox in widget.round_checkboxes] == [
+        False,
+        True,
+        True,
+    ]
+    assert game.selected_round_indices() == [1, 2]
 
 
 def test_welcome_round_checkboxes_label_triple_jeopardy_games(qtbot: object) -> None:

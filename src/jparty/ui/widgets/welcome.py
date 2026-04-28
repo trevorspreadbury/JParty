@@ -1350,7 +1350,12 @@ QCheckBox {{
                 )
             )
         )
-        self.configure_round_selector(enabled=False)
+        self.configure_round_selector(
+            selected_indices=resume_state["general_state"].get(
+                "selected_round_indices"
+            ),
+            enabled=True,
+        )
         self._base_summary_text = "\n".join(
             [
                 f"Resume game {resume_state['game_id']} from:",
@@ -1370,9 +1375,14 @@ QCheckBox {{
         Returns:
             ``None``.
         """
-        rounds_selected = self.resume_path is not None or bool(
-            getattr(self.game, "board_selection_configs", lambda: [])()
-        )
+        selected_rounds = getattr(self.game, "selected_round_indices", lambda: [])()
+        board_selection_configs = getattr(
+            self.game, "board_selection_configs", lambda: []
+        )()
+        if self.advanced_options_checkbox.isChecked():
+            rounds_selected = bool(board_selection_configs)
+        else:
+            rounds_selected = bool(selected_rounds) or bool(board_selection_configs)
         expected_player_count = self.game.expected_player_count()
         summary_text = self._base_summary_text
         if self.resume_path is not None:
@@ -1457,6 +1467,19 @@ QCheckBox {{
         Returns:
             ``None``.
         """
+        if selected_indices is None:
+            if self.round_checkboxes:
+                selected_indices = [
+                    index
+                    for index, checkbox in enumerate(self.round_checkboxes)
+                    if checkbox.isChecked()
+                ]
+            else:
+                selected_indices = getattr(
+                    self.game, "selected_round_indices", lambda: []
+                )()
+                if not selected_indices and getattr(self.game, "data", None):
+                    selected_indices = list(range(len(self.game.data.rounds)))
         self.clear_round_selector()
         if not getattr(self.game, "data", None):
             return

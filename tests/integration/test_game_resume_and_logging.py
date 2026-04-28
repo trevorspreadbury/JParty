@@ -165,6 +165,203 @@ def test_resume_into_final_starts_final_flow(
     assert game.buzzer_controller.open_wagers_calls
 
 
+def test_resume_skips_deselected_rounds_when_advancing(
+    game: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """Resumed standard games should honor saved round selections."""
+    from jparty.services import game_loader
+
+    restored_data = game.data
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
+    saved_dir = temp_dir / "saved-selected-rounds"
+    saved_dir.mkdir()
+    with (saved_dir / "general.json").open("w") as f:
+        json.dump(
+            {
+                "game_id": "4453",
+                "players": [
+                    {"name": "Alice", "player_number": 0},
+                    {"name": "Bob", "player_number": 1},
+                ],
+                "selected_round_indices": [0, 2],
+            },
+            f,
+        )
+    with (saved_dir / "question_history.jsonl").open("w") as f:
+        f.write("")
+
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(saved_dir)
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+    game.start_game()
+
+    assert game.current_round is game.data.rounds[0]
+    game.next_round()
+    assert isinstance(game.current_round, FinalBoard)
+
+
+def test_resume_normalizes_saved_subset_round_indices_to_original_game(
+    game: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """Subset saves should resume against the original round identities."""
+    from jparty.services import game_loader
+
+    restored_data = game.data
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
+    saved_dir = temp_dir / "saved-double-and-final"
+    saved_dir.mkdir()
+    with (saved_dir / "general.json").open("w") as f:
+        json.dump(
+            {
+                "game_id": "4453",
+                "players": [
+                    {"name": "Alice", "player_number": 0},
+                    {"name": "Bob", "player_number": 1},
+                ],
+                "selected_round_indices": [1, 2],
+            },
+            f,
+        )
+    with (saved_dir / "question_history.jsonl").open("w") as f:
+        json.dump(
+            {
+                "question_index": [0, [0, 0]],
+                "question_number": 1,
+                "round_index": 0,
+                "category": "Cat 0",
+                "value": 400,
+                "is_daily_double": False,
+                "buzz_phases": [
+                    {
+                        "phase_type": "main",
+                        "buzz_attempts": [
+                            {
+                                "player_index": 0,
+                                "question_index": [0, [0, 0]],
+                                "timestamp": 1.0,
+                                "is_early": False,
+                                "is_success": True,
+                                "is_rebound": False,
+                                "in_timeout": False,
+                            }
+                        ],
+                    }
+                ],
+                "answer_attempts": [],
+                "completed_at": 2.0,
+            },
+            f,
+        )
+        f.write("\n")
+
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(saved_dir)
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+    game.start_game()
+
+    rewritten_general = json.loads((saved_dir / "general.json").read_text())
+    rewritten_history = [
+        json.loads(line)
+        for line in (saved_dir / "question_history.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert len(game.data.rounds) == 3
+    assert game.selected_round_indices() == [1, 2]
+    assert game.current_round is game.data.rounds[1]
+    assert game.data.rounds[1].get_question(0, 0).complete is True
+    assert game.data.rounds[0].get_question(0, 0).complete is False
+    assert rewritten_general["history_round_indices_original"] is True
+    assert rewritten_history[0]["round_index"] == 1
+    assert rewritten_history[0]["question_index"][0] == 1
+    assert (
+        rewritten_history[0]["buzz_phases"][0]["buzz_attempts"][0]["question_index"][0]
+        == 1
+    )
+
+
+def test_resume_same_game_subset_board_selections_keep_original_round_list(
+    game: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """Same-game subset saves should resume against the full original round list."""
+    from jparty.services import game_loader
+
+    restored_data = deepcopy(game.data)
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
+    saved_dir = temp_dir / "saved-board-subset"
+    saved_dir.mkdir()
+    with (saved_dir / "general.json").open("w") as file_obj:
+        json.dump(
+            {
+                "game_id": "4453",
+                "players": [
+                    {"name": "Alice", "player_number": 0},
+                    {"name": "Bob", "player_number": 1},
+                ],
+                "selected_round_indices": [1, 2],
+                "board_selections": [
+                    {
+                        "game_id": "4453",
+                        "source_round_index": 1,
+                        "source_round_label": "Double Jeopardy!",
+                        "board_type": "standard",
+                        "row_values": [400, 800, 1200, 1600, 2000],
+                    },
+                    {
+                        "game_id": "4453",
+                        "source_round_index": 2,
+                        "source_round_label": "Final Jeopardy!",
+                        "board_type": "final",
+                        "row_values": [],
+                    },
+                ],
+                "history_round_indices_original": False,
+            },
+            file_obj,
+        )
+    with (saved_dir / "question_history.jsonl").open("w") as file_obj:
+        json.dump(
+            {
+                "question_index": [0, [0, 0]],
+                "question_number": 1,
+                "round_index": 0,
+                "category": restored_data.rounds[1].questions[0].category,
+                "value": 400,
+                "is_daily_double": False,
+                "buzz_phases": [],
+                "answer_attempts": [],
+                "completed_at": 2.0,
+            },
+            file_obj,
+        )
+        file_obj.write("\n")
+
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(saved_dir)
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+    game.start_game()
+
+    rewritten_general = json.loads((saved_dir / "general.json").read_text())
+    rewritten_history = [
+        json.loads(line)
+        for line in (saved_dir / "question_history.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert len(game.data.rounds) == 3
+    assert game.selected_round_indices() == [1, 2]
+    assert game.current_round is game.data.rounds[1]
+    assert game.data.rounds[1].get_question(0, 0).complete is True
+    assert game.data.rounds[0].get_question(0, 0).complete is False
+    assert rewritten_general["history_round_indices_original"] is True
+    assert rewritten_history[0]["round_index"] == 1
+    assert rewritten_history[0]["question_index"][0] == 1
+
+
 def test_resume_preserves_frankenstein_board_selections_and_round_sources(
     game: object, monkeypatch: object, temp_dir: object
 ) -> None:

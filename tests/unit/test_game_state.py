@@ -140,6 +140,100 @@ def test_build_end_game_summary_calculates_stats(
     assert player_one.wrong_count == 0
 
 
+def test_build_end_game_summary_counts_early_buzzes_per_question(
+    game: object, players: object, temp_dir: object
+) -> None:
+    """Repeated early buzzes on one clue should count once in the summary."""
+    game._game_state_dir = temp_dir / "saved-early-buzzes"
+    game._game_state_dir.mkdir()
+    game.data = GameData(
+        rounds=[
+            Board(
+                categories=["Cat"],
+                questions=[
+                    Question((0, 0), "Q1", "A1", "Cat", value=200),
+                    Question((0, 1), "Q2", "A2", "Cat", value=400),
+                ],
+            ),
+            FinalBoard("Final", Question((0, 0), "FJ", "FA", "Final")),
+        ],
+        date="today",
+        comments="",
+    )
+    (game._game_state_dir / "general.json").write_text(
+        json.dumps({"game_id": "1234", "players": []}),
+        encoding="utf-8",
+    )
+    (game._game_state_dir / "question_history.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "question_index": [0, [0, 0]],
+                        "question_number": 1,
+                        "round_index": 0,
+                        "is_daily_double": False,
+                        "value": 200,
+                        "buzz_phases": [
+                            {
+                                "phase_type": "main",
+                                "buzz_attempts": [
+                                    {
+                                        "player_index": 0,
+                                        "is_early": True,
+                                        "in_timeout": False,
+                                    },
+                                    {
+                                        "player_index": 0,
+                                        "is_early": True,
+                                        "in_timeout": False,
+                                    },
+                                    {
+                                        "player_index": 0,
+                                        "is_early": True,
+                                        "in_timeout": True,
+                                    },
+                                ],
+                            }
+                        ],
+                        "answer_attempts": [],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "question_index": [0, [0, 1]],
+                        "question_number": 2,
+                        "round_index": 0,
+                        "is_daily_double": False,
+                        "buzz_phases": [
+                            {
+                                "phase_type": "main",
+                                "buzz_attempts": [
+                                    {
+                                        "player_index": 0,
+                                        "is_early": True,
+                                        "in_timeout": False,
+                                    }
+                                ],
+                            }
+                        ],
+                        "answer_attempts": [],
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = build_end_game_summary(game)
+    player_zero = next(
+        player for player in summary.current_players if player.player_number == 0
+    )
+
+    assert player_zero.early_buzzes == 2
+
+
 def test_build_end_game_summary_uses_played_order_for_original_series(
     game: object, temp_dir: object
 ) -> None:
@@ -368,6 +462,7 @@ def test_build_end_game_summary_computes_game_stats(
                         "question_number": 1,
                         "round_index": 0,
                         "is_daily_double": False,
+                        "value": 200,
                         "buzz_phases": [
                             {
                                 "phase_type": "main",
@@ -392,6 +487,7 @@ def test_build_end_game_summary_computes_game_stats(
                         "question_number": 2,
                         "round_index": 0,
                         "is_daily_double": False,
+                        "value": 400,
                         "buzz_phases": [],
                         "answer_attempts": [],
                     }
@@ -402,6 +498,7 @@ def test_build_end_game_summary_computes_game_stats(
                         "question_number": 3,
                         "round_index": 0,
                         "is_daily_double": False,
+                        "value": 800,
                         "buzz_phases": [
                             {
                                 "phase_type": "main",

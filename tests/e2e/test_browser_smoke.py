@@ -43,6 +43,9 @@ class BrowserSmokeController:
         self.connected_players = []
         self.accepting_players = True
         self.lectern_connections = {}
+        self.active_buzzer_sockets = set()
+        self.saved_player_profiles = {}
+        self.resume_mode_active = False
         self.buzzed_players = []
         self.game = SimpleNamespace(
             players=[],
@@ -55,6 +58,68 @@ class BrowserSmokeController:
         """Test new player."""
         self.connected_players.append(player)
         self.game.players.append(player)
+
+    def register_socket(self, socket_handler: object) -> None:
+        """Track an open buzzer websocket for the smoke test server."""
+        self.active_buzzer_sockets.add(socket_handler)
+
+    def unregister_socket(self, socket_handler: object) -> None:
+        """Stop tracking a buzzer websocket for the smoke test server."""
+        self.active_buzzer_sockets.discard(socket_handler)
+
+    def in_saved_player_reclaim_mode(self) -> bool:
+        """Report whether the smoke-test lobby is reclaiming saved players."""
+        return self.resume_mode_active
+
+    def saved_player_claims_complete(self) -> bool:
+        """Report whether all saved-player claims are complete."""
+        return bool(self.saved_player_profiles) and all(
+            profile.get("player") is not None
+            for profile in self.saved_player_profiles.values()
+        )
+
+    def saved_player_choices_payload(self) -> object:
+        """Build the saved-player chooser payload for smoke tests."""
+        players = []
+        for player_number, profile in sorted(self.saved_player_profiles.items()):
+            players.append(
+                {
+                    "name": profile["name"],
+                    "player_number": player_number,
+                    "claimed": profile.get("player") is not None,
+                }
+            )
+        return {
+            "players": players,
+            "claimed_count": sum(
+                1
+                for profile in self.saved_player_profiles.values()
+                if profile.get("player") is not None
+            ),
+            "total_count": len(self.saved_player_profiles),
+        }
+
+    def claim_saved_player(self, socket_handler: object, player_number: int) -> object:
+        """Claim a saved player profile for the smoke-test controller."""
+        profile = self.saved_player_profiles.get(player_number)
+        if profile is None:
+            return None
+        if (
+            profile.get("player") is not None
+            and profile["player"].waiter is not socket_handler
+        ):
+            socket_handler.send("PLAYER_TAKEN")
+            return None
+        player = profile.get("player")
+        if player is None:
+            player = Player(profile["name"], socket_handler, player_number)
+            profile["player"] = player
+            profile["token"] = player.token.hex()
+            self.connected_players.append(player)
+            self.game.players.append(player)
+        player.waiter = socket_handler
+        player.connected = True
+        return player
 
     def buzz(self, player: object) -> None:
         """Test buzz."""

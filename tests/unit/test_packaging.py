@@ -117,6 +117,37 @@ def test_summary_output_path_defaults_to_summary_png(temp_dir: object) -> None:
     assert output_path == temp_dir / "summary.png"
 
 
+def test_ui_font_families_adds_emoji_fallbacks_when_available() -> None:
+    """Summary rendering should prefer emoji-capable fallbacks when present."""
+    families = bootstrap.ui_font_families(
+        ["Verdana", "Segoe UI Emoji", "Segoe UI Symbol"]
+    )
+    assert families == ["Verdana", "Segoe UI Emoji", "Segoe UI Symbol"]
+
+
+def test_ui_font_families_falls_back_to_default_base_font_name() -> None:
+    """Missing preferred UI fonts should still return a usable base family."""
+    families = bootstrap.ui_font_families(["Segoe UI Emoji"])
+    assert families == ["Verdana", "Segoe UI Emoji"]
+
+
+def test_should_force_offscreen_platform_is_false_when_qt_platform_is_set() -> None:
+    """Explicit platform selection should be respected."""
+    assert (
+        bootstrap.should_force_offscreen_platform({"QT_QPA_PLATFORM": "offscreen"})
+        is False
+    )
+
+
+def test_should_force_offscreen_platform_is_false_on_windows(
+    monkeypatch: object,
+) -> None:
+    """Windows summary rendering should use the native platform plugin."""
+    monkeypatch.setattr(bootstrap.os, "name", "nt")
+    monkeypatch.setattr(bootstrap.sys, "platform", "win32")
+    assert bootstrap.should_force_offscreen_platform({}) is False
+
+
 def test_download_games_skips_existing_and_supports_file_inputs(
     temp_dir: object, monkeypatch: object, capsys: object
 ) -> None:
