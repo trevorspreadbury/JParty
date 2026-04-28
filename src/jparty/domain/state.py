@@ -98,12 +98,14 @@ def get_current_game_state(game: object) -> object:
     game_id = game.current_game_id()
     current_time = time.time()
     selected_round_indices = game.selected_round_indices()
+    board_selections = game.board_selection_configs()
     return {
         "game_id": game_id,
         "players": [
             {"name": p.name, "player_number": p.player_number} for p in game.players
         ],
         "selected_round_indices": selected_round_indices,
+        "board_selections": board_selections,
         "reveal_answers_after_triple_stumper": (
             game.reveal_answers_after_triple_stumper_enabled()
         ),

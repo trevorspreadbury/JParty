@@ -240,7 +240,10 @@ def load_summary_from_game_state_directory(game_state_directory: object) -> obje
         ValueError: If the game state metadata cannot be used to build a
             playable summary.
     """
-    from jparty.services.game_loader import get_game
+    from jparty.services.game_loader import (
+        build_game_from_board_selection_configs,
+        get_game,
+    )
 
     game_state_path = Path(game_state_directory)
     general_file = game_state_path / "general.json"
@@ -253,17 +256,22 @@ def load_summary_from_game_state_directory(game_state_directory: object) -> obje
     if not game_id:
         raise ValueError("Saved game metadata is missing a game_id")
 
-    data = get_game(game_id)
+    board_selection_configs = general_state.get("board_selections")
+    if board_selection_configs:
+        data = build_game_from_board_selection_configs(board_selection_configs)
+    else:
+        data = get_game(game_id)
+        if data is None:
+            raise ValueError("Saved game points to an invalid or incomplete game")
+        selected_round_indices = general_state.get("selected_round_indices")
+        if selected_round_indices is not None:
+            data.rounds = [
+                data.rounds[int(index)]
+                for index in selected_round_indices
+                if 0 <= int(index) < len(data.rounds)
+            ]
     if data is None:
         raise ValueError("Saved game points to an invalid or incomplete game")
-
-    selected_round_indices = general_state.get("selected_round_indices")
-    if selected_round_indices is not None:
-        data.rounds = [
-            data.rounds[int(index)]
-            for index in selected_round_indices
-            if 0 <= int(index) < len(data.rounds)
-        ]
 
     summary_game = SimpleNamespace(
         _game_state_dir=game_state_path,

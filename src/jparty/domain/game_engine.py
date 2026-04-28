@@ -42,6 +42,7 @@ from jparty.domain.state import (
     reconstruct_score_history,
     save_general_state,
 )
+from jparty.services.game_loader import build_game_from_board_selection_configs
 from jparty.ui.widgets.common import CompoundObject, SongPlayer, resource_path
 
 QUESTION_INDEX_PART_COUNT = 2
@@ -174,6 +175,8 @@ class Game(QObject):
         self._game_started_at = None
         self._resume_state = None
         self._selected_round_indices = None
+        self._board_selection_configs = None
+        self._session_game_id = ""
         self._reveal_answers_after_triple_stumper = False
         self._awaiting_stumped_answer_reveal = False
 
@@ -213,6 +216,8 @@ class Game(QObject):
         """
         self._resume_state = None
         self._selected_round_indices = None
+        self._board_selection_configs = None
+        self._session_game_id = ""
         if self.buzzer_controller:
             self.buzzer_controller.clear_saved_player_reclaim()
 
@@ -253,6 +258,31 @@ class Game(QObject):
             self._selected_round_indices = None
             return
         self._selected_round_indices = sorted({int(index) for index in indices})
+
+    def set_board_selection_configs(self, configs: object) -> None:
+        """Store composed board-selection metadata for advanced game startup.
+
+        Args:
+            configs: Iterable of serializable board-selection dictionaries, or
+                ``None`` to clear the current advanced configuration.
+
+        Returns:
+            ``None``.
+        """
+        if configs is None:
+            self._board_selection_configs = None
+            return
+        self._board_selection_configs = deepcopy(list(configs))
+
+    def board_selection_configs(self) -> list[dict]:
+        """Return the configured advanced board selections for this session."""
+        if not self._board_selection_configs:
+            return []
+        return deepcopy(self._board_selection_configs)
+
+    def set_session_game_id(self, game_id: object) -> None:
+        """Store the current session identifier used for saves and logging."""
+        self._session_game_id = str(game_id or "").strip()
 
     def set_reveal_answers_after_triple_stumper(self, enabled: bool) -> None:
         """Store whether triple-stumper clues should reveal their answer.
@@ -330,12 +360,24 @@ class Game(QObject):
             raise ValueError("Saved game metadata is missing a game_id")
         if not saved_players:
             raise ValueError("Saved game metadata is missing player information")
-        self.data = get_game(game_id)
-        self.set_selected_round_indices(general_state.get("selected_round_indices"))
+        board_selection_configs = general_state.get("board_selections")
+        if board_selection_configs:
+            self.data = build_game_from_board_selection_configs(board_selection_configs)
+            self.set_board_selection_configs(board_selection_configs)
+        else:
+            self.data = get_game(game_id)
+            self.set_selected_round_indices(general_state.get("selected_round_indices"))
+            self.set_board_selection_configs(None)
         self.set_reveal_answers_after_triple_stumper(
             general_state.get("reveal_answers_after_triple_stumper", False)
         )
-        self._apply_selected_rounds_to_data()
+        self.set_session_game_id(general_state.get("game_id", game_id))
+        if board_selection_configs:
+            self.set_selected_round_indices(
+                list(range(len(self.data.rounds))) if self.data else []
+            )
+        else:
+            self._apply_selected_rounds_to_data()
         if not self.valid_game():
             raise ValueError("Saved game points to an invalid or incomplete game")
         self._resume_state = {
@@ -365,7 +407,12 @@ class Game(QObject):
         if self._resume_state:
             self._start_resumed_game()
             return
-        self._apply_selected_rounds_to_data()
+        if self._board_selection_configs:
+            self.data = build_game_from_board_selection_configs(
+                self._board_selection_configs
+            )
+        else:
+            self._apply_selected_rounds_to_data()
         if not self.data or not self.data.rounds:
             logging.warning("No rounds selected for play")
             return
@@ -396,13 +443,21 @@ class Game(QObject):
             save_game_html,
         )
 
-        game_id = self.current_game_id()
-        if not game_id or len(game_id) >= GOOGLE_SHEETS_ID_LENGTH:
-            return
-        try:
-            save_game_html(game_id)
-        except Exception:
-            logging.error("Could not save game HTML for %s", game_id, exc_info=True)
+        game_ids = []
+        if self._board_selection_configs:
+            game_ids = [
+                str(selection.get("game_id", "")).strip()
+                for selection in self._board_selection_configs
+            ]
+        else:
+            game_ids = [self.current_game_id()]
+        for game_id in {game_id for game_id in game_ids if game_id}:
+            if len(game_id) >= GOOGLE_SHEETS_ID_LENGTH:
+                continue
+            try:
+                save_game_html(game_id)
+            except Exception:
+                logging.error("Could not save game HTML for %s", game_id, exc_info=True)
 
     def _mark_completed_questions(self, question_history: object) -> None:
         """Mark previously played clues as complete from saved history.
@@ -589,7 +644,7 @@ class Game(QObject):
         Returns:
             The current ``JPARTY_GAME_ID`` value, or an empty string.
         """
-        return os.environ.get("JPARTY_GAME_ID", "")
+        return self._session_game_id or os.environ.get("JPARTY_GAME_ID", "")
 
     def _get_current_game_state(self) -> object:
         """Return the serializable high-level state for this session.
