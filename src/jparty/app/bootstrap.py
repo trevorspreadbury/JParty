@@ -35,6 +35,57 @@ REQUEST_TIMEOUT_SECONDS = 10
 MIN_MONITORS = 2
 SUMMARY_IMAGE_NAME = "summary.png"
 SUMMARY_IMAGE_SIZE = (1920, 1080)
+DEFAULT_UI_FONT_FAMILIES = ("Verdana", "Arial", "Sans Serif")
+EMOJI_FALLBACK_FONT_FAMILIES = (
+    "Segoe UI Emoji",
+    "Apple Color Emoji",
+    "Noto Color Emoji",
+    "Segoe UI Symbol",
+    "Noto Emoji",
+)
+
+
+def should_force_offscreen_platform(env: object = None) -> bool:
+    """Return whether summary rendering should force Qt's offscreen platform."""
+    current_env = env or os.environ
+    if current_env.get("QT_QPA_PLATFORM"):
+        return False
+    if os.name == "nt" or sys.platform == "darwin":
+        return False
+    return not (current_env.get("DISPLAY") or current_env.get("WAYLAND_DISPLAY"))
+
+
+def ui_font_families(available_families: object) -> list[str]:
+    """Return the preferred UI font stack with emoji-capable fallbacks."""
+    available = set(available_families)
+    families = [
+        family for family in DEFAULT_UI_FONT_FAMILIES if family in available
+    ] or [DEFAULT_UI_FONT_FAMILIES[0]]
+    families.extend(
+        family
+        for family in EMOJI_FALLBACK_FONT_FAMILIES
+        if family in available and family not in families
+    )
+    return families
+
+
+def build_ui_font(font_database: object = None) -> QFont:
+    """Build the application font with OS emoji fallbacks when available."""
+    available_families = (
+        font_database.families()
+        if font_database is not None
+        else QFontDatabase.families()
+    )
+    families = ui_font_families(available_families)
+    font = QFont(families[0])
+    if hasattr(font, "setFamilies"):
+        font.setFamilies(families)
+    return font
+
+
+def configure_application_font(app: QApplication) -> None:
+    """Apply the shared UI font stack used across runtime entry points."""
+    app.setFont(build_ui_font())
 
 
 def check_internet() -> None:
@@ -306,12 +357,13 @@ def render_summary_image(summary: object, output_file: object) -> Path:
     Raises:
         ValueError: If the widget cannot be saved to the requested output path.
     """
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if should_force_offscreen_platform():
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
     app = QApplication.instance()
     if app is None:
         app = QApplication([])
         QApplication.setStyle(JPartyStyle())
-        app.setFont(QFont("Verdana"))
+        configure_application_font(app)
         QFontDatabase.addApplicationFont(resource_path("ITC_ Korinna Normal.ttf"))
     output_path = Path(output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -358,7 +410,7 @@ def launch_gui() -> None:
     app = QApplication(sys.argv)
     check_second_monitor()
     check_internet()
-    app.setFont(QFont("Verdana"))
+    configure_application_font(app)
     QFontDatabase.addApplicationFont(resource_path("ITC_ Korinna Normal.ttf"))
     game = Game()
     socket_controller = BuzzerController(game)

@@ -37,6 +37,15 @@ SUMMARY_ORIGINAL_COLOR = QColor(210, 210, 210, 120)
 SUMMARY_GRID_COLOR = QColor(255, 255, 255, 45)
 
 
+def _set_name_label_dark_text(label: NameLabel) -> None:
+    """Make plain-text name labels readable on light summary cards."""
+    if label.signature is not None:
+        return
+    palette = label.palette()
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("black"))
+    label.setPalette(palette)
+
+
 class SummaryGraphWidget(QWidget):
     """Draw the end-of-game score history graph."""
 
@@ -234,6 +243,7 @@ class PlayerSummaryCard(QWidget):
         layout.setSpacing(18)
 
         name_label = NameLabel(player_stats.name, self)
+        _set_name_label_dark_text(name_label)
         name_label.setMinimumHeight(110)
         name_label.setMinimumWidth(260)
         name_label.setSizePolicy(
