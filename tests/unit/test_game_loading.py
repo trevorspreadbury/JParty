@@ -166,7 +166,9 @@ def test_normalize_standard_board_daily_doubles_caps_count_and_avoids_categories
     )
 
     normalize_standard_board_daily_doubles(
-        board, requested_count=9, rng=random.Random(0)
+        board,
+        requested_count=9,
+        rng=random.Random(0),  # noqa: S311
     )
 
     daily_double_indices = standard_board_daily_double_indices(board)

@@ -1,5 +1,6 @@
 """Test welcome widget module."""
 
+from copy import deepcopy
 from types import SimpleNamespace
 from typing import NoReturn
 
@@ -43,6 +44,8 @@ class StubGame:
         self.clear_resume_state_calls = 0
         self._selected_round_indices = None
         self._board_selection_configs = []
+        self._composed_board_selection_configs = None
+        self._composed_game_data = None
         self._session_game_id = ""
         self._reveal_answers_after_triple_stumper = False
         self.resume_claimed = 0
@@ -98,6 +101,19 @@ class StubGame:
     def set_session_game_id(self, game_id: object) -> None:
         """Test storing the current session game id."""
         self._session_game_id = str(game_id)
+
+    def set_composed_game_data(
+        self, configs: object, composed_game_data: object | None
+    ) -> None:
+        """Test storing composed advanced game data."""
+        self._composed_board_selection_configs = configs
+        self._composed_game_data = composed_game_data
+
+    def matching_composed_game_data(self, configs: object) -> object | None:
+        """Test reading composed advanced game data."""
+        if configs != self._composed_board_selection_configs:
+            return None
+        return self._composed_game_data
 
     def set_reveal_answers_after_triple_stumper(self, enabled: bool) -> None:
         """Test storing the triple-stumper reveal preference."""
@@ -476,6 +492,65 @@ def test_advanced_options_store_daily_double_count_and_locations(
     assert "DDs: 3" in widget.summary_label.text()
 
 
+def test_advanced_row_typing_uses_debounce_without_focus_loss(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced rows should fetch after debounce while typing, not on blur."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    source = game.data
+    load_calls = []
+    monkeypatch.setattr("jparty.ui.widgets.welcome.ADVANCED_ROW_DEBOUNCE_MS", 10)
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: load_calls.append(game_id) or {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+
+    assert load_calls == []
+    qtbot.waitUntil(lambda: load_calls == ["111"], timeout=500)
+    assert len(widget._advanced_rows[0]["board_radios"]) == 2
+
+
+def test_advanced_daily_double_toggle_does_not_reload_source_games(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Daily Double count changes should compose from cached row data only."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    source = game.data
+    load_calls = []
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: load_calls.append(game_id) or {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+
+    assert load_calls == ["111"]
+    widget._advanced_rows[0]["daily_double_spinbox"].setValue(3)
+
+    assert load_calls == ["111"]
+
+
 def test_advanced_row_round_radios_remain_single_select(
     qtbot: object, monkeypatch: object
 ) -> None:
@@ -542,6 +617,46 @@ def test_advanced_row_round_click_updates_selected_source_round(
     widget._advanced_rows[0]["board_radios"][1].click()
 
     assert game.board_selection_configs()[0]["source_round_index"] == 1
+
+
+def test_advanced_row_switching_round_reuses_selected_round_daily_doubles(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Changing source rounds should use that round's original Daily Doubles."""
+    game = StubGame()
+    game.data.rounds[0].questions = deepcopy(game.data.rounds[0].questions)
+    game.data.rounds[1].questions = deepcopy(game.data.rounds[1].questions)
+    game.data.rounds[0].questions[1].dd = True
+    game.data.rounds[1].questions[1].dd = False
+    game.data.rounds[1].questions[9].dd = True
+    game.data.rounds[1].questions[22].dd = True
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+    widget._advanced_rows[0]["daily_double_spinbox"].setValue(2)
+    widget._advanced_rows[0]["board_radios"][1].click()
+
+    selection = game.board_selection_configs()[0]
+    assert selection["source_round_index"] == 1
+    assert selection["daily_double_indices"] == [[1, 4], [4, 2]]
 
 
 def test_advanced_options_replace_regular_workflow(

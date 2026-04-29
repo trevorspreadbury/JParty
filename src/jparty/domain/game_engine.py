@@ -13,6 +13,7 @@ import time
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
+from threading import Thread
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -182,6 +183,8 @@ class Game(QObject):
         self._resume_state = None
         self._selected_round_indices = None
         self._board_selection_configs = None
+        self._composed_board_selection_configs = None
+        self._composed_game_data = None
         self._history_round_indices_original = False
         self._session_game_id = ""
         self._reveal_answers_after_triple_stumper = False
@@ -228,6 +231,8 @@ class Game(QObject):
         self._resume_state = None
         self._selected_round_indices = None
         self._board_selection_configs = None
+        self._composed_board_selection_configs = None
+        self._composed_game_data = None
         self._history_round_indices_original = False
         self._session_game_id = ""
         if self.buzzer_controller:
@@ -283,14 +288,35 @@ class Game(QObject):
         """
         if configs is None:
             self._board_selection_configs = None
+            self._composed_board_selection_configs = None
+            self._composed_game_data = None
             return
         self._board_selection_configs = deepcopy(list(configs))
+        if self._composed_board_selection_configs != self._board_selection_configs:
+            self._composed_board_selection_configs = None
+            self._composed_game_data = None
 
     def board_selection_configs(self) -> list[dict]:
         """Return the configured advanced board selections for this session."""
         if not self._board_selection_configs:
             return []
         return deepcopy(self._board_selection_configs)
+
+    def set_composed_game_data(
+        self, configs: object, composed_game_data: object | None
+    ) -> None:
+        """Store the latest composed advanced game for immediate reuse."""
+        self._composed_board_selection_configs = (
+            deepcopy(list(configs)) if configs is not None else None
+        )
+        self._composed_game_data = composed_game_data
+
+    def matching_composed_game_data(self, configs: object) -> object | None:
+        """Return cached composed game data when it matches the config."""
+        normalized_configs = deepcopy(list(configs)) if configs is not None else None
+        if normalized_configs != self._composed_board_selection_configs:
+            return None
+        return deepcopy(self._composed_game_data) if self._composed_game_data else None
 
     def set_session_game_id(self, game_id: object) -> None:
         """Store the current session identifier used for saves and logging."""
@@ -587,15 +613,17 @@ class Game(QObject):
             self._start_resumed_game()
             return
         if self._board_selection_configs:
-            self.data = build_game_from_board_selection_configs(
-                self._board_selection_configs
-            )
+            self.data = self.matching_composed_game_data(self._board_selection_configs)
+            if self.data is None:
+                self.data = build_game_from_board_selection_configs(
+                    self._board_selection_configs
+                )
+                self.set_composed_game_data(self._board_selection_configs, self.data)
         else:
             self._apply_selected_rounds_to_data()
         if not self.data or not self.data.rounds:
             logging.warning("No rounds selected for play")
             return
-        self._save_played_game_html()
         self.current_round = self.data.rounds[0]
         self.dc.hide_welcome_widgets()
         self.buzzer_controller.accepting_players = False
@@ -609,6 +637,7 @@ class Game(QObject):
             self.start_final()
         else:
             self.dc.board_widget.load_round(self.current_round)
+        Thread(target=self._save_played_game_html, daemon=True).start()
         self._refresh_score_edit_controls()
 
     def _save_played_game_html(self) -> None:

@@ -27,6 +27,7 @@ DEFAULT_ADVANCED_BASE_VALUE = 200
 FOUR_PLUS_STANDARD_BOARD_BASE_VALUE = 100
 STANDARD_CLUE_VALUE_COUNT = 5
 MAX_DAILY_DOUBLES_PER_BOARD = 6
+QUESTION_INDEX_PART_COUNT = 2
 ROW_ONE_TOTAL_WEIGHT = 0.12
 ROW_TWO_TOTAL_WEIGHT = 9.0
 ROW_THREE_AND_FIVE_TOTAL_WEIGHT = 54.0
@@ -183,7 +184,7 @@ def normalize_standard_board_daily_doubles(
     """Apply a valid Daily Double layout to one standard board clone."""
     if isinstance(round_data, FinalBoard):
         return round_data
-    rng = rng or random.Random()
+    rng = rng or random.Random()  # noqa: S311
     questions = sorted(getattr(round_data, "questions", []), key=_question_sort_key)
     if not questions:
         return round_data
@@ -212,7 +213,9 @@ def normalize_standard_board_daily_doubles(
     occupied_categories: set[str] = set()
     if daily_double_indices:
         for raw_index in daily_double_indices:
-            if not isinstance(raw_index, list | tuple) or len(raw_index) != 2:
+            if not isinstance(raw_index, list | tuple) or (
+                len(raw_index) != QUESTION_INDEX_PART_COUNT
+            ):
                 continue
             normalized_index = (int(raw_index[0]), int(raw_index[1]))
             question = questions_by_index.get(normalized_index)
@@ -252,42 +255,12 @@ def normalize_standard_board_daily_doubles(
     return round_data
 
 
-def build_game_from_board_selection_configs(board_selections: object) -> object:
-    """Build a composite ``GameData`` from saved or advanced board selections.
-
-    Args:
-        board_selections: Iterable of dictionaries describing source game ids,
-            source round indices, and optional row-value overrides.
-
-    Returns:
-        A composed ``GameData`` when every requested board can be loaded;
-        otherwise ``None``.
-    """
-    if not board_selections:
+def compose_game_from_resolved_board_selections(
+    resolved_boards: list[tuple[dict, GameData, object]],
+) -> GameData | None:
+    """Build a composite game from already-resolved source boards."""
+    if not resolved_boards:
         return None
-
-    resolved_boards = []
-    game_cache = {}
-    for selection in board_selections:
-        game_id = str(selection.get("game_id", "")).strip()
-        if not game_id:
-            return None
-        if game_id not in game_cache:
-            game_cache[game_id] = get_game(game_id)
-        game_data = game_cache[game_id]
-        if game_data is None:
-            return None
-        try:
-            source_round_index = int(selection.get("source_round_index", 0))
-        except (TypeError, ValueError):
-            return None
-        if not 0 <= source_round_index < len(game_data.rounds):
-            return None
-        source_round = game_data.rounds[source_round_index]
-        if not round_matches_board_type(source_round, selection.get("board_type")):
-            return None
-        resolved_boards.append((selection, game_data, source_round))
-
     standard_board_count = sum(
         1
         for (_, _, round_data) in resolved_boards
@@ -342,8 +315,48 @@ def build_game_from_board_selection_configs(board_selections: object) -> object:
     return GameData(composed_rounds, composite_date, composite_comments)
 
 
+def build_game_from_board_selection_configs(board_selections: object) -> object:
+    """Build a composite ``GameData`` from saved or advanced board selections.
+
+    Args:
+        board_selections: Iterable of dictionaries describing source game ids,
+            source round indices, and optional row-value overrides.
+
+    Returns:
+        A composed ``GameData`` when every requested board can be loaded;
+        otherwise ``None``.
+    """
+    if not board_selections:
+        return None
+
+    resolved_boards = []
+    game_cache = {}
+    for selection in board_selections:
+        game_id = str(selection.get("game_id", "")).strip()
+        if not game_id:
+            return None
+        if game_id not in game_cache:
+            game_cache[game_id] = get_game(game_id)
+        game_data = game_cache[game_id]
+        if game_data is None:
+            return None
+        try:
+            source_round_index = int(selection.get("source_round_index", 0))
+        except (TypeError, ValueError):
+            return None
+        if not 0 <= source_round_index < len(game_data.rounds):
+            return None
+        source_round = game_data.rounds[source_round_index]
+        if not round_matches_board_type(source_round, selection.get("board_type")):
+            return None
+        resolved_boards.append((selection, game_data, source_round))
+
+    return compose_game_from_resolved_board_selections(resolved_boards)
+
+
 __all__ = [
     "build_game_from_board_selection_configs",
+    "compose_game_from_resolved_board_selections",
     "default_board_row_values",
     "find_question_media",
     "get_Gsheet_game",
