@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import NoReturn
 
 import pytest
+from jparty.app.paths import GAME_STATES_DIR
 from jparty.domain.models import Board, FinalBoard, GameData, Question
 from jparty.services.question_media import QuestionMediaStatus
 from jparty.ui.widgets.welcome import QuestionMediaPreview, Welcome
@@ -201,6 +202,32 @@ def test_load_saved_game_requires_matching_player_count(
     game.resume_claimed = 2
     widget.check_start()
     assert widget.start_button.isEnabled() is True
+
+
+def test_load_saved_game_defaults_to_game_states_dir(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Resume picker should open in the configured game-states directory."""
+    game = StubGame()
+    dialog_calls = []
+
+    def fake_get_existing_directory(*args: object, **kwargs: object) -> str:
+        dialog_calls.append((args, kwargs))
+        return ""
+
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", fake_get_existing_directory
+    )
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+
+    widget.load_saved_game()
+
+    assert dialog_calls
+    args, kwargs = dialog_calls[0]
+    assert kwargs == {}
+    assert args[1] == "Select Saved Game Folder"
+    assert args[2] == str(GAME_STATES_DIR)
 
 
 def test_load_saved_game_round_checkboxes_remain_editable(

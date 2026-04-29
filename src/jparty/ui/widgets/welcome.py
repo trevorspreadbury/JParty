@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
 
 from jparty import __version__ as version
 from jparty.app.helptext import helpmsg
+from jparty.app.paths import GAME_STATES_DIR
 from jparty.domain.models import FinalBoard, GameData
 from jparty.services.game_loader import (
     clone_round,
@@ -1690,9 +1691,7 @@ QCheckBox {{
         dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
         dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
         dialog.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot)
-        dialog.setNameFilter(
-            "Question media (*.zip *.png *.jpg *.jpeg *.webp *.gif *.bmp);;All files (*)"
-        )
+        dialog.setNameFilter("Zip archives (*.zip);;All directories and files (*)")
         if dialog.exec():
             selected_files = dialog.selectedFiles()
             if selected_files:
@@ -1709,7 +1708,7 @@ QCheckBox {{
             ``None``.
         """
         selected_dir = QFileDialog.getExistingDirectory(
-            self, "Select Saved Game Folder", ""
+            self, "Select Saved Game Folder", str(GAME_STATES_DIR)
         )
         if not selected_dir:
             return
