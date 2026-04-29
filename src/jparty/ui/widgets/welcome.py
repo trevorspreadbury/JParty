@@ -9,6 +9,7 @@ import logging
 import time
 from functools import partial
 from pathlib import Path
+from random import SystemRandom
 
 import qrcode
 from PyQt6.QtCore import QDir, QSize, Qt, QTimer, pyqtSignal
@@ -96,6 +97,9 @@ ADVANCED_DAILY_DOUBLE_COUNT_MIN = 0
 ADVANCED_DAILY_DOUBLE_COUNT_MAX = 6
 ADVANCED_ROW_DEBOUNCE_MS = 2000
 QUESTION_INDEX_PART_COUNT = 2
+ROW_VALUE_COUNT = 5
+
+_RNG = SystemRandom()
 
 
 class Image(qrcode.image.base.BaseImage):
@@ -1256,6 +1260,58 @@ QCheckBox {{
             "daily_double_indices": daily_double_indices,
         }
 
+    def select_advanced_daily_double_indices(
+        self,
+        round_data: object,
+        requested_daily_double_count: int,
+        existing_daily_double_indices: object = None,
+    ) -> list[list[int]]:
+        """Return the baseline DD indices to preserve in advanced mode."""
+        original_daily_double_indices = standard_board_daily_double_indices(round_data)
+        requested_count = max(0, int(requested_daily_double_count))
+        original_index_set = {tuple(index) for index in original_daily_double_indices}
+        existing_indices = [
+            list(index)
+            for index in (existing_daily_double_indices or [])
+            if isinstance(index, list | tuple)
+            and len(index) == QUESTION_INDEX_PART_COUNT
+        ]
+        if requested_count <= len(original_daily_double_indices):
+            if requested_count == len(original_daily_double_indices):
+                return original_daily_double_indices
+            existing_original_subset = []
+            seen_indices = set()
+            for index in existing_indices:
+                normalized_index = tuple(index)
+                if (
+                    normalized_index in original_index_set
+                    and normalized_index not in seen_indices
+                ):
+                    existing_original_subset.append(list(index))
+                    seen_indices.add(normalized_index)
+            if len(existing_original_subset) == requested_count:
+                return existing_original_subset
+            return [
+                list(index)
+                for index in _RNG.sample(
+                    original_daily_double_indices,
+                    requested_count,
+                )
+            ]
+
+        extra_slots = requested_count - len(original_daily_double_indices)
+        current_extra_indices = []
+        seen_extra_indices = set()
+        for index in existing_indices:
+            normalized_index = tuple(index)
+            if (
+                normalized_index not in original_index_set
+                and normalized_index not in seen_extra_indices
+            ):
+                current_extra_indices.append(list(index))
+                seen_extra_indices.add(normalized_index)
+        return original_daily_double_indices + current_extra_indices[:extra_slots]
+
     def sync_active_configuration(self) -> None:
         """Push either the regular or advanced startup config into the game."""
         if self.advanced_options_checkbox.isChecked():
@@ -1291,7 +1347,7 @@ QCheckBox {{
                     key=lambda question: question.index,
                 )
                 if not isinstance(round_data, FinalBoard)
-            ][:ADVANCED_STANDARD_VALUE_COUNT]
+            ][:ROW_VALUE_COUNT]
             if isinstance(round_data, FinalBoard):
                 board_selections.append(
                     {
@@ -1377,6 +1433,11 @@ QCheckBox {{
                 if row.get("daily_double_source_round_index") == selected_round_index
                 else None
             )
+            baseline_daily_double_indices = self.select_advanced_daily_double_indices(
+                source_round,
+                row["daily_double_spinbox"].value(),
+                existing_daily_double_indices=existing_daily_double_indices,
+            )
             selection = self.build_standard_board_selection(
                 game_id=game_id,
                 round_data=source_round,
@@ -1384,7 +1445,7 @@ QCheckBox {{
                 source_round_label=source_round_label,
                 row_values=row_values,
                 requested_daily_double_count=row["daily_double_spinbox"].value(),
-                existing_daily_double_indices=existing_daily_double_indices,
+                existing_daily_double_indices=baseline_daily_double_indices,
             )
             row["daily_double_indices"] = [
                 tuple(index) for index in selection.get("daily_double_indices", [])

@@ -518,7 +518,10 @@ def test_advanced_row_typing_uses_debounce_without_focus_loss(
 
     assert load_calls == []
     qtbot.waitUntil(lambda: load_calls == ["111"], timeout=500)
-    assert len(widget._advanced_rows[0]["board_radios"]) == 2
+    qtbot.waitUntil(
+        lambda: len(widget._advanced_rows[0]["board_radios"]) == 2,
+        timeout=500,
+    )
 
 
 def test_advanced_daily_double_toggle_does_not_reload_source_games(
@@ -657,6 +660,84 @@ def test_advanced_row_switching_round_reuses_selected_round_daily_doubles(
     selection = game.board_selection_configs()[0]
     assert selection["source_round_index"] == 1
     assert selection["daily_double_indices"] == [[1, 4], [4, 2]]
+
+
+def test_advanced_daily_doubles_keep_originals_when_adding_more(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Increasing DD count should preserve original HTML DD locations."""
+    game = StubGame()
+    game.data.rounds[0].questions = deepcopy(game.data.rounds[0].questions)
+    for question in game.data.rounds[0].questions:
+        question.dd = False
+    game.data.rounds[0].questions[1].dd = True
+    game.data.rounds[0].questions[14].dd = True
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+    widget._advanced_rows[0]["daily_double_spinbox"].setValue(4)
+
+    selection = game.board_selection_configs()[0]
+    assert [0, 1] in selection["daily_double_indices"]
+    assert [2, 4] in selection["daily_double_indices"]
+    assert len(selection["daily_double_indices"]) == 4
+
+
+def test_advanced_daily_doubles_below_original_only_keep_original_subset(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Reducing DD count below original should only keep original HTML DDs."""
+    game = StubGame()
+    game.data.rounds[0].questions = deepcopy(game.data.rounds[0].questions)
+    for question in game.data.rounds[0].questions:
+        question.dd = False
+    game.data.rounds[0].questions[1].dd = True
+    game.data.rounds[0].questions[14].dd = True
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+    widget._advanced_rows[0]["daily_double_spinbox"].setValue(4)
+    widget._advanced_rows[0]["daily_double_spinbox"].setValue(1)
+
+    selection = game.board_selection_configs()[0]
+    assert len(selection["daily_double_indices"]) == 1
+    assert selection["daily_double_indices"][0] in [[0, 1], [2, 4]]
 
 
 def test_advanced_options_replace_regular_workflow(
