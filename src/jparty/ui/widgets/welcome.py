@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
 
 from jparty import __version__ as version
 from jparty.app.helptext import helpmsg
-from jparty.domain.models import FinalBoard
+from jparty.domain.models import FinalBoard, GameData
 from jparty.services.game_loader import (
     clone_round,
     compose_game_from_resolved_board_selections,
@@ -635,11 +635,12 @@ QCheckBox {{
         Returns:
             Summary text for the loaded game, including missing-clue warnings.
         """
-        if not getattr(self.game, "data", None):
+        summary_data = self.summary_game_data()
+        if not summary_data:
             return ""
-        summary_lines = [self.game.data.date, self.game.data.comments]
+        summary_lines = [summary_data.date, summary_data.comments]
         missing_question_count = getattr(
-            self.game.data, "missing_question_count", lambda: 0
+            summary_data, "missing_question_count", lambda: 0
         )()
         if missing_question_count:
             summary_lines.extend(
@@ -650,7 +651,7 @@ QCheckBox {{
                 ]
             )
         has_missing_daily_double = getattr(
-            self.game.data, "has_missing_daily_double", lambda: False
+            summary_data, "has_missing_daily_double", lambda: False
         )()
         if has_missing_daily_double:
             summary_lines.extend(["", MISSING_DAILY_DOUBLE_WARNING])
@@ -658,6 +659,39 @@ QCheckBox {{
         if media_status:
             summary_lines.extend(["", media_status])
         return "\n".join(str(line) for line in summary_lines if line is not None)
+
+    def summary_game_data(self) -> object:
+        """Return the current game data shaped for welcome-screen summaries."""
+        data = getattr(self.game, "data", None)
+        if not data:
+            return None
+        if self.advanced_options_checkbox.isChecked():
+            return data
+        selected_indices = self.current_round_selection_indices()
+        if not selected_indices:
+            return GameData([], data.date, data.comments)
+        selected_rounds = [
+            data.rounds[index]
+            for index in selected_indices
+            if 0 <= index < len(data.rounds)
+        ]
+        return GameData(selected_rounds, data.date, data.comments)
+
+    def current_round_selection_indices(self) -> list[int]:
+        """Return the currently selected round indices from the checkbox UI."""
+        if self.round_checkboxes:
+            return [
+                index
+                for index, checkbox in enumerate(self.round_checkboxes)
+                if checkbox.isChecked()
+            ]
+        selected_indices = getattr(self.game, "selected_round_indices", lambda: [])()
+        if selected_indices:
+            return selected_indices
+        data = getattr(self.game, "data", None)
+        if data is None:
+            return []
+        return list(range(len(data.rounds)))
 
     def question_media_summary_text(self, game_id: object = None) -> str:
         """Return a status line describing local question-media availability."""
@@ -1126,9 +1160,6 @@ QCheckBox {{
             self.sync_active_configuration()
             return
         row["loaded_data"] = data
-        row["status_label"].setText(
-            self.build_source_game_summary_text(game_id, data, media_status)
-        )
         default_selection = min(row_index, len(matching_rounds) - 1)
         for radio_index, (round_index, round_data) in enumerate(matching_rounds):
             radio = QRadioButton(
@@ -1141,6 +1172,16 @@ QCheckBox {{
             row["board_radio_group"].addButton(radio)
             row["board_radio_layout"].addWidget(radio)
             row["board_radios"].append(radio)
+        if matching_rounds:
+            selected_round_index = matching_rounds[default_selection][0]
+            row["status_label"].setText(
+                self.build_source_game_summary_text(
+                    game_id,
+                    data,
+                    media_status,
+                    selected_round_index=selected_round_index,
+                )
+            )
         self.resizeEvent(None)
         self.sync_active_configuration()
 
@@ -1410,6 +1451,15 @@ QCheckBox {{
                 (radio.text() for radio in row["board_radios"] if radio.isChecked()),
                 "",
             )
+            media_status = self._advanced_media_status_cache.get(game_id)
+            row["status_label"].setText(
+                self.build_source_game_summary_text(
+                    game_id,
+                    row["loaded_data"],
+                    media_status,
+                    selected_round_index=selected_round_index,
+                )
+            )
             if row["board_type"] == "final":
                 selection = {
                     "game_id": game_id,
@@ -1495,14 +1545,27 @@ QCheckBox {{
         return "frankenstein-" + "-".join(source_ids)
 
     def build_source_game_summary_text(
-        self, game_id: str, data: object, media_status: object
+        self,
+        game_id: str,
+        data: object,
+        media_status: object,
+        selected_round_index: int | None = None,
     ) -> str:
         """Return one advanced row's summary text."""
-        summary_lines = [f"{game_id}: {data.date}", str(data.comments)]
-        missing_question_count = getattr(data, "missing_question_count", lambda: 0)()
+        summary_data = data
+        if selected_round_index is not None and 0 <= selected_round_index < len(
+            data.rounds
+        ):
+            summary_data = GameData(
+                [data.rounds[selected_round_index]], data.date, data.comments
+            )
+        summary_lines = [f"{game_id}: {summary_data.date}", str(summary_data.comments)]
+        missing_question_count = getattr(
+            summary_data, "missing_question_count", lambda: 0
+        )()
         if missing_question_count:
             summary_lines.append(f"Missing questions: {missing_question_count}")
-        if getattr(data, "has_missing_daily_double", lambda: False)():
+        if getattr(summary_data, "has_missing_daily_double", lambda: False)():
             summary_lines.append(MISSING_DAILY_DOUBLE_WARNING)
         if media_status is not None:
             summary_lines.append(media_status.summary_text())
@@ -1816,6 +1879,10 @@ QCheckBox {{
         if hasattr(self.game, "set_selected_round_indices"):
             self.game.set_selected_round_indices(selected_indices)
         self.sync_regular_configuration()
+        summary_text = self.build_summary_text()
+        self._base_summary_text = summary_text
+        self.presenter.set_summary_text(summary_text)
+        self.summary_label.setText(summary_text)
         self.check_start()
 
     def preview_questions(self) -> list[tuple[int, object]]:

@@ -390,6 +390,22 @@ def test_build_summary_text_warns_about_missing_questions(qtbot: object) -> None
     assert "WARNING: Missing 1 question" in summary
 
 
+def test_deselecting_missing_round_removes_missing_question_warning(
+    qtbot: object,
+) -> None:
+    """Regular round deselection should hide warnings from unselected rounds."""
+    game = StubGame()
+    game.data.rounds[0].questions = game.data.rounds[0].questions[:29]
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.set_summary("January 1, 2026\nFixture game")
+
+    assert "WARNING: Missing 1 question" in widget.summary_label.text()
+    widget.round_checkboxes[0].setChecked(False)
+
+    assert "WARNING: Missing 1 question" not in widget.summary_label.text()
+
+
 def test_build_summary_text_flags_missing_daily_double(qtbot: object) -> None:
     """Test welcome summary flags missing Daily Doubles as critical."""
     game = StubGame()
@@ -455,6 +471,40 @@ def test_advanced_options_compose_frankenstein_board(
     assert game.data.rounds[0].get_question(0, 0).value == 300
     assert "Board 1: 111 - Jeopardy!" in widget.summary_label.text()
     assert "Final 1: 222 - Final Jeopardy!" in widget.summary_label.text()
+
+
+def test_advanced_row_status_ignores_missing_questions_on_unselected_rounds(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced row status should only reflect the currently selected source round."""
+    game = StubGame()
+    game.data.rounds[0].questions = game.data.rounds[0].questions[:29]
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+
+    assert "Missing questions: 1" in widget._advanced_rows[0]["status_label"].text()
+    widget._advanced_rows[0]["board_radios"][1].click()
+
+    assert "Missing questions: 1" not in widget._advanced_rows[0]["status_label"].text()
 
 
 def test_advanced_options_store_daily_double_count_and_locations(
