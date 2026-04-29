@@ -9,7 +9,6 @@ import logging
 import time
 from functools import partial
 from pathlib import Path
-from threading import Thread
 
 import qrcode
 from PyQt6.QtCore import QDir, QSize, Qt, QTimer, pyqtSignal
@@ -46,6 +45,8 @@ from jparty.services.question_media import (
     local_media_questions,
 )
 from jparty.ui.styles import WINDOWPAL
+from jparty.ui.welcome_loader import WelcomeLoader
+from jparty.ui.welcome_presenter import WelcomePresenter
 from jparty.ui.widgets.common import (
     DynamicButton,
     DynamicLabel,
@@ -224,6 +225,8 @@ class Welcome(StartWidget):
         """
         super().__init__(parent)
         self.game = game
+        self.presenter = WelcomePresenter(game)
+        self.loader = WelcomeLoader()
         self.resume_path = None
         self._base_summary_text = ""
         self._loading_summary = False
@@ -576,8 +579,8 @@ QCheckBox {{
         self._loading_summary = True
         self.clear_round_selector()
         self.summary_trigger.emit("Loading...")
-        t = Thread(target=self.__random)
-        t.start()
+        self.presenter.set_loading(True)
+        self.loader.run_async(self.__random)
 
     def __show_summary(self) -> None:
         """Return show summary."""
@@ -658,10 +661,12 @@ QCheckBox {{
             ``None``.
         """
         self._base_summary_text = text
+        self.presenter.set_summary_text(str(text))
         self.summary_label.setText(text)
         if text == "Loading...":
             return
         self._loading_summary = False
+        self.presenter.set_loading(False)
         if self.advanced_options_checkbox.isChecked():
             self.rounds_widget.setVisible(False)
             return
@@ -684,6 +689,7 @@ QCheckBox {{
     def toggle_advanced_options(self, _: object = None) -> None:
         """Show or hide the advanced Frankenstein-board controls."""
         enabled = self.advanced_options_checkbox.isChecked()
+        self.presenter.set_advanced_enabled(enabled)
         if not enabled:
             self.clear_advanced_configuration()
         self.advanced_controls_widget.setVisible(enabled)
@@ -1261,10 +1267,10 @@ QCheckBox {{
             self.sync_active_configuration()
             return
         self._loading_summary = True
+        self.presenter.set_loading(True)
         self.clear_round_selector()
         self.summary_trigger.emit("Loading...")
-        t = Thread(target=self.__show_summary)
-        t.start()
+        self.loader.run_async(self.__show_summary)
         self.check_start()
 
     def on_start_clicked(self, checked: object = False) -> None:
@@ -1340,6 +1346,7 @@ QCheckBox {{
             QMessageBox.warning(self, "Saved Game Error", str(e))
             return
         self.resume_path = selected_dir
+        self.presenter.set_resume_path(selected_dir)
         self.start_button.setText("Resume!")
         self.advanced_options_checkbox.setChecked(False)
         saved_players = resume_state["general_state"].get("players", [])
@@ -1375,48 +1382,15 @@ QCheckBox {{
         Returns:
             ``None``.
         """
-        selected_rounds = getattr(self.game, "selected_round_indices", lambda: [])()
-        board_selection_configs = getattr(
-            self.game, "board_selection_configs", lambda: []
-        )()
-        if self.advanced_options_checkbox.isChecked():
-            rounds_selected = bool(board_selection_configs)
-        else:
-            rounds_selected = bool(selected_rounds) or bool(board_selection_configs)
-        expected_player_count = self.game.expected_player_count()
-        summary_text = self._base_summary_text
-        if self.resume_path is not None:
-            claimed_count, total_count = getattr(
-                self.game, "resume_claim_status", lambda: (0, 0)
-            )()
-            if summary_text:
-                summary_text += (
-                    f"\nClaimed {claimed_count} of {total_count} saved players."
-                )
-        if rounds_selected and summary_text:
-            self.summary_label.setText(summary_text)
-        if self.game.startable() and rounds_selected:
-            self.start_button.setEnabled(True)
-            self.advanced_start_button.setEnabled(True)
-        else:
-            self.start_button.setEnabled(False)
-            self.advanced_start_button.setEnabled(False)
-            if expected_player_count is not None:
-                claimed_count, total_count = getattr(
-                    self.game, "resume_claim_status", lambda: (0, 0)
-                )()
-                self.summary_label.setText(
-                    summary_text
-                    + f"\nClaim every saved player profile to resume ({claimed_count}/{total_count})."
-                )
-            elif (
-                not self._loading_summary
-                and not rounds_selected
-                and self._base_summary_text
-            ):
-                self.summary_label.setText(
-                    summary_text + "\n\nSelect at least one round to play."
-                )
+        self.presenter.set_advanced_enabled(self.advanced_options_checkbox.isChecked())
+        self.presenter.set_resume_path(self.resume_path)
+        self.presenter.set_summary_text(self._base_summary_text)
+        self.presenter.set_loading(self._loading_summary)
+        state = self.presenter.sync_from_game()
+        if state.status_text:
+            self.summary_label.setText(state.status_text)
+        self.start_button.setEnabled(state.start_enabled)
+        self.advanced_start_button.setEnabled(state.advanced_start_enabled)
 
     def restart(self) -> None:
         """Reset the welcome screen to its initial fresh-game state.
