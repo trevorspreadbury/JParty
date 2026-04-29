@@ -463,6 +463,62 @@ def test_resume_preserves_frankenstein_board_selections_and_round_sources(
     assert game.current_round is game.data.rounds[0]
 
 
+def test_resume_rebuilds_saved_daily_double_locations(
+    game: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """Saved advanced boards should restore their exact Daily Double coords."""
+    from jparty.services import game_loader
+
+    restored_data = deepcopy(game.data)
+    for question in restored_data.rounds[0].questions:
+        question.dd = False
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
+
+    saved_dir = temp_dir / "saved-daily-doubles"
+    saved_dir.mkdir()
+    with (saved_dir / "general.json").open("w") as file_obj:
+        json.dump(
+            {
+                "game_id": "4453",
+                "players": [
+                    {"name": "Alice", "player_number": 0},
+                    {"name": "Bob", "player_number": 1},
+                ],
+                "selected_round_indices": [0],
+                "board_selections": [
+                    {
+                        "game_id": "4453",
+                        "source_round_index": 0,
+                        "source_round_label": "Jeopardy!",
+                        "board_type": "standard",
+                        "row_values": [200, 400, 600, 800, 1000],
+                        "daily_double_count": 2,
+                        "daily_double_indices": [[0, 1], [4, 3]],
+                    }
+                ],
+            },
+            file_obj,
+        )
+    with (saved_dir / "question_history.jsonl").open("w") as file_obj:
+        file_obj.write("")
+
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(saved_dir)
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+    game.start_game()
+
+    restored_indices = sorted(
+        [
+            list(question.index)
+            for question in game.data.rounds[0].questions
+            if question.dd
+        ]
+    )
+    assert restored_indices == [[0, 1], [4, 3]]
+
+
 def test_close_game_resets_state(game_with_players: object) -> None:
     """Test test close game resets state."""
     game = game_with_players

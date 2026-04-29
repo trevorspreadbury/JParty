@@ -14,6 +14,7 @@ import qrcode
 from PyQt6.QtCore import QDir, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QBrush, QFont, QImage, QPainter, QPalette, QPixmap
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QFileDialog,
     QGridLayout,
@@ -34,9 +35,12 @@ from jparty.app.helptext import helpmsg
 from jparty.domain.models import FinalBoard
 from jparty.services.game_loader import (
     build_game_from_board_selection_configs,
+    clone_round,
     default_board_row_values,
     get_game,
     get_random_game,
+    normalize_standard_board_daily_doubles,
+    standard_board_daily_double_indices,
 )
 from jparty.services.question_media import (
     detect_question_media,
@@ -88,6 +92,8 @@ ADVANCED_BOARD_SLOT_COUNT_MIN = 1
 ADVANCED_BOARD_SLOT_COUNT_MAX = 5
 ADVANCED_STANDARD_VALUE_COUNT = 5
 ADVANCED_FINAL_BOARD_SLOT_COUNT_MIN = 0
+ADVANCED_DAILY_DOUBLE_COUNT_MIN = 0
+ADVANCED_DAILY_DOUBLE_COUNT_MAX = 6
 
 
 class Image(qrcode.image.base.BaseImage):
@@ -538,6 +544,10 @@ QCheckBox {{
                     f"QLineEdit {{ font-size: {advanced_value_font_size}px; min-width: {advanced_value_width}px; }}"
                 )
                 value_edit.setMaximumWidth(advanced_value_width)
+            if row["daily_double_spinbox"] is not None:
+                row["daily_double_spinbox"].setStyleSheet(
+                    f"QSpinBox {{ font-size: {advanced_value_font_size}px; min-height: {advanced_value_font_size + 10}px; }}"
+                )
             for button in row["board_radios"]:
                 button.setStyleSheet(
                     f"QRadioButton {{ color: black; font-size: {advanced_status_font_size}px; font-weight: 600; }}"
@@ -759,6 +769,14 @@ QCheckBox {{
                     "game_id": row["gameid_edit"].text(),
                     "values": [edit.text() for edit in row["value_edits"]],
                     "selected_round_index": selected_round_index,
+                    "daily_double_count": (
+                        row["daily_double_spinbox"].value()
+                        if row.get("daily_double_spinbox") is not None
+                        else None
+                    ),
+                    "daily_double_indices": [
+                        list(index) for index in row.get("daily_double_indices", [])
+                    ],
                 }
             )
         return snapshots
@@ -775,6 +793,15 @@ QCheckBox {{
                 continue
             snapshot = snapshot_list[position]
             row["gameid_edit"].setText(snapshot.get("game_id", ""))
+            if row.get("daily_double_spinbox") is not None:
+                daily_double_count = snapshot.get("daily_double_count")
+                if daily_double_count is not None:
+                    row["daily_double_spinbox"].setValue(int(daily_double_count))
+                row["daily_double_indices"] = [
+                    tuple(index)
+                    for index in snapshot.get("daily_double_indices", [])
+                    if isinstance(index, list | tuple) and len(index) == 2
+                ]
             for value_edit, value in zip(
                 row["value_edits"], snapshot.get("values", [])
             ):
@@ -849,6 +876,7 @@ QCheckBox {{
         controls_layout.addWidget(random_button, 0, 2)
         controls_layout.addWidget(load_media_button, 0, 3)
         value_edits = []
+        daily_double_spinbox = None
         if board_type == "standard":
             controls_layout.addWidget(QLabel("Point Values", row_widget), 1, 0)
             values_widget = QWidget(row_widget)
@@ -863,11 +891,21 @@ QCheckBox {{
                 values_layout.addWidget(value_edit)
                 value_edits.append(value_edit)
             controls_layout.addWidget(values_widget, 1, 1, 1, 3)
+            controls_layout.addWidget(QLabel("Daily Doubles", row_widget), 2, 0)
+            daily_double_spinbox = QSpinBox(row_widget)
+            daily_double_spinbox.setRange(
+                ADVANCED_DAILY_DOUBLE_COUNT_MIN, ADVANCED_DAILY_DOUBLE_COUNT_MAX
+            )
+            daily_double_spinbox.setValue(min(board_index + 1, 2))
+            daily_double_spinbox.valueChanged.connect(self.sync_active_configuration)
+            controls_layout.addWidget(daily_double_spinbox, 2, 1)
         row_layout.addLayout(controls_layout)
         board_radio_widget = QWidget(row_widget)
         board_radio_layout = QHBoxLayout()
         board_radio_layout.setContentsMargins(0, 0, 0, 0)
         board_radio_widget.setLayout(board_radio_layout)
+        board_radio_group = QButtonGroup(row_widget)
+        board_radio_group.setExclusive(True)
         row_layout.addWidget(board_radio_widget)
         status_label = QLabel("Enter a source game id.", row_widget)
         status_label.setWordWrap(True)
@@ -881,8 +919,11 @@ QCheckBox {{
             "random_button": random_button,
             "load_media_button": load_media_button,
             "value_edits": value_edits,
+            "daily_double_spinbox": daily_double_spinbox,
+            "daily_double_indices": [],
             "board_radio_widget": board_radio_widget,
             "board_radio_layout": board_radio_layout,
+            "board_radio_group": board_radio_group,
             "board_radios": [],
             "status_label": status_label,
             "loaded_data": None,
@@ -911,6 +952,7 @@ QCheckBox {{
         row["loaded_data"] = None
         self._clear_advanced_row_radios(row)
         if not game_id:
+            row["daily_double_indices"] = []
             row["status_label"].setText("Enter a source game id.")
             self.sync_active_configuration()
             return
@@ -967,7 +1009,8 @@ QCheckBox {{
             )
             radio.setProperty("source_round_index", round_index)
             radio.setChecked(radio_index == default_selection)
-            radio.toggled.connect(self.sync_active_configuration)
+            radio.clicked.connect(self.sync_active_configuration)
+            row["board_radio_group"].addButton(radio)
             row["board_radio_layout"].addWidget(radio)
             row["board_radios"].append(radio)
         self.resizeEvent(None)
@@ -1037,6 +1080,8 @@ QCheckBox {{
 
     def _clear_advanced_row_radios(self, row: dict) -> None:
         """Remove any previous round-selection radios from one advanced row."""
+        for radio in row["board_radios"]:
+            row["board_radio_group"].removeButton(radio)
         while row["board_radio_layout"].count():
             item = row["board_radio_layout"].takeAt(0)
             widget = item.widget()
@@ -1058,6 +1103,34 @@ QCheckBox {{
         if standard_round_index < len(STANDARD_ROUND_LABELS):
             return STANDARD_ROUND_LABELS[standard_round_index]
         return f"Round {standard_round_index + 1}"
+
+    def build_standard_board_selection(
+        self,
+        game_id: str,
+        round_data: object,
+        source_round_index: int,
+        source_round_label: str,
+        row_values: list[int],
+        requested_daily_double_count: int | None = None,
+        existing_daily_double_indices: object = None,
+    ) -> dict:
+        """Return one standard-board selection with stable Daily Double coords."""
+        round_copy = clone_round(round_data)
+        normalize_standard_board_daily_doubles(
+            round_copy,
+            requested_count=requested_daily_double_count,
+            daily_double_indices=existing_daily_double_indices,
+        )
+        daily_double_indices = standard_board_daily_double_indices(round_copy)
+        return {
+            "game_id": game_id,
+            "source_round_index": int(source_round_index),
+            "source_round_label": source_round_label,
+            "board_type": "standard",
+            "row_values": list(row_values),
+            "daily_double_count": len(daily_double_indices),
+            "daily_double_indices": daily_double_indices,
+        }
 
     def sync_active_configuration(self) -> None:
         """Push either the regular or advanced startup config into the game."""
@@ -1095,18 +1168,33 @@ QCheckBox {{
                 )
                 if not isinstance(round_data, FinalBoard)
             ][:ADVANCED_STANDARD_VALUE_COUNT]
+            if isinstance(round_data, FinalBoard):
+                board_selections.append(
+                    {
+                        "game_id": game_id,
+                        "source_round_index": int(round_index),
+                        "source_round_label": self.describe_round(
+                            round_data, int(round_index)
+                        ),
+                        "board_type": "final",
+                        "row_values": row_values,
+                    }
+                )
+                continue
             board_selections.append(
-                {
-                    "game_id": game_id,
-                    "source_round_index": int(round_index),
-                    "source_round_label": self.describe_round(
+                self.build_standard_board_selection(
+                    game_id=game_id,
+                    round_data=round_data,
+                    source_round_index=int(round_index),
+                    source_round_label=self.describe_round(
                         round_data, int(round_index)
                     ),
-                    "board_type": (
-                        "final" if isinstance(round_data, FinalBoard) else "standard"
+                    row_values=row_values,
+                    requested_daily_double_count=round_data.daily_double_count(),
+                    existing_daily_double_indices=standard_board_daily_double_indices(
+                        round_data
                     ),
-                    "row_values": row_values,
-                }
+                )
             )
         if hasattr(self.game, "set_board_selection_configs"):
             self.game.set_board_selection_configs(board_selections)
@@ -1137,22 +1225,35 @@ QCheckBox {{
                     "Point values must be whole numbers for this board slot."
                 )
                 continue
-            board_selections.append(
-                {
-                    "game_id": game_id,
-                    "source_round_index": selected_round_index,
-                    "source_round_label": next(
-                        (
-                            radio.text()
-                            for radio in row["board_radios"]
-                            if radio.isChecked()
-                        ),
-                        "",
-                    ),
-                    "board_type": row["board_type"],
-                    "row_values": row_values,
-                }
+            source_round_label = next(
+                (radio.text() for radio in row["board_radios"] if radio.isChecked()),
+                "",
             )
+            if row["board_type"] == "final":
+                board_selections.append(
+                    {
+                        "game_id": game_id,
+                        "source_round_index": selected_round_index,
+                        "source_round_label": source_round_label,
+                        "board_type": row["board_type"],
+                        "row_values": row_values,
+                    }
+                )
+                continue
+            source_round = row["loaded_data"].rounds[selected_round_index]
+            selection = self.build_standard_board_selection(
+                game_id=game_id,
+                round_data=source_round,
+                source_round_index=selected_round_index,
+                source_round_label=source_round_label,
+                row_values=row_values,
+                requested_daily_double_count=row["daily_double_spinbox"].value(),
+                existing_daily_double_indices=row.get("daily_double_indices"),
+            )
+            row["daily_double_indices"] = [
+                tuple(index) for index in selection.get("daily_double_indices", [])
+            ]
+            board_selections.append(selection)
         configuration_complete = len(board_selections) == len(self._advanced_rows)
         if hasattr(self.game, "set_board_selection_configs"):
             self.game.set_board_selection_configs(
@@ -1215,12 +1316,18 @@ QCheckBox {{
             if selection.get("board_type") == "final":
                 final_index += 1
                 board_label = f"Final {final_index}"
+                suffix = ""
             else:
                 standard_index += 1
                 board_label = f"Board {standard_index}"
+                suffix = (
+                    f", DDs: {selection.get('daily_double_count', 0)}"
+                    if selection.get("daily_double_count") is not None
+                    else ""
+                )
             summary_lines.append(
                 f"{board_label}: {selection.get('game_id')} - {selection.get('source_round_label')}"
-                + (f" ({values})" if values else "")
+                + (f" ({values}{suffix})" if values or suffix else "")
             )
         missing_question_count = getattr(
             composed_data, "missing_question_count", lambda: 0

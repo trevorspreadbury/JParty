@@ -44,7 +44,10 @@ from jparty.domain.state import (
     reconstruct_score_history,
     save_general_state,
 )
-from jparty.services.game_loader import build_game_from_board_selection_configs
+from jparty.services.game_loader import (
+    build_game_from_board_selection_configs,
+    standard_board_daily_double_indices,
+)
 from jparty.ui.widgets.common import CompoundObject, SongPlayer
 
 QUESTION_INDEX_PART_COUNT = 2
@@ -468,6 +471,19 @@ class Game(QObject):
                 ][:5]
             )
             if list(selection.get("row_values", [])) != expected_row_values:
+                return False
+            expected_daily_double_indices = (
+                []
+                if isinstance(round_data, FinalBoard)
+                else standard_board_daily_double_indices(round_data)
+            )
+            if selection.get(
+                "daily_double_count", len(expected_daily_double_indices)
+            ) != len(expected_daily_double_indices):
+                return False
+            if list(
+                selection.get("daily_double_indices", expected_daily_double_indices)
+            ) != (expected_daily_double_indices):
                 return False
         return True
 

@@ -441,6 +441,109 @@ def test_advanced_options_compose_frankenstein_board(
     assert "Final 1: 222 - Final Jeopardy!" in widget.summary_label.text()
 
 
+def test_advanced_options_store_daily_double_count_and_locations(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced standard rows should persist chosen Daily Double locations."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+    widget._advanced_rows[0]["daily_double_spinbox"].setValue(3)
+    widget.sync_advanced_configuration()
+
+    selection = game.board_selection_configs()[0]
+    assert selection["daily_double_count"] == 3
+    assert len(selection["daily_double_indices"]) == 3
+    assert "DDs: 3" in widget.summary_label.text()
+
+
+def test_advanced_row_round_radios_remain_single_select(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Choosing a different source round should uncheck the prior one."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+
+    radios = widget._advanced_rows[0]["board_radios"]
+    assert len(radios) == 2
+    assert radios[0].isChecked() is True
+    radios[1].click()
+
+    assert radios[0].isChecked() is False
+    assert radios[1].isChecked() is True
+
+
+def test_advanced_row_round_click_updates_selected_source_round(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Clicking a different round should update the saved source round."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+
+    widget._advanced_rows[0]["board_radios"][1].click()
+
+    assert game.board_selection_configs()[0]["source_round_index"] == 1
+
+
 def test_advanced_options_replace_regular_workflow(
     qtbot: object, monkeypatch: object
 ) -> None:

@@ -1,7 +1,14 @@
 """Unit tests for structured game loading services."""
 
+import random
+
 import pytest
 from jparty.domain.models import Board, FinalBoard, GameData, Question
+from jparty.services.game_loader import (
+    build_game_from_board_selection_configs,
+    normalize_standard_board_daily_doubles,
+    standard_board_daily_double_indices,
+)
 from jparty.services.game_loading import GameLoader, GameLoadStatus
 
 pytestmark = pytest.mark.unit
@@ -142,3 +149,83 @@ def test_game_loader_save_game_html_persists_loaded_html() -> None:
     loader.save_game_html("4453")
 
     assert cache.saved["4453"] == "<html>wayback</html>"
+
+
+def test_normalize_standard_board_daily_doubles_caps_count_and_avoids_categories() -> (
+    None
+):
+    """Requested Daily Doubles should cap at six and stay category-unique."""
+    categories = [f"Cat {index}" for index in range(6)]
+    board = Board(
+        categories,
+        [
+            Question((col, row), f"Q {col}-{row}", f"A {col}-{row}", categories[col])
+            for col in range(6)
+            for row in range(5)
+        ],
+    )
+
+    normalize_standard_board_daily_doubles(
+        board, requested_count=9, rng=random.Random(0)
+    )
+
+    daily_double_indices = standard_board_daily_double_indices(board)
+    assert len(daily_double_indices) == 6
+    assert (
+        len(
+            {
+                board.get_question(index[0], index[1]).category
+                for index in daily_double_indices
+            }
+        )
+        == 6
+    )
+
+
+def test_build_game_from_board_selection_configs_uses_saved_daily_double_locations(
+    monkeypatch: object,
+) -> None:
+    """Saved Daily Double coordinates should rebuild the same board layout."""
+    categories = [f"Cat {index}" for index in range(6)]
+    source = GameData(
+        [
+            Board(
+                categories,
+                [
+                    Question(
+                        (col, row),
+                        f"Q {col}-{row}",
+                        f"A {col}-{row}",
+                        categories[col],
+                        value=200 * (row + 1),
+                    )
+                    for col in range(6)
+                    for row in range(5)
+                ],
+            ),
+            FinalBoard("Final", Question((0, 0), "FQ", "FA", "Final")),
+        ],
+        "January 1, 2026",
+        "Fixture",
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+
+    composed = build_game_from_board_selection_configs(
+        [
+            {
+                "game_id": "111",
+                "source_round_index": 0,
+                "source_round_label": "Jeopardy!",
+                "board_type": "standard",
+                "row_values": [200, 400, 600, 800, 1000],
+                "daily_double_count": 2,
+                "daily_double_indices": [[0, 1], [4, 3]],
+            }
+        ]
+    )
+
+    assert composed is not None
+    assert standard_board_daily_double_indices(composed.rounds[0]) == [[0, 1], [4, 3]]
