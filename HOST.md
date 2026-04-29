@@ -51,6 +51,9 @@ If nothing has been imported yet, the summary can show:
 
 Use this when you want image clues prepared before the game starts rather than searching during play.
 
+If you want a step-by-step guide for finding and naming clue images from
+J-Archive, see [Saving Question Images](docs/saving-question-images.md).
+
 ### `Load Saved`
 
 Loads an existing saved game session from disk and prepares the game to resume.
