@@ -2,6 +2,10 @@
 
 This guide is for the person running JParty on the host machine. It focuses on what the host sees, what each startup option does, how the game flows once play begins, how to correct scores, and how to handle image clues smoothly.
 
+For the project overview, setup, and development notes, see [README.md](README.md).
+For the saved-state and clue-history file format, see
+[docs/game-logging.md](docs/game-logging.md).
+
 ## Table of Contents
 
 - [Before You Start](#before-you-start)
@@ -269,6 +273,9 @@ Manual overrides are saved in the game history too, so resumed games preserve th
 ### Which score tool should you use?
 
 Prefer `Edit Score` when the problem was a wrong ruling on a recent clue. Prefer a direct podium edit when you truly want to set a player's total manually.
+
+If you need the exact save-file and log structure behind those corrections, see
+[docs/game-logging.md](docs/game-logging.md).
 
 ## Image Selection and Approval During Play
 

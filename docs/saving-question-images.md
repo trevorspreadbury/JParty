@@ -3,6 +3,9 @@
 This guide explains how to find image-based clues for a JParty game and save
 them in the right place so JParty can load them automatically.
 
+For the host-side flow for importing, previewing, and approving clue images,
+see [HOST.md](../HOST.md).
+
 ## Overview
 
 JParty can show local images for clues before the game starts or during play.
@@ -123,3 +126,6 @@ On the welcome screen:
 2. If the media was not found or has not been moved, click `Load Question Media`. and choose the folder or zip file containing the numbered images.
 3. After import, the summary should report that question media was found.
 4. On game start, you should see the images matched up with their answers. 
+
+If you want the full host walkthrough for that startup flow, see
+[HOST.md](../HOST.md).
