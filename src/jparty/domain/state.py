@@ -241,8 +241,6 @@ def load_question_history(game: object) -> object:
         A list of decoded JSON history entries ordered as stored on disk.
     """
     if not game._game_state_dir:
-        game._initialize_game_state_dir()
-    if not game._game_state_dir:
         return []
     history_file = game._game_state_dir / "question_history.jsonl"
     if not history_file.exists():
@@ -325,8 +323,6 @@ def load_general_state(game: object) -> object:
         A dictionary of saved general state data, or an empty dictionary when no
         metadata file is available.
     """
-    if not game._game_state_dir:
-        game._initialize_game_state_dir()
     if not game._game_state_dir:
         return {}
     general_file = game._game_state_dir / "general.json"

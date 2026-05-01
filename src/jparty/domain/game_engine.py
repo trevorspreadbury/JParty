@@ -17,6 +17,7 @@ from threading import Thread
 
 import matplotlib
 import matplotlib.pyplot as plt
+import simpleaudio as sa
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QInputDialog
 
@@ -50,6 +51,10 @@ from jparty.services.game_loader import (
     standard_board_daily_double_indices,
 )
 from jparty.ui.widgets.common import CompoundObject, SongPlayer
+
+# Preserve the historical module-level simpleaudio alias used by tests and
+# older callers that patch ``jparty.domain.game_engine.sa`` directly.
+SIMPLEAUDIO_MODULE = sa
 
 QUESTION_INDEX_PART_COUNT = 2
 DEFAULT_RESUME_ROUND_INDEX = 1
