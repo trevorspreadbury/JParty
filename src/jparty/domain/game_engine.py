@@ -13,6 +13,7 @@ import time
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
+from threading import Thread
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -21,18 +22,21 @@ from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QInputDialog
 
 matplotlib.use("Agg")
-from jparty.app.config import EARLY_BUZZ_PENALTY, FJTIME, QUESTIONTIME
 from jparty.app.paths import GAME_SCORES_DIR, GAME_STATES_DIR
+from jparty.domain.gameplay import (
+    ClueFlow,
+    FinalJeopardyFlow,
+    PlayerStateBroadcaster,
+    ScoreRecorder,
+)
 from jparty.domain.input import (
     MAX_PLAYERS,
     KeystrokeManager,
     QuestionTimer,
     index_to_key,
 )
-from jparty.domain.models import BuzzAttempt, FinalBoard, GameData
+from jparty.domain.models import FinalBoard, GameData
 from jparty.domain.state import (
-    MANUAL_SCORE_ADJUSTMENT_TYPE,
-    build_end_game_summary,
     classify_buzz_phases,
     get_current_game_state,
     is_manual_score_adjustment,
@@ -42,8 +46,15 @@ from jparty.domain.state import (
     reconstruct_score_history,
     save_general_state,
 )
-from jparty.services.game_loader import build_game_from_board_selection_configs
-from jparty.ui.widgets.common import CompoundObject, SongPlayer, resource_path
+from jparty.services.game_loader import (
+    build_game_from_board_selection_configs,
+    standard_board_daily_double_indices,
+)
+from jparty.ui.widgets.common import CompoundObject, SongPlayer
+
+# Preserve the historical module-level simpleaudio alias used by tests and
+# older callers that patch ``jparty.domain.game_engine.sa`` directly.
+SIMPLEAUDIO_MODULE = sa
 
 QUESTION_INDEX_PART_COUNT = 2
 DEFAULT_RESUME_ROUND_INDEX = 1
@@ -83,9 +94,10 @@ class Game(QObject):
         self.early_buzzes = set()
         self.responses_open_time = None
         self.song_player = SongPlayer()
-        self.__judgement_round = 0
-        self.__sorted_players = None
+        self._judgement_round = 0
+        self._sorted_players = None
         self.buzzer_controller = None
+        self._question_timer_factory = QuestionTimer
         self.keystroke_manager = KeystrokeManager()
         self.keystroke_manager.addEvent(
             "CORRECT_ANSWER", Qt.Key.Key_Left, self.correct_answer, self.arrowhints
@@ -176,10 +188,16 @@ class Game(QObject):
         self._resume_state = None
         self._selected_round_indices = None
         self._board_selection_configs = None
+        self._composed_board_selection_configs = None
+        self._composed_game_data = None
         self._history_round_indices_original = False
         self._session_game_id = ""
         self._reveal_answers_after_triple_stumper = False
         self._awaiting_stumped_answer_reveal = False
+        self.player_state_broadcaster = PlayerStateBroadcaster(self)
+        self.score_recorder = ScoreRecorder(self)
+        self.clue_flow = ClueFlow(self)
+        self.final_jeopardy_flow = FinalJeopardyFlow(self)
 
     def startable(self) -> bool:
         """Determine whether the game can start with the current connections.
@@ -218,6 +236,8 @@ class Game(QObject):
         self._resume_state = None
         self._selected_round_indices = None
         self._board_selection_configs = None
+        self._composed_board_selection_configs = None
+        self._composed_game_data = None
         self._history_round_indices_original = False
         self._session_game_id = ""
         if self.buzzer_controller:
@@ -273,14 +293,35 @@ class Game(QObject):
         """
         if configs is None:
             self._board_selection_configs = None
+            self._composed_board_selection_configs = None
+            self._composed_game_data = None
             return
         self._board_selection_configs = deepcopy(list(configs))
+        if self._composed_board_selection_configs != self._board_selection_configs:
+            self._composed_board_selection_configs = None
+            self._composed_game_data = None
 
     def board_selection_configs(self) -> list[dict]:
         """Return the configured advanced board selections for this session."""
         if not self._board_selection_configs:
             return []
         return deepcopy(self._board_selection_configs)
+
+    def set_composed_game_data(
+        self, configs: object, composed_game_data: object | None
+    ) -> None:
+        """Store the latest composed advanced game for immediate reuse."""
+        self._composed_board_selection_configs = (
+            deepcopy(list(configs)) if configs is not None else None
+        )
+        self._composed_game_data = composed_game_data
+
+    def matching_composed_game_data(self, configs: object) -> object | None:
+        """Return cached composed game data when it matches the config."""
+        normalized_configs = deepcopy(list(configs)) if configs is not None else None
+        if normalized_configs != self._composed_board_selection_configs:
+            return None
+        return deepcopy(self._composed_game_data) if self._composed_game_data else None
 
     def set_session_game_id(self, game_id: object) -> None:
         """Store the current session identifier used for saves and logging."""
@@ -462,6 +503,19 @@ class Game(QObject):
             )
             if list(selection.get("row_values", [])) != expected_row_values:
                 return False
+            expected_daily_double_indices = (
+                []
+                if isinstance(round_data, FinalBoard)
+                else standard_board_daily_double_indices(round_data)
+            )
+            if selection.get(
+                "daily_double_count", len(expected_daily_double_indices)
+            ) != len(expected_daily_double_indices):
+                return False
+            if list(
+                selection.get("daily_double_indices", expected_daily_double_indices)
+            ) != (expected_daily_double_indices):
+                return False
         return True
 
     def _normalize_resume_history_round_indices(
@@ -564,15 +618,17 @@ class Game(QObject):
             self._start_resumed_game()
             return
         if self._board_selection_configs:
-            self.data = build_game_from_board_selection_configs(
-                self._board_selection_configs
-            )
+            self.data = self.matching_composed_game_data(self._board_selection_configs)
+            if self.data is None:
+                self.data = build_game_from_board_selection_configs(
+                    self._board_selection_configs
+                )
+                self.set_composed_game_data(self._board_selection_configs, self.data)
         else:
             self._apply_selected_rounds_to_data()
         if not self.data or not self.data.rounds:
             logging.warning("No rounds selected for play")
             return
-        self._save_played_game_html()
         self.current_round = self.data.rounds[0]
         self.dc.hide_welcome_widgets()
         self.buzzer_controller.accepting_players = False
@@ -586,6 +642,7 @@ class Game(QObject):
             self.start_final()
         else:
             self.dc.board_widget.load_round(self.current_round)
+        Thread(target=self._save_played_game_html, daemon=True).start()
         self._refresh_score_edit_controls()
 
     def _save_played_game_html(self) -> None:
@@ -1201,20 +1258,7 @@ class Game(QObject):
         Returns:
             ``True`` when the override was applied.
         """
-        if player.score == new_score:
-            return False
-        history_entry = {
-            "type": MANUAL_SCORE_ADJUSTMENT_TYPE,
-            "player_index": player.player_number,
-            "timestamp": time.time(),
-            "score_before": player.score,
-            "score_after": new_score,
-            "new_score": new_score,
-        }
-        self._append_history_entry(history_entry)
-        self.set_score(player, new_score)
-        self._refresh_score_edit_controls()
-        return True
+        return self.score_recorder.apply_manual_score_override(player, new_score)
 
     def _flush_question_history(self) -> None:
         """Persist the active clue's history and clear per-question buffers.
@@ -1222,44 +1266,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        if not self._game_state_dir:
-            self._initialize_game_state_dir()
-        if not self._game_state_dir or not self._current_question_history:
-            logging.error("No game state directory or current question history")
-            return
-        question_index = self._get_question_index()
-        if not question_index:
-            logging.error("No question index")
-            return
-        if not self.active_question.dd and not isinstance(
-            self.current_round, FinalBoard
-        ):
-            buzz_phases = self._classify_buzz_phases()
-        else:
-            buzz_phases = []
-        entry = {
-            "question_index": list(question_index),
-            "question_number": self.question_number,
-            "round_index": self.data.rounds.index(self.current_round)
-            if self.data and self.current_round
-            else None,
-            "category": self.active_question.category if self.active_question else "",
-            "value": self.active_question.value if self.active_question else -1,
-            "is_daily_double": self.active_question.dd
-            if self.active_question
-            else False,
-            "buzz_phases": buzz_phases,
-            "answer_attempts": self._answer_attempts.copy(),
-            "completed_at": time.time(),
-        }
-        self._append_history_entry(entry)
-        self._current_question_history = None
-        self._all_buzz_attempts = []
-        self._answer_attempts = []
-        self._open_responses_times = []
-        self._successful_buzz_times = []
-        self._question_start_time = None
-        self._refresh_score_edit_controls()
+        self.score_recorder.flush_question_history()
 
     def arrowhints(self, val: object) -> None:
         """Update host UI arrow-key hints.
@@ -1378,9 +1385,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        if self.buzzer_controller:
-            for player in self.players:
-                self._update_lectern_for_player(player, buzzed=False)
+        self.player_state_broadcaster.update_all()
 
     def valid_game(self) -> object:
         """Check whether loaded game data contains complete rounds.
@@ -1397,13 +1402,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        self.responses_open_time = time.time()
-        self._open_responses_times.append(self.responses_open_time)
-        self.dc.borders.lights(True)
-        self.accepting_responses = True
-        if not self.timer:
-            self.timer = QuestionTimer(QUESTIONTIME, self.stumped)
-        self.timer.start()
+        self.clue_flow.open_responses()
 
     def close_responses(self) -> None:
         """Close the current buzz window without clearing clue state.
@@ -1411,9 +1410,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        self.timer.pause()
-        self.accepting_responses = False
-        self.dc.borders.lights(True)
+        self.clue_flow.close_responses()
 
     def keyboard_buzz(self) -> None:
         """Trigger a buzz for the first keyboard-controlled player.
@@ -1432,54 +1429,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        if not isinstance(i_player, int) or not 0 <= i_player < len(self.players):
-            logging.warning(f"Ignoring buzz for invalid player index: {i_player}")
-            return
-        player = self.players[i_player]
-        if self.active_question is None:
-            self.dc.player_widget(player).buzz_hint()
-            return
-        elif player in self.previous_answerers:
-            return
-        current_time = time.time()
-        question_index = self._get_question_index()
-        early_buzz = False
-        successful_buzz = False
-        in_timeout = False
-        if not self.accepting_responses:
-            if not self.previous_answerers:
-                self.early_buzzes.add(i_player)
-                early_buzz = True
-                logging.info(f"Early buzz recorded: player {i_player}")
-        elif (
-            i_player in self.early_buzzes
-            and current_time - self.responses_open_time < EARLY_BUZZ_PENALTY
-        ):
-            in_timeout = True
-            logging.info(f"Early buzz timeout: player {i_player} ignored")
-        else:
-            self.accepting_responses = False
-            self.timer.pause()
-            self.previous_answerers.add(player)
-            self.answering_player = player
-            successful_buzz = True
-            logging.info(f"Successful buzz recorded: player {i_player}")
-            self.dc.player_widget(player).run_lights()
-            self._update_lectern_for_player(player, buzzed=True)
-            self.keystroke_manager.activate("CORRECT_ANSWER", "INCORRECT_ANSWER")
-            self.dc.borders.lights(False)
-            self._successful_buzz_times.append(current_time)
-        self._all_buzz_attempts.append(
-            BuzzAttempt(
-                player_index=i_player,
-                question_index=question_index,
-                timestamp=current_time,
-                is_early=early_buzz,
-                is_success=successful_buzz,
-                is_rebound=False,
-                in_timeout=in_timeout,
-            )
-        )
+        self.clue_flow.buzz(i_player)
 
     def answer_given(self) -> None:
         """Clear answer-resolution UI state after a judgment is made.
@@ -1487,12 +1437,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        self.keystroke_manager.deactivate("CORRECT_ANSWER", "INCORRECT_ANSWER")
-        self.dc.player_widget(self.answering_player).stop_lights()
-        answering_player = self.answering_player
-        self.answering_player = None
-        if answering_player:
-            self._update_lectern_for_player(answering_player, buzzed=False)
+        self.clue_flow.answer_given()
 
     def back_to_board(self) -> None:
         """Return from a clue view to the board and advance question tracking.
@@ -1500,26 +1445,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        logging.info("back_to_board")
-        self._awaiting_stumped_answer_reveal = False
-        self._flush_question_history()
-        self.question_number += 1
-        self.dc.hide_question()
-        self.timer = None
-        self.active_question.complete = True
-        self.active_question = None
-        self.previous_answerers = set()
-        self.early_buzzes = set()
-        self.responses_open_time = None
-        if self.answering_player:
-            self._update_lectern_for_player(self.answering_player, buzzed=False)
-        self.answering_player = None
-        for player in self.players:
-            self._update_lectern_for_player(player, buzzed=False)
-        if all(q.complete for q in self.current_round.questions):
-            logging.info("NEXT ROUND")
-            self.keystroke_manager.activate("NEXT_ROUND")
-        self._refresh_score_edit_controls()
+        self.clue_flow.back_to_board()
 
     def accept_image(self) -> None:
         """Accept the proposed clue image and continue loading the question.
@@ -1619,29 +1545,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        self._all_buzz_attempts = []
-        self._answer_attempts = []
-        self._open_responses_times = []
-        self._successful_buzz_times = []
-        question_index = self._get_question_index()
-        if question_index:
-            self._current_question_history = {
-                "question_index": list(question_index),
-                "question_number": self.question_number,
-                "round_index": self.data.rounds.index(self.current_round)
-                if self.data and self.current_round
-                else None,
-                "category": self.active_question.category
-                if self.active_question
-                else "",
-                "value": self.active_question.value if self.active_question else -1,
-                "is_daily_double": False,
-            }
-        self.dc.borders.lights(True)
-        self.buzzer_controller.prompt_answers()
-        self.song_player.final()
-        self.timer = QuestionTimer(FJTIME, self.final_finished_song)
-        self.timer.start()
+        self.final_jeopardy_flow.open_responses()
 
     def final_next_player(self) -> None:
         """Advance Final Jeopardy judging to the next player.
@@ -1649,20 +1553,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        for p in self.players:
-            self.dc.player_widget(p).set_lights(False)
-        if self.__judgement_round == 0:
-            self.dc.load_final_judgement()
-            self.__sorted_players = sorted(self.players, key=lambda x: x.score)
-        elif self.__judgement_round == len(self.players):
-            self.end_game()
-            return
-        self.answering_player = self.__sorted_players[self.__judgement_round]
-        self.dc.player_widget(self.answering_player).set_lights(True)
-        self.dc.final_window.guess_label.setText("")
-        self.dc.final_window.wager_label.setText("")
-        self._update_lectern_for_player(self.answering_player, show_final_answer=False)
-        self.keystroke_manager.activate("FINAL_SHOW_ANSWER")
+        self.final_jeopardy_flow.next_player()
 
     def final_show_answer(self) -> None:
         """Reveal the current player's Final Jeopardy response.
@@ -1670,14 +1561,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        answer = self.answering_player.finalanswer
-        if answer == "":
-            answer = "________"
-        self.dc.final_window.guess_label.setText(answer)
-        self._update_lectern_for_player(self.answering_player, show_final_answer=True)
-        self.keystroke_manager.activate(
-            "FINAL_CORRECT_ANSWER", "FINAL_INCORRECT_ANSWER"
-        )
+        self.final_jeopardy_flow.show_answer()
 
     def final_correct_answer(self) -> None:
         """Apply a correct Final Jeopardy ruling to the active player.
@@ -1685,20 +1569,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        ap = self.answering_player
-        old_score = ap.score
-        new_score = ap.score + ap.wager
-        self._answer_attempts.append(
-            {
-                "player_index": ap.player_number,
-                "answer_correct": True,
-                "timestamp": time.time(),
-                "score_before": old_score,
-                "score_after": new_score,
-            }
-        )
-        self.set_score(ap, new_score)
-        self.final_judgement_given()
+        self.final_jeopardy_flow.correct_answer()
 
     def final_incorrect_answer(self) -> None:
         """Apply an incorrect Final Jeopardy ruling to the active player.
@@ -1706,20 +1577,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        ap = self.answering_player
-        old_score = ap.score
-        new_score = ap.score - ap.wager
-        self._answer_attempts.append(
-            {
-                "player_index": ap.player_number,
-                "answer_correct": False,
-                "timestamp": time.time(),
-                "score_before": old_score,
-                "score_after": new_score,
-            }
-        )
-        self.set_score(ap, new_score)
-        self.final_judgement_given()
+        self.final_jeopardy_flow.incorrect_answer()
 
     def final_judgement_given(self) -> None:
         """Finalize one Final Jeopardy judgment and ready the next step.
@@ -1727,12 +1585,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        self.keystroke_manager.deactivate(
-            "FINAL_CORRECT_ANSWER", "FINAL_INCORRECT_ANSWER"
-        )
-        self.dc.final_window.wager_label.setText(str(self.answering_player.wager))
-        self.keystroke_manager.activate("FINAL_NEXT_PLAYER")
-        self.__judgement_round += 1
+        self.final_jeopardy_flow.judgement_given()
 
     def final_finished_song(self) -> None:
         """Handle the end of the Final Jeopardy think music.
@@ -1740,12 +1593,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        logging.info("Final song ended")
-        self.toolate_trigger.emit()
-        self.accepting_responses = False
-        self.dc.borders.flash()
-        self.keystroke_manager.activate("FINAL_NEXT_PLAYER")
-        self._refresh_score_edit_controls()
+        self.final_jeopardy_flow.finished_song()
 
     def end_game(self) -> None:
         """Determine winners, update the UI, and move toward score graphs.
@@ -1753,22 +1601,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        if (
-            isinstance(self.current_round, FinalBoard)
-            and self.active_question is not None
-            and self._current_question_history
-        ):
-            self._flush_question_history()
-        top_score = max([p.score for p in self.players])
-        winners = [p for p in self.players if p.score == top_score]
-        for w in winners:
-            self.dc.player_widget(w).set_lights(True)
-        if len(winners) == 1:
-            self.dc.final_window.show_winner(winners[0])
-        else:
-            self.dc.final_window.show_tie()
-        logging.info("Game over!")
-        self.keystroke_manager.activate("GENERATE_GRAPHS")
+        self.final_jeopardy_flow.end_game()
 
     def generate_final_score_graphs(self) -> None:
         """Build and show the end-of-game audience summary screen.
@@ -1776,11 +1609,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        self.keystroke_manager.deactivate("GENERATE_GRAPHS")
-        summary = build_end_game_summary(self)
-        QApplication.processEvents()
-        self.main_display.load_end_game_summary(summary)
-        self.keystroke_manager.activate("CLOSE_GAME")
+        self.final_jeopardy_flow.generate_final_score_graphs()
 
     def _load_question_history(self) -> object:
         """Load saved per-question history for the current game session.
@@ -1911,7 +1740,7 @@ class Game(QObject):
         self.answering_player = None
         self.timer = None
         self.data = None
-        self.__judgement_round = 0
+        self._judgement_round = 0
         self.early_buzzes = set()
         self.responses_open_time = None
         self.dc.restart()
@@ -1981,35 +1810,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        self.active_question = q
-        self._awaiting_stumped_answer_reveal = False
-        self._question_start_time = time.time()
-        self._all_buzz_attempts = []
-        self._answer_attempts = []
-        self._open_responses_times = []
-        self._successful_buzz_times = []
-        question_index = self._get_question_index()
-        if question_index:
-            self._current_question_history = {
-                "question_index": list(question_index),
-                "question_number": self.question_number,
-                "round_index": self.data.rounds.index(self.current_round)
-                if self.data and self.current_round
-                else None,
-                "category": q.category,
-                "value": q.value,
-                "is_daily_double": q.dd,
-            }
-        if q.dd:
-            logging.info("Daily double!")
-            wo = sa.WaveObject.from_wave_file(resource_path("dd.wav"))
-            wo.play()
-            self.soliciting_player = True
-        else:
-            self.keystroke_manager.activate("OPEN_RESPONSES")
-        self.dc.load_question(q)
-        self.dc.remove_card(q)
-        self._refresh_score_edit_controls()
+        self.clue_flow.load_question(q)
 
     def open_final(self) -> None:
         """Reveal the Final Jeopardy clue and enable answer entry.
@@ -2026,24 +1827,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        old_score = self.answering_player.score
-        new_score = old_score + self.active_question.value
-        if self.answering_player:
-            self._answer_attempts.append(
-                {
-                    "player_index": self.answering_player.player_number,
-                    "answer_correct": True,
-                    "timestamp": time.time(),
-                    "score_before": old_score,
-                    "score_after": new_score,
-                }
-            )
-        if self.timer:
-            self.timer.cancel()
-        self.set_score(self.answering_player, new_score)
-        self.dc.borders.lights(False)
-        self.answer_given()
-        self.back_to_board()
+        self.clue_flow.correct_answer()
 
     def incorrect_answer(self) -> None:
         """Apply an incorrect ruling to the active player's clue response.
@@ -2051,25 +1835,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        old_score = self.answering_player.score
-        new_score = old_score - self.active_question.value
-        if self.answering_player:
-            self._answer_attempts.append(
-                {
-                    "player_index": self.answering_player.player_number,
-                    "answer_correct": False,
-                    "timestamp": time.time(),
-                    "score_before": old_score,
-                    "score_after": new_score,
-                }
-            )
-        self.set_score(self.answering_player, new_score)
-        self.answer_given()
-        if self.active_question.dd:
-            self.back_to_board()
-        else:
-            self.open_responses()
-            self.timer.resume()
+        self.clue_flow.incorrect_answer()
 
     def stumped(self) -> None:
         """Handle a clue expiring without a correct response.
@@ -2077,15 +1843,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        self.accepting_responses = False
-        sa.WaveObject.from_wave_file(resource_path("stumped.wav")).play()
-        self.dc.borders.flash()
-        if self.reveal_answers_after_triple_stumper_enabled():
-            self._awaiting_stumped_answer_reveal = True
-            self.keystroke_manager.activate("REVEAL_STUMPED_ANSWER")
-            return
-        self._awaiting_stumped_answer_reveal = False
-        self.keystroke_manager.activate("BACK_TO_BOARD")
+        self.clue_flow.stumped()
 
     def reveal_stumped_answer(self) -> None:
         """Reveal the current clue answer before returning to the board.
@@ -2093,11 +1851,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        if not self._awaiting_stumped_answer_reveal or self.active_question is None:
-            return
-        self._awaiting_stumped_answer_reveal = False
-        self.dc.question_widget.reveal_answer()
-        self.keystroke_manager.activate("BACK_TO_BOARD")
+        self.clue_flow.reveal_stumped_answer()
 
     def __toolate(self) -> None:
         """Notify the buzzer controller that the response window has ended.
@@ -2136,15 +1890,9 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        if self.buzzer_controller:
-            state_dict = self.buzzer_controller.get_player_state_dict(player)
-            state_dict["buzzed"] = buzzed
-            state_dict["active"] = (
-                self.answering_player is player if self.answering_player else False
-            )
-            if not show_final_answer:
-                state_dict["finalanswer"] = None
-            self.lectern_update_trigger.emit(player.player_number, state_dict)
+        self.player_state_broadcaster.update_player(
+            player, buzzed=buzzed, show_final_answer=show_final_answer
+        )
 
     def set_score(self, player: object, score: object) -> None:
         """Update a player's score and refresh related displays.
@@ -2156,9 +1904,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        player.score = score
-        self.dc.player_widget(player).update_score()
-        self._update_lectern_for_player(player)
+        self.player_state_broadcaster.set_score(player, score)
 
     def adjust_score(self, player: object) -> None:
         """Prompt the host to manually override a player's score.

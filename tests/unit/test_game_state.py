@@ -4,7 +4,11 @@ import json
 
 import pytest
 from jparty.domain.models import Board, FinalBoard, GameData, Question
-from jparty.domain.state import build_end_game_summary
+from jparty.domain.state import (
+    build_end_game_summary,
+    load_general_state,
+    load_question_history,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -27,6 +31,52 @@ def test_load_general_state_reads_fixture(
     state = game._load_general_state()
     assert state["game_id"] == "4453"
     assert len(state["players"]) == 2
+
+
+def test_load_general_state_without_active_dir_does_not_initialize() -> None:
+    """General-state reads should not create a new game-state directory."""
+
+    class StubGame:
+        """Track whether lazy initialization was attempted during a read."""
+
+        def __init__(self) -> None:
+            """Initialize the stub with no active game-state path."""
+            self._game_state_dir = None
+            self.initialize_calls = 0
+
+        def _initialize_game_state_dir(self) -> None:
+            """Fail the test if read helpers try to create a directory."""
+            self.initialize_calls += 1
+
+    game = StubGame()
+
+    state = load_general_state(game)
+
+    assert state == {}
+    assert game.initialize_calls == 0
+
+
+def test_load_question_history_without_active_dir_does_not_initialize() -> None:
+    """History reads should not create a new game-state directory."""
+
+    class StubGame:
+        """Track whether lazy initialization was attempted during a read."""
+
+        def __init__(self) -> None:
+            """Initialize the stub with no active game-state path."""
+            self._game_state_dir = None
+            self.initialize_calls = 0
+
+        def _initialize_game_state_dir(self) -> None:
+            """Fail the test if read helpers try to create a directory."""
+            self.initialize_calls += 1
+
+    game = StubGame()
+
+    history = load_question_history(game)
+
+    assert history == []
+    assert game.initialize_calls == 0
 
 
 def test_save_general_state_writes_general_json(
