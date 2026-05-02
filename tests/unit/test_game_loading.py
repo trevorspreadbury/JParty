@@ -3,6 +3,7 @@
 import random
 
 import pytest
+from bs4 import BeautifulSoup
 from jparty.domain.models import Board, FinalBoard, GameData, Question
 from jparty.services.game_loader import (
     build_game_from_board_selection_configs,
@@ -10,6 +11,7 @@ from jparty.services.game_loader import (
     standard_board_daily_double_indices,
 )
 from jparty.services.game_loading import GameLoader, GameLoadStatus
+from jparty.services.game_parser import GameParser
 
 pytestmark = pytest.mark.unit
 
@@ -231,3 +233,25 @@ def test_build_game_from_board_selection_configs_uses_saved_daily_double_locatio
 
     assert composed is not None
     assert standard_board_daily_double_indices(composed.rounds[0]) == [[0, 1], [4, 3]]
+
+
+def test_game_parser_normalizes_comments_and_image_flags(
+    fixture_dir: object,
+) -> None:
+    """Parsed J-Archive games should not retain BeautifulSoup objects."""
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    parser = GameParser()
+
+    game = parser.process_game_board_from_html(html, "4453")
+    assert game is not None
+    assert isinstance(game.comments, str)
+    assert all(
+        isinstance(question.image, bool)
+        for round_data in game.rounds
+        for question in getattr(round_data, "questions", [])
+    )
+
+    date, comments = parser.get_game_sum(BeautifulSoup(html, "html.parser"))
+    assert isinstance(date, str)
+    assert isinstance(comments, str)
+    assert comments == game.comments

@@ -20,6 +20,14 @@ DOUBLE_JEOPARDY_START_ROW = 14
 class GameParser:
     """Parse CSV and HTML source payloads into ``GameData``."""
 
+    def normalize_comments(self, comment_node: object) -> str:
+        """Return plain-text comments extracted from one HTML node."""
+        if comment_node is None:
+            return ""
+        if hasattr(comment_node, "get_text"):
+            return str(comment_node.get_text(" ", strip=True))
+        return str(comment_node).strip()
+
     def list_to_game(self, rows: list[list[str]]) -> GameData:
         """Convert a Google Sheets CSV matrix into ``GameData``."""
         alpha = "BCDEFG"
@@ -118,8 +126,7 @@ class GameParser:
         if date_search is None:
             return None
         date = date_search.groups()[0]
-        comments = comment_nodes[0].contents
-        comments = comments[0] if comments else ""
+        comments = self.normalize_comments(comment_nodes[0])
 
         boards = []
         rounds = soup.find_all(class_="round")
@@ -139,7 +146,7 @@ class GameParser:
                         round_index,
                     )
                     continue
-                image_likely = text_obj.find("a")
+                image_likely = bool(text_obj.find("a"))
                 image_url = None
                 index_key = text_obj["id"]
                 index = (int(index_key[-3]) - 1, int(index_key[-1]) - 1)
@@ -197,5 +204,5 @@ class GameParser:
         date = re.search(
             r"- .*?, (.*?)$", soup.select("#game_title > h1")[0].contents[0]
         ).groups()[0]
-        comments = soup.select("#game_comments")[0].contents
+        comments = self.normalize_comments(soup.select("#game_comments")[0])
         return (date, comments)

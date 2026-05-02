@@ -7,6 +7,7 @@ from typing import NoReturn
 import pytest
 from jparty.app.paths import GAME_STATES_DIR
 from jparty.domain.models import Board, FinalBoard, GameData, Question
+from jparty.services.game_parser import GameParser
 from jparty.services.question_media import QuestionMediaStatus
 from jparty.ui.widgets.welcome import QuestionMediaPreview, Welcome
 from PyQt6.QtCore import Qt
@@ -1248,3 +1249,68 @@ def test_preview_buttons_go_back_or_start_game(qtbot: object, temp_dir: object) 
     assert parent.back_calls == 1
     qtbot.mouseClick(preview.start_button, Qt.MouseButton.LeftButton)
     assert game.start_game_calls == 1
+
+
+def test_franken_preview_start_uses_cached_composed_game_with_local_media(
+    qtbot: object,
+    game_with_players: object,
+    fixture_dir: object,
+    temp_dir: object,
+    monkeypatch: object,
+) -> None:
+    """Starting from preview should deep-copy cached franken data without recursion."""
+    game = game_with_players
+    media_root = temp_dir / "question_media"
+    media_dir = media_root / "4453"
+    media_dir.mkdir(parents=True)
+    image_path = media_dir / "0-0-0.png"
+    pixmap = QPixmap(40, 40)
+    pixmap.fill(QColor("magenta"))
+    assert pixmap.save(str(image_path))
+
+    monkeypatch.setattr("jparty.services.question_media.QUESTION_MEDIA", media_root)
+    monkeypatch.setattr("jparty.services.game_parser.QUESTION_MEDIA", media_root)
+    monkeypatch.setattr(game, "_save_played_game_html", lambda: None)
+
+    parser = GameParser()
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    parsed_source = parser.process_game_board_from_html(html, "4453")
+    assert parsed_source is not None
+
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"4453": parsed_source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"4453": parsed_source}[game_id],
+    )
+
+    parent = PreviewParent(game)
+    qtbot.addWidget(parent)
+    widget = Welcome(game, parent)
+    qtbot.addWidget(widget)
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(1)
+    widget._advanced_rows[0]["gameid_edit"].setText("4453")
+    widget.refresh_advanced_row(0)
+    widget._advanced_rows[1]["gameid_edit"].setText("4453")
+    widget.refresh_advanced_row(1)
+
+    assert widget.advanced_start_button.isEnabled() is True
+    assert game.board_selection_configs()
+
+    qtbot.mouseClick(widget.advanced_start_button, Qt.MouseButton.LeftButton)
+
+    assert game.dc.board_widget.loaded_rounds == []
+    assert len(parent.preview_requests) == 1
+    assert parent.preview_widget is not None
+    qtbot.addWidget(parent.preview_widget)
+
+    qtbot.mouseClick(parent.preview_widget.start_button, Qt.MouseButton.LeftButton)
+
+    assert game.current_round is game.data.rounds[0]
+    assert game.dc.board_widget.loaded_rounds == [game.data.rounds[0]]
+    assert game.data.rounds[0].questions[0].image_url == str(image_path)
