@@ -283,7 +283,7 @@ class ClueFlow:
     def stumped(self) -> None:
         """Handle a clue expiring without a correct response."""
         self.game.accepting_responses = False
-        sa.WaveObject.from_wave_file(resource_path("stumped.wav")).play()
+        self.game.song_player.stumped()
         self.game.dc.borders.flash()
         if self.game.reveal_answers_after_triple_stumper_enabled():
             self.game._awaiting_stumped_answer_reveal = True

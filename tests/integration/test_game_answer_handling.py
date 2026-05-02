@@ -57,7 +57,7 @@ def test_stumped_closes_responses_and_enables_return_to_board(
     game.open_responses()
     game.stumped()
     assert game.accepting_responses is False
-    assert game.wave.play_calls == 1
+    assert game.song_player.stumped_calls == 1
     assert game.dc.borders.flash_calls == 1
     assert (
         game.keystroke_manager._KeystrokeManager__events["BACK_TO_BOARD"].active is True
@@ -76,7 +76,7 @@ def test_stumped_can_reveal_answer_before_returning_to_board(
 
     game.stumped()
 
-    assert game.wave.play_calls == 1
+    assert game.song_player.stumped_calls == 1
     assert (
         game.keystroke_manager._KeystrokeManager__events["REVEAL_STUMPED_ANSWER"].active
         is True

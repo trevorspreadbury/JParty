@@ -44,6 +44,7 @@ class SongPlayer:
         super().__init__()
         self.__wave_obj = sa.WaveObject.from_wave_file(resource_path("intro.wav"))
         self.__final = sa.WaveObject.from_wave_file(resource_path("final.wav"))
+        self.__stumped = sa.WaveObject.from_wave_file(resource_path("stumped.wav"))
         self.__play_obj = None
         self.__repeating = False
         self.__repeat_thread = None
@@ -86,6 +87,14 @@ class SongPlayer:
         """
         self.__repeating = False
         self.__play_obj.stop()
+
+    def stumped(self) -> None:
+        """Play the stumped cue using the preloaded audio asset.
+
+        Returns:
+            ``None``.
+        """
+        self.__stumped.play()
 
     def __repeat(self) -> None:
         """Loop playback while repeating is enabled.

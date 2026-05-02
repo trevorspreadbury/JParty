@@ -67,6 +67,7 @@ class Game(QObject):
 
     buzz_trigger = pyqtSignal(int)
     new_player_trigger = pyqtSignal()
+    stumped_trigger = pyqtSignal()
     wager_trigger = pyqtSignal(int, int)
     toolate_trigger = pyqtSignal()
     lectern_update_trigger = pyqtSignal(int, dict)
@@ -175,6 +176,7 @@ class Game(QObject):
         self.wager_trigger.connect(self.wager)
         self.buzz_trigger.connect(self.buzz)
         self.new_player_trigger.connect(self.new_player)
+        self.stumped_trigger.connect(self.__handle_stumped_timeout)
         self.toolate_trigger.connect(self.__toolate)
         self.lectern_update_trigger.connect(self.__broadcast_lectern_update)
         self._game_state_dir = None
@@ -1839,6 +1841,14 @@ class Game(QObject):
 
     def stumped(self) -> None:
         """Handle a clue expiring without a correct response.
+
+        Returns:
+            ``None``.
+        """
+        self.stumped_trigger.emit()
+
+    def __handle_stumped_timeout(self) -> None:
+        """Run stumped handling on the game object's Qt thread.
 
         Returns:
             ``None``.

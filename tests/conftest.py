@@ -70,6 +70,7 @@ class FakeSongPlayer:
         """Test init."""
         self.play_calls = []
         self.final_calls = 0
+        self.stumped_calls = 0
         self.stop_calls = 0
 
     def play(self, repeat: object = False) -> None:
@@ -79,6 +80,10 @@ class FakeSongPlayer:
     def final(self, repeat: object = False) -> None:
         """Test final."""
         self.final_calls += 1
+
+    def stumped(self) -> None:
+        """Test stumped cue playback."""
+        self.stumped_calls += 1
 
     def stop(self) -> None:
         """Test stop."""
@@ -549,13 +554,10 @@ def game(
     import jparty.domain.game_engine as game_module
 
     FakeTimer.instances = []
-    wave = FakeWave()
     monkeypatch.setattr(game_module, "SongPlayer", FakeSongPlayer)
     monkeypatch.setattr(game_module, "QuestionTimer", FakeTimer)
     monkeypatch.setattr(game_module.time, "time", time_controller.time)
-    monkeypatch.setattr(game_module.sa.WaveObject, "from_wave_file", lambda _: wave)
     game = Game()
-    game.wave = wave
     game._game_state_dir = temp_dir / "game_state"
     game._game_state_dir.mkdir()
     game._game_started_at = time_controller.time()
