@@ -3,9 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
-import requests
 from jparty.domain.models import Question
-from jparty.services import image_lookup
 from jparty.ui.windows.display import DisplayWindow, HostDisplayWindow
 from PyQt6.QtCore import QRect
 
@@ -126,14 +124,9 @@ def _assert_showing_clue(window: object, question: object) -> None:
 
 
 def test_offline_image_clue_then_text_clue_updates_both_screens(
-    qtbot: object, monkeypatch: object
+    qtbot: object, offline_image_lookup: None
 ) -> None:
     """Test an offline image lookup still lets the host play on (issue #49)."""
-
-    def offline(*args: object, **kwargs: object) -> None:
-        raise requests.exceptions.ConnectionError("offline")
-
-    monkeypatch.setattr(image_lookup.requests, "get", offline)
     game = _stub_game()
     board_window, host_window = _windows(qtbot, game)
     image_question = _image_question()
@@ -141,8 +134,12 @@ def test_offline_image_clue_then_text_clue_updates_both_screens(
 
     host_window.load_image_review_screen(image_question)
     assert host_window.on_image_question
-    assert host_window.image_question_widget is not None
-    assert host_window.image_question_widget.image_url == "No image found."
+    review_widget = host_window.image_question_widget
+    assert review_widget is not None
+    qtbot.waitUntil(
+        lambda: review_widget.image_label.text() == "Failed to load image.",
+        timeout=10000,
+    )
 
     # "No Image Necessary": the clue continues as a text clue on both screens.
     image_question.image = False
