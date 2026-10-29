@@ -1483,8 +1483,9 @@ class Game(QObject):
             round_index for round_index in playable_round_indices if round_index > i
         ]
         if not future_round_indices:
-            if getattr(self.dc, "final_window", None) is None:
-                self.dc.load_final_judgement()
+            # Only reached from a regular board: a Final round ends through
+            # FinalJeopardyFlow, so no final window exists yet.
+            self.dc.load_final_judgement()
             self.end_game()
             return
         self.current_round = self.data.rounds[future_round_indices[0]]
