@@ -18,6 +18,7 @@ QUESTION_HISTORY_FILE_NAME = "question_history.jsonl"
 QUESTION_HISTORY_ENTRY_TYPE = "question"
 MANUAL_SCORE_ADJUSTMENT_TYPE = "manual_score_adjustment"
 SCORE_CORRECTION_TYPE = "score_correction"
+PLAYER_RENUMBER_TYPE = "player_renumber"
 CORRECT_RESULT = "correct"
 INCORRECT_RESULT = "incorrect"
 NO_ANSWER_RESULT = "no answer"
@@ -207,6 +208,76 @@ def is_score_correction(entry: dict) -> bool:
     return get_history_entry_type(entry) == SCORE_CORRECTION_TYPE
 
 
+def is_player_renumber(entry: dict) -> bool:
+    """Return whether a history entry records a resume-lobby seat change.
+
+    Args:
+        entry: Persisted JSONL history entry.
+
+    Returns:
+        ``True`` when the entry is a ``player_renumber`` line.
+    """
+    return get_history_entry_type(entry) == PLAYER_RENUMBER_TYPE
+
+
+def _remap_player_indices(entry: dict, mapping: dict[int, int]) -> None:
+    """Rewrite every player number in one history entry, in place.
+
+    Args:
+        entry: History entry to update.
+        mapping: Old player number to new player number. Numbers not in the
+            mapping are left unchanged.
+    """
+
+    def remap(player_index: object) -> object:
+        return mapping.get(player_index, player_index)
+
+    if "player_index" in entry:
+        entry["player_index"] = remap(entry["player_index"])
+    for attempt in entry.get("answer_attempts", []):
+        if "player_index" in attempt:
+            attempt["player_index"] = remap(attempt["player_index"])
+    for phase in entry.get("buzz_phases", []):
+        for buzz_attempt in phase.get("buzz_attempts", []):
+            if "player_index" in buzz_attempt:
+                buzz_attempt["player_index"] = remap(buzz_attempt["player_index"])
+    for adjustment in entry.get("adjustments", []):
+        if "player_index" in adjustment:
+            adjustment["player_index"] = remap(adjustment["player_index"])
+    if isinstance(entry.get("player_states"), dict):
+        entry["player_states"] = {
+            str(remap(int(player_index))): result
+            for player_index, result in entry["player_states"].items()
+        }
+
+
+def _player_renumber_mapping(
+    path: Path, line_number: int, entry: dict
+) -> dict[int, int]:
+    """Return a ``player_renumber`` line's mapping, checking it is a reordering.
+
+    Raises:
+        HistoryFileError: If the mapping is malformed or not one-to-one.
+    """
+    try:
+        mapping = {
+            int(saved): int(current)
+            for saved, current in dict(entry.get("mapping", {})).items()
+        }
+    except (TypeError, ValueError) as exc:
+        raise HistoryFileError(
+            path, line_number, "player_renumber mapping is not a map of numbers"
+        ) from exc
+    if set(mapping) != set(mapping.values()):
+        raise HistoryFileError(
+            path,
+            line_number,
+            "player_renumber mapping is not a one-to-one reordering of the "
+            "player numbers",
+        )
+    return mapping
+
+
 def history_score_events(entry: dict) -> list[tuple]:
     """Return the score changes one history line records, in order.
 
@@ -246,8 +317,14 @@ def history_score_events(entry: dict) -> list[tuple]:
     return []
 
 
-def read_history_file(path: object) -> list[dict]:
+def read_history_file(
+    path: object, apply_player_renumbering: bool = True
+) -> list[dict]:
     """Strictly read every line of a ``question_history.jsonl`` file.
+
+    Each ``player_renumber`` line (written when the host reorders seats in
+    the resume lobby) is applied to every line before it, so all returned
+    entries use the current player numbers.
 
     The file is a ledger: read in file order, each player's ``score_before``
     must equal the ``score_after`` of their previous score change (or ``0``
@@ -256,6 +333,10 @@ def read_history_file(path: object) -> list[dict]:
 
     Args:
         path: Path of the history file.
+        apply_player_renumbering: Whether to translate player numbers through
+            ``player_renumber`` lines. Pass ``False`` only to rewrite the file
+            as stored; the score chain is not checked then, because it only
+            holds once renumbering is applied.
 
     Returns:
         Decoded history entries in file order, or ``[]`` when the file does
@@ -263,8 +344,8 @@ def read_history_file(path: object) -> list[dict]:
 
     Raises:
         HistoryFileError: If a line is not valid JSON, the last line has no
-            trailing newline (the file was cut off), or the score chain
-            breaks.
+            trailing newline (the file was cut off), a ``player_renumber``
+            mapping is not a reordering, or the score chain breaks.
     """
     path = Path(path)
     if not path.exists():
@@ -300,8 +381,14 @@ def read_history_file(path: object) -> list[dict]:
                 "no newline at the end of the line, so the file was probably "
                 "cut off while it was being written",
             )
+        if apply_player_renumbering and is_player_renumber(entry):
+            mapping = _player_renumber_mapping(path, line_number, entry)
+            for _, earlier_entry in entries:
+                if not is_player_renumber(earlier_entry):
+                    _remap_player_indices(earlier_entry, mapping)
         entries.append((line_number, entry))
-    _check_score_chain(path, entries)
+    if apply_player_renumbering:
+        _check_score_chain(path, entries)
     return [entry for _, entry in entries]
 
 
@@ -466,7 +553,9 @@ def corrected_history_entries(entries: list[dict]) -> list[dict]:
     dropped, and every ``score_before``/``score_after`` is recomputed in file
     order. Uncorrected clues and manual score adjustments keep their recorded
     score change, so the final totals always equal
-    :func:`history_score_totals`. Nothing is written to disk.
+    :func:`history_score_totals`. ``player_renumber`` lines are dropped too,
+    since :func:`read_history_file` has already applied them. Nothing is
+    written to disk.
 
     Args:
         entries: History entries in file order.
@@ -478,7 +567,7 @@ def corrected_history_entries(entries: list[dict]) -> list[dict]:
     scores = {}
     corrected_entries = []
     for entry in entries:
-        if is_score_correction(entry):
+        if is_score_correction(entry) or is_player_renumber(entry):
             continue
         corrected_entry = deepcopy(entry)
         corrected_entries.append(corrected_entry)

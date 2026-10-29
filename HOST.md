@@ -71,6 +71,11 @@ When you load a save:
 
 Resume mode expects players to reclaim their saved profiles from their phones. The game will not fully start until all required saved players are claimed.
 
+While players are reclaiming, you can still use the lobby buttons on the host scoreboard:
+
+- `▲`/`▼` swap a player with their neighbor. Each player keeps their own saved score; only their seat (and buzzer key) changes.
+- `✕` releases that player's saved slot, for example if someone claimed the wrong name. Their phone goes back to the chooser and anyone can claim that slot. Resume stays disabled until every slot is claimed again.
+
 ### `Random`
 
 Loads a random valid game.
