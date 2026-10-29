@@ -9,12 +9,18 @@ state-shaping logic separate from live gameplay orchestration.
 import json
 import logging
 import time
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from itertools import zip_longest
 from pathlib import Path
 
+QUESTION_HISTORY_FILE_NAME = "question_history.jsonl"
 QUESTION_HISTORY_ENTRY_TYPE = "question"
 MANUAL_SCORE_ADJUSTMENT_TYPE = "manual_score_adjustment"
+SCORE_CORRECTION_TYPE = "score_correction"
+CORRECT_RESULT = "correct"
+INCORRECT_RESULT = "incorrect"
+NO_ANSWER_RESULT = "no answer"
 QUESTION_INDEX_TOP_LEVEL_PART_COUNT = 2
 QUESTION_COORD_PART_COUNT = 2
 RESULT_ENTRY_PART_COUNT = 2
@@ -25,6 +31,38 @@ JSON_INDENT_SPACES = 2
 PHASE_TIME_PADDING_SECONDS = 1
 FIRST_REBOUND_RESPONSE_INDEX = 1
 SINGLE_WINNER_COUNT = 1
+
+
+class HistoryFileError(ValueError):
+    """Raised when ``question_history.jsonl`` cannot be trusted.
+
+    Loading clue history is all-or-nothing: every reader (resume, the score
+    editor, the end-of-game summary, and the ``jparty summary`` CLI) raises
+    this error with the same message instead of silently using partial data.
+    The host fixes or removes the reported line by hand.
+    """
+
+    def __init__(self, path: object, line_number: int, reason: str) -> None:
+        """Store where the history file is broken and why.
+
+        Args:
+            path: Path of the history file.
+            line_number: One-based line number of the offending line.
+            reason: Short description of the problem.
+        """
+        self.path = Path(path)
+        self.line_number = line_number
+        self.reason = reason
+        super().__init__(
+            "\n".join(
+                [
+                    "Could not read saved clue history.",
+                    f"File: {self.path}",
+                    f"Line {line_number}: {reason}.",
+                    "Fix or delete that line, then try again.",
+                ]
+            )
+        )
 
 
 @dataclass
@@ -157,6 +195,359 @@ def is_manual_score_adjustment(entry: dict) -> bool:
     return get_history_entry_type(entry) == MANUAL_SCORE_ADJUSTMENT_TYPE
 
 
+def is_score_correction(entry: dict) -> bool:
+    """Return whether a history entry is an appended score correction.
+
+    Args:
+        entry: Persisted JSONL history entry.
+
+    Returns:
+        ``True`` when the entry is a ``score_correction`` line.
+    """
+    return get_history_entry_type(entry) == SCORE_CORRECTION_TYPE
+
+
+def history_score_events(entry: dict) -> list[tuple]:
+    """Return the score changes one history line records, in order.
+
+    Args:
+        entry: Persisted JSONL history entry.
+
+    Returns:
+        ``(player_index, score_before, score_after)`` tuples. Either score may
+        be ``None`` for legacy lines that did not record it.
+    """
+    if is_manual_score_adjustment(entry):
+        return [
+            (
+                entry.get("player_index"),
+                entry.get("score_before"),
+                entry.get("score_after", entry.get("new_score")),
+            )
+        ]
+    if is_score_correction(entry):
+        return [
+            (
+                adjustment.get("player_index"),
+                adjustment.get("score_before"),
+                adjustment.get("score_after"),
+            )
+            for adjustment in entry.get("adjustments", [])
+        ]
+    if is_question_history_entry(entry):
+        return [
+            (
+                attempt.get("player_index"),
+                attempt.get("score_before"),
+                attempt.get("score_after"),
+            )
+            for attempt in entry.get("answer_attempts", [])
+        ]
+    return []
+
+
+def read_history_file(path: object) -> list[dict]:
+    """Strictly read every line of a ``question_history.jsonl`` file.
+
+    The file is a ledger: read in file order, each player's ``score_before``
+    must equal the ``score_after`` of their previous score change (or ``0``
+    for their first one). A break in that chain means a line is missing or
+    was edited.
+
+    Args:
+        path: Path of the history file.
+
+    Returns:
+        Decoded history entries in file order, or ``[]`` when the file does
+        not exist.
+
+    Raises:
+        HistoryFileError: If a line is not valid JSON, the last line has no
+            trailing newline (the file was cut off), or the score chain
+            breaks.
+    """
+    path = Path(path)
+    if not path.exists():
+        return []
+    raw = path.read_bytes()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HistoryFileError(
+            path, raw.count(b"\n", 0, exc.start) + 1, "not valid UTF-8 text"
+        ) from exc
+    lines = text.split("\n")
+    entries = []
+    for line_offset, line in enumerate(lines):
+        line_number = line_offset + 1
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as exc:
+            message = exc.msg[:1].lower() + exc.msg[1:]
+            raise HistoryFileError(
+                path,
+                line_number,
+                f"not valid JSON ({message}, column {exc.colno})",
+            ) from exc
+        if not isinstance(entry, dict):
+            raise HistoryFileError(path, line_number, "not a JSON object")
+        if line_offset == len(lines) - 1:
+            raise HistoryFileError(
+                path,
+                line_number,
+                "no newline at the end of the line, so the file was probably "
+                "cut off while it was being written",
+            )
+        entries.append((line_number, entry))
+    _check_score_chain(path, entries)
+    return [entry for _, entry in entries]
+
+
+def _check_score_chain(path: Path, numbered_entries: list[tuple]) -> None:
+    """Raise when a player's score does not continue from their last change.
+
+    Args:
+        path: History file path, for the error message.
+        numbered_entries: ``(line_number, entry)`` pairs in file order.
+
+    Raises:
+        HistoryFileError: On the first line whose ``score_before`` does not
+            match that player's previous ``score_after``. Every player starts
+            at ``0``.
+    """
+    last_scores = {}
+    for line_number, entry in numbered_entries:
+        for player_index, score_before, score_after in history_score_events(entry):
+            if player_index is None:
+                continue
+            previous = last_scores.get(player_index, INITIAL_SCORE)
+            if score_before is not None and score_before != previous:
+                raise HistoryFileError(
+                    path,
+                    line_number,
+                    f"player {player_index}'s score starts at {score_before}, "
+                    f"but their previous score was {previous}, so a line may "
+                    "be missing or edited",
+                )
+            if score_after is not None:
+                last_scores[player_index] = score_after
+
+
+def history_score_totals(entries: list[dict]) -> dict[int, int]:
+    """Return each player's current total from the history ledger.
+
+    Args:
+        entries: History entries in file order.
+
+    Returns:
+        Mapping of player index to that player's last recorded
+        ``score_after``.
+    """
+    totals = {}
+    for entry in entries:
+        for player_index, _, score_after in history_score_events(entry):
+            if player_index is not None and score_after is not None:
+                totals[player_index] = score_after
+    return totals
+
+
+def clue_player_results(entry: dict) -> dict[int, str]:
+    """Return each judged player's ruling for one clue entry.
+
+    Args:
+        entry: Clue history entry.
+
+    Returns:
+        Mapping of player index to ``"correct"`` or ``"incorrect"``.
+    """
+    player_results = {}
+    for attempt in entry.get("answer_attempts", []):
+        player_index = attempt.get("player_index")
+        if player_index is None:
+            continue
+        player_results[player_index] = (
+            CORRECT_RESULT if attempt.get("answer_correct") else INCORRECT_RESULT
+        )
+    return player_results
+
+
+def clue_attempt_order(entry: dict, player_results: dict) -> list[int]:
+    """Return a stable attempt order for a clue after a ruling change.
+
+    Players keep their original attempt order; players newly ruled on are
+    appended in player order.
+
+    Args:
+        entry: Clue history entry as originally recorded.
+        player_results: Mapping of player index to the ruling to apply.
+
+    Returns:
+        Ordered player indices that should appear in ``answer_attempts``.
+    """
+    original_order = [
+        attempt.get("player_index")
+        for attempt in entry.get("answer_attempts", [])
+        if attempt.get("player_index") is not None
+    ]
+    updated_order = [
+        player_index
+        for player_index in original_order
+        if player_results.get(player_index, NO_ANSWER_RESULT) != NO_ANSWER_RESULT
+    ]
+    remaining_players = sorted(
+        player_index
+        for player_index, result in player_results.items()
+        if result != NO_ANSWER_RESULT and player_index not in updated_order
+    )
+    return updated_order + remaining_players
+
+
+def _attempt_score_change(attempt: dict, value: int) -> int:
+    """Return one answer attempt's recorded score change."""
+    before, after = attempt.get("score_before"), attempt.get("score_after")
+    if before is not None and after is not None:
+        return after - before
+    return value if attempt.get("answer_correct") else -value
+
+
+def clue_score_effects(entry: dict) -> dict[int, int]:
+    """Return how much one clue entry changed each player's score.
+
+    Args:
+        entry: Clue history entry.
+
+    Returns:
+        Mapping of player index to the clue's net effect on that player.
+    """
+    value = int(entry.get("value", 0) or 0)
+    effects = {}
+    for attempt in entry.get("answer_attempts", []):
+        player_index = attempt.get("player_index")
+        if player_index is None:
+            continue
+        effects[player_index] = effects.get(player_index, 0) + _attempt_score_change(
+            attempt, value
+        )
+    return effects
+
+
+def ruling_score_effect(result: str, value: int) -> int:
+    """Return the score change caused by ruling ``result`` on a clue worth ``value``."""
+    if result == CORRECT_RESULT:
+        return value
+    if result == INCORRECT_RESULT:
+        return -value
+    return 0
+
+
+def latest_score_corrections(entries: list[dict]) -> dict[int, dict]:
+    """Return the most recent ``score_correction`` line for each clue.
+
+    Args:
+        entries: History entries in file order.
+
+    Returns:
+        Mapping of ``question_number`` to its latest correction line.
+    """
+    return {
+        entry.get("question_number"): entry
+        for entry in entries
+        if is_score_correction(entry)
+    }
+
+
+def corrected_history_entries(entries: list[dict]) -> list[dict]:
+    """Return the history as it should have been, with corrections applied.
+
+    Each clue takes the ruling (and, for Daily Doubles, the value) from its
+    latest ``score_correction`` line, the correction lines themselves are
+    dropped, and every ``score_before``/``score_after`` is recomputed in file
+    order. Uncorrected clues and manual score adjustments keep their recorded
+    score change, so the final totals always equal
+    :func:`history_score_totals`. Nothing is written to disk.
+
+    Args:
+        entries: History entries in file order.
+
+    Returns:
+        New clue and manual-adjustment entries in file order.
+    """
+    corrections = latest_score_corrections(entries)
+    scores = {}
+    corrected_entries = []
+    for entry in entries:
+        if is_score_correction(entry):
+            continue
+        corrected_entry = deepcopy(entry)
+        corrected_entries.append(corrected_entry)
+        if is_manual_score_adjustment(corrected_entry):
+            player_index = corrected_entry.get("player_index")
+            if player_index is None:
+                continue
+            score_before = scores.get(player_index, INITIAL_SCORE)
+            recorded_after = corrected_entry.get(
+                "score_after", corrected_entry.get("new_score", score_before)
+            )
+            recorded_before = corrected_entry.get("score_before", score_before)
+            score_after = score_before + recorded_after - recorded_before
+            corrected_entry["score_before"] = score_before
+            corrected_entry["score_after"] = score_after
+            corrected_entry["new_score"] = score_after
+            scores[player_index] = score_after
+            continue
+        if not is_question_history_entry(corrected_entry):
+            continue
+        value = int(corrected_entry.get("value", 0) or 0)
+        correction = corrections.get(corrected_entry.get("question_number"))
+        if correction is None:
+            for attempt in corrected_entry.get("answer_attempts", []):
+                player_index = attempt.get("player_index")
+                if player_index is None:
+                    continue
+                score_before = scores.get(player_index, INITIAL_SCORE)
+                score_after = score_before + _attempt_score_change(attempt, value)
+                attempt["score_before"] = score_before
+                attempt["score_after"] = score_after
+                scores[player_index] = score_after
+            continue
+        if corrected_entry.get("is_daily_double") and "value" in correction:
+            value = int(correction["value"])
+            corrected_entry["value"] = value
+        player_results = {
+            int(player_index): result
+            for player_index, result in correction.get("player_states", {}).items()
+        }
+        attempts_by_player = {
+            attempt.get("player_index"): attempt
+            for attempt in entry.get("answer_attempts", [])
+            if attempt.get("player_index") is not None
+        }
+        rebuilt_attempts = []
+        for player_index in clue_attempt_order(entry, player_results):
+            original_attempt = attempts_by_player.get(player_index, {})
+            score_before = scores.get(player_index, INITIAL_SCORE)
+            score_after = score_before + ruling_score_effect(
+                player_results[player_index], value
+            )
+            rebuilt_attempts.append(
+                {
+                    **deepcopy(original_attempt),
+                    "player_index": player_index,
+                    "answer_correct": player_results[player_index] == CORRECT_RESULT,
+                    "timestamp": original_attempt.get(
+                        "timestamp", correction.get("timestamp")
+                    ),
+                    "score_before": score_before,
+                    "score_after": score_after,
+                }
+            )
+            scores[player_index] = score_after
+        corrected_entry["answer_attempts"] = rebuilt_attempts
+    return corrected_entries
+
+
 def save_general_state(game: object) -> None:
     """Write the current high-level game session metadata to disk.
 
@@ -238,24 +629,33 @@ def load_question_history(game: object) -> object:
         game: Active or resumed ``Game`` instance with a state directory.
 
     Returns:
-        A list of decoded JSON history entries ordered as stored on disk.
+        A list of decoded JSON history entries ordered as stored on disk,
+        including any ``score_correction`` lines. Returns ``[]`` only when
+        there is no state directory or no history file yet.
+
+    Raises:
+        HistoryFileError: If the history file cannot be read; see
+            :func:`read_history_file`.
     """
     if not game._game_state_dir:
         return []
-    history_file = game._game_state_dir / "question_history.jsonl"
-    if not history_file.exists():
-        return []
-    entries = []
-    try:
-        with Path(history_file).open() as file_obj:
-            for line in file_obj:
-                line = line.strip()
-                if line:
-                    entries.append(json.loads(line))
-    except Exception as exc:
-        logging.error("Error loading question history: %s", exc)
-        return []
-    return entries
+    return read_history_file(Path(game._game_state_dir) / QUESTION_HISTORY_FILE_NAME)
+
+
+def load_corrected_question_history(game: object) -> list[dict]:
+    """Load the session history with score corrections applied.
+
+    Args:
+        game: Active or resumed ``Game`` instance with a state directory.
+
+    Returns:
+        Clue and manual-adjustment entries as they should have been; see
+        :func:`corrected_history_entries`.
+
+    Raises:
+        HistoryFileError: If the history file cannot be read.
+    """
+    return corrected_history_entries(load_question_history(game))
 
 
 def reconstruct_score_history(game: object) -> object:
@@ -265,9 +665,13 @@ def reconstruct_score_history(game: object) -> object:
         game: Active or resumed ``Game`` instance whose history should be read.
 
     Returns:
-        A mapping from player index to a list of scores by question number.
+        A mapping from player index to a list of scores by question number,
+        reflecting any score corrections ("as it should have been").
+
+    Raises:
+        HistoryFileError: If the history file cannot be read.
     """
-    entries = load_question_history(game)
+    entries = load_corrected_question_history(game)
     if not entries:
         return {}
     all_players = set()
@@ -380,8 +784,11 @@ def reconstruct_original_score_history(game: object) -> dict[str, list[int]]:
     Returns:
         Mapping from original contestant name to cumulative scores by played
         question number.
+
+    Raises:
+        HistoryFileError: If the history file cannot be read.
     """
-    entries = load_question_history(game)
+    entries = load_corrected_question_history(game)
     if not entries:
         return {}
     entries.sort(key=lambda entry: entry.get("question_number", 0))
@@ -493,8 +900,11 @@ def build_end_game_summary(game: object) -> EndGameSummary:
 
     Returns:
         Structured end-game summary data for the audience display.
+
+    Raises:
+        HistoryFileError: If the history file cannot be read.
     """
-    entries = load_question_history(game)
+    entries = load_corrected_question_history(game)
     entries.sort(key=lambda entry: entry.get("question_number", 0))
     score_history = reconstruct_score_history(game)
     original_score_history = reconstruct_original_score_history(game)

@@ -21,8 +21,8 @@ For example:
 The two main files are:
 
 - `general.json`: high-level session metadata
-- `question_history.jsonl`: one JSON object per completed clue, including
-  Final Jeopardy
+- `question_history.jsonl`: one JSON object per line for each completed
+  clue (including Final Jeopardy), manual score override, and score correction
 
 ## `general.json`
 
@@ -63,7 +63,13 @@ Field notes:
 
 ## `question_history.jsonl`
 
-`question_history.jsonl` is append-only. Each line is one completed clue.
+`question_history.jsonl` is append-only: lines are only ever added to the
+end during play, and the file is never rewritten. There are three line types:
+
+- clue lines (no `type`, or `"type": "question"`), one per completed clue
+- `manual_score_adjustment` lines, one per manual podium override
+- `score_correction` lines, one per clue changed in the `Edit Score` dialog
+
 Standard clues and Final Jeopardy use the same top-level shape:
 
 ```json
@@ -216,8 +222,7 @@ Hosts can correct scoring in two ways once a game is in progress:
   clues. Each clue shows its category, value, correct response, and one
   selector per player with `no answer`, `correct`, and `incorrect`. Daily
   Doubles also expose an editable clue value so the wager can be fixed. Saving
-  rewrites the relevant clue entries in `question_history.jsonl` and
-  recalculates every downstream score.
+  appends one `score_correction` line for each clue whose ruling changed.
 - Click a player's podium when no clue is active to enter a manual score
   override directly. These overrides are appended to `question_history.jsonl`
   as `manual_score_adjustment` events so resumed games preserve the manual
@@ -225,6 +230,102 @@ Hosts can correct scoring in two ways once a game is in progress:
 
 The `Edit Score` button is disabled while a clue is active, while selecting a
 Daily Double player, or when there is no saved clue history yet.
+
+### `manual_score_adjustment`
+
+```json
+{
+  "type": "manual_score_adjustment",
+  "player_index": 0,
+  "timestamp": 1700000500.0,
+  "score_before": 1600,
+  "score_after": 2000,
+  "new_score": 2000
+}
+```
+
+### `score_correction`
+
+A correction never edits the original clue line. Instead it records the
+corrected ruling and the score change it caused at the moment it was made:
+
+```json
+{
+  "type": "score_correction",
+  "question_number": 12,
+  "timestamp": 1730200000.0,
+  "player_states": {"0": "correct", "1": "no answer"},
+  "value": 400,
+  "adjustments": [
+    {"player_index": 0, "score_before": 1600, "score_after": 2400}
+  ]
+}
+```
+
+Field notes:
+
+- `question_number`: the clue being corrected
+- `player_states`: the corrected ruling for every player, keyed by player
+  index: `"correct"`, `"incorrect"`, or `"no answer"`
+- `value`: the corrected clue value; only present for Daily Doubles, where it
+  fixes the wager
+- `adjustments`: one record per player whose score changed. Each is the change
+  in that clue's effect on the player (for example, wrong -$400 to right +$400
+  is +$800), applied to the player's current total
+
+If the same clue is corrected more than once, the latest `score_correction`
+line for that `question_number` wins.
+
+## The Score Chain
+
+Every line that changes a score records `score_before` and `score_after`
+(on each `answer_attempts[]` record, on manual adjustments, and on each
+correction adjustment). Read in file order, each player's `score_before`
+must equal their previous `score_after`, and every player starts at `0`. The
+file works like a ledger, so a player's current total is simply their last
+`score_after`.
+
+Readers use the file in two ways:
+
+- **Totals** (resume and the live scoreboard) take each player's last
+  `score_after`.
+- **Per-clue views** (Coryat, right/wrong counts, triple stumpers, the score
+  editor, and the end-of-game score graph) show the game as it should have
+  been: each clue takes its latest correction, and scores are recomputed in
+  memory in file order. Uncorrected clues and manual adjustments keep their
+  recorded score change, so the recomputed totals always match the ledger
+  totals. Nothing is written back to disk.
+
+## Damaged History Files
+
+Loading `question_history.jsonl` is all-or-nothing. If any line is not valid
+JSON, the last line has no trailing newline (the file was cut off while it was
+being written), or the score chain breaks (a line is missing or was edited),
+every reader stops with the same error:
+
+```text
+Could not read saved clue history.
+File: <path>/question_history.jsonl
+Line 3: not valid JSON (unterminated string starting at, column 73).
+Fix or delete that line, then try again.
+```
+
+- **Load Saved** shows it in the "Saved Game Error" dialog.
+- **During play**, the score editor and the end-of-game summary show it in a
+  warning dialog. The host can still close the game.
+- **`jparty summary`** prints it and exits with code 1.
+
+Fix or delete the reported line by hand, then try again. Deleting a line that
+changed a score breaks the chain at the next line for that player, so fix
+that line's `score_before` too, or delete the later lines as well.
+
+JParty avoids creating bad lines: each entry is written as one complete line
+and flushed. If a write fails partway (for example, the disk is full), the
+file is truncated back to its previous size and the host sees "Could not save
+clue history: ...". The clue that failed to save is missing from the file, so
+the next score change for those players breaks the chain until that line is
+restored. The one-time migration of legacy round indices rewrites the file by
+writing a temporary copy and swapping it in.
 
 For the host-side gameplay flow and score correction UI, see
 [HOST.md](../HOST.md).

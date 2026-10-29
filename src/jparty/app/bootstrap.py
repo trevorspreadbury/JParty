@@ -23,7 +23,11 @@ from simpleaudio._simpleaudio import SimpleaudioError
 from jparty.app.config import DEBUG_MODE, PORT
 from jparty.app.paths import SAVED_GAMES
 from jparty.domain.game_engine import Game
-from jparty.domain.state import build_end_game_summary, reconstruct_score_history
+from jparty.domain.state import (
+    HistoryFileError,
+    build_end_game_summary,
+    reconstruct_score_history,
+)
 from jparty.services.archive_client import get_game_html, process_game_board_from_html
 from jparty.ui.styles import JPartyStyle
 from jparty.ui.widgets.common import resource_path
@@ -447,8 +451,9 @@ def main(argv: object = None) -> int | None:
             ``sys.argv``.
 
     Returns:
-        ``0`` when a CLI subcommand completes successfully, otherwise the GUI
-        launch path does not return a status code before handing control to Qt.
+        ``0`` when a CLI subcommand completes successfully and ``1`` when the
+        saved clue history cannot be read. The GUI launch path does not return
+        a status code before handing control to Qt.
     """
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -456,9 +461,13 @@ def main(argv: object = None) -> int | None:
         download_games(args.inputs)
         return 0
     if args.command == "summary":
-        output_path = generate_summary_image(
-            args.game_state_directory, args.output_file
-        )
+        try:
+            output_path = generate_summary_image(
+                args.game_state_directory, args.output_file
+            )
+        except HistoryFileError as error:
+            print(error, file=sys.stderr)
+            return 1
         print(f"Wrote summary image to {output_path}")
         return 0
     launch_gui()
