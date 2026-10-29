@@ -10,7 +10,11 @@ from PyQt6.QtWidgets import QApplication
 
 from jparty.app.config import EARLY_BUZZ_PENALTY, FJTIME, QUESTIONTIME
 from jparty.domain.models import BuzzAttempt, FinalBoard
-from jparty.domain.state import MANUAL_SCORE_ADJUSTMENT_TYPE, build_end_game_summary
+from jparty.domain.state import (
+    MANUAL_SCORE_ADJUSTMENT_TYPE,
+    HistoryFileError,
+    build_end_game_summary,
+)
 from jparty.ui.widgets.common import resource_path
 
 
@@ -472,7 +476,12 @@ class FinalJeopardyFlow:
     def generate_final_score_graphs(self) -> None:
         """Build and show the end-of-game audience summary screen."""
         self.game.keystroke_manager.deactivate("GENERATE_GRAPHS")
-        summary = build_end_game_summary(self.game)
+        try:
+            summary = build_end_game_summary(self.game)
+        except HistoryFileError as error:
+            self.game.show_history_error(error)
+            self.game.keystroke_manager.activate("CLOSE_GAME")
+            return
         QApplication.processEvents()
         self.game.main_display.load_end_game_summary(summary)
         self.game.keystroke_manager.activate("CLOSE_GAME")
