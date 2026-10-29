@@ -64,11 +64,14 @@ Field notes:
 ## `question_history.jsonl`
 
 `question_history.jsonl` is append-only: lines are only ever added to the
-end during play, and the file is never rewritten. There are three line types:
+end during play, and the file is never rewritten. There are four line types:
 
 - clue lines (no `type`, or `"type": "question"`), one per completed clue
 - `manual_score_adjustment` lines, one per manual podium override
 - `score_correction` lines, one per clue changed in the `Edit Score` dialog
+- `player_renumber` lines, written when a resumed game starts after the host
+  reordered players in the lobby (see
+  [Player Numbers](#player-numbers-and-player_renumber))
 
 Standard clues and Final Jeopardy use the same top-level shape:
 
@@ -275,6 +278,35 @@ Field notes:
 
 If the same clue is corrected more than once, the latest `score_correction`
 line for that `question_number` wins.
+
+## Player Numbers and `player_renumber`
+
+Every line identifies players by `player_index`, which is the same number as
+`players[].player_number` in `general.json`. In the resume lobby each phone
+reclaims a saved profile, and the host can still rearrange the lobby:
+
+- `▲`/`▼` swap two neighboring seats. The two players trade numbers (and
+  buzzer keys); everyone else keeps theirs.
+- `✕` releases a player's saved slot: the phone returns to the chooser, its
+  reconnect token stops working, and another phone can claim the slot. The
+  seat keeps its number, so whoever claims it next gets the same number and
+  nobody else is renumbered. Start is blocked until every slot is claimed
+  again.
+
+When the resumed game starts and any player's seat differs from the number
+they were saved under, JParty appends one line before restoring scores:
+
+```json
+{"type": "player_renumber", "mapping": {"0": 1, "1": 0, "2": 2}, "timestamp": 1730200000.0}
+```
+
+`mapping` maps each saved player number to the player's new number, and is
+always a one-to-one reordering. When reading the file, every `player_index`
+(and every `player_states` key) on the lines *before* a `player_renumber`
+line is translated through its mapping, and then the score chain is checked.
+Later resumes add further `player_renumber` lines, which apply on top of the
+earlier ones. `general.json` is rewritten with the new numbers at the same
+time. Saves without a `player_renumber` line read exactly as before.
 
 ## The Score Chain
 

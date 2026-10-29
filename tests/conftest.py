@@ -438,6 +438,10 @@ class FakeBuzzerController:
         """Test claimed saved players."""
         return sorted(self.connected_players, key=lambda player: player.player_number)
 
+    def saved_player_renumbering(self) -> dict:
+        """Test saved player renumbering: seats never move in this fake."""
+        return {number: number for number in self.saved_player_profiles}
+
     def in_saved_player_reclaim_mode(self) -> bool:
         """Test saved-player reclaim mode."""
         return bool(self.saved_player_profiles)

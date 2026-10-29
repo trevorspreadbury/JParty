@@ -38,6 +38,7 @@ from jparty.domain.input import (
 from jparty.domain.models import FinalBoard, GameData
 from jparty.domain.state import (
     NO_ANSWER_RESULT,
+    PLAYER_RENUMBER_TYPE,
     QUESTION_HISTORY_FILE_NAME,
     SCORE_CORRECTION_TYPE,
     HistoryFileError,
@@ -545,7 +546,7 @@ class Game(QObject):
         if not history_file.exists():
             self._history_round_indices_original = True
             return
-        entries = read_history_file(history_file)
+        entries = read_history_file(history_file, apply_player_renumbering=False)
         if not entries:
             self._history_round_indices_original = True
             return
@@ -714,6 +715,31 @@ class Game(QObject):
             if question is not None:
                 question.complete = True
 
+    def _record_player_renumbering(self) -> bool:
+        """Log any seat changes the host made in the resume lobby.
+
+        Players keep their history under the number they were saved with. If
+        the host reordered seats, append one ``player_renumber`` line mapping
+        saved numbers to current ones, so the history reader can translate
+        every earlier line before scores are restored.
+
+        Returns:
+            ``True`` when resuming can continue; ``False`` if the mapping
+            could not be saved (the host has already been warned).
+        """
+        mapping = self.buzzer_controller.saved_player_renumbering()
+        if all(saved == current for saved, current in mapping.items()):
+            return True
+        return self._append_history_entry(
+            {
+                "type": PLAYER_RENUMBER_TYPE,
+                "mapping": {
+                    str(saved): current for saved, current in sorted(mapping.items())
+                },
+                "timestamp": time.time(),
+            }
+        )
+
     def _restore_player_scores(self, history_entries: list[dict]) -> None:
         """Restore each connected player's score from persisted history.
 
@@ -781,6 +807,8 @@ class Game(QObject):
             resume_state["general_state"].get("started_at") or time.time()
         )
         self.players = self.buzzer_controller.claimed_saved_players()
+        if not self._record_player_renumbering():
+            return
         raw_history = self._load_question_history()
         question_history = [
             entry
@@ -1255,10 +1283,18 @@ class Game(QObject):
 
         Returns:
             ``None``.
+
+        In the resume lobby this releases the player's saved slot instead, so
+        another phone can claim it without renumbering anyone else.
         """
-        self.players.remove(player)
-        player.waiter.close()
-        self._update_player_numbers()
+        if self._in_saved_player_reclaim_mode():
+            if not self.buzzer_controller.release_saved_player(player):
+                return
+            self.players = self.buzzer_controller.connected_players
+        else:
+            self.players.remove(player)
+            player.waiter.close()
+            self._update_player_numbers()
         self.dc.scoreboard.refresh_players()
         self._refresh_score_edit_controls()
         self.host_display.welcome_widget.check_start()
@@ -1275,6 +1311,9 @@ class Game(QObject):
             ``None``.
         """
         if player not in self.players:
+            return
+        if self._in_saved_player_reclaim_mode():
+            self._move_saved_player(player, -1)
             return
         index = self.players.index(player)
         if index > 0:
@@ -1298,6 +1337,9 @@ class Game(QObject):
         """
         if player not in self.players:
             return
+        if self._in_saved_player_reclaim_mode():
+            self._move_saved_player(player, 1)
+            return
         index = self.players.index(player)
         if index < len(self.players) - 1:
             (self.players[index], self.players[index + 1]) = (
@@ -1309,12 +1351,41 @@ class Game(QObject):
             self._refresh_score_edit_controls()
             self._update_all_lecterns()
 
-    def _update_player_numbers(self) -> None:
-        """Renumber players and remap their keyboard shortcuts by position.
+    def _in_saved_player_reclaim_mode(self) -> bool:
+        """Return whether the lobby is reclaiming players from a saved game."""
+        return bool(
+            self.buzzer_controller
+            and self.buzzer_controller.in_saved_player_reclaim_mode()
+        )
+
+    def _move_saved_player(self, player: object, offset: int) -> None:
+        """Move a reclaimed player one seat and refresh the lobby.
+
+        Args:
+            player: Claimed player to move.
+            offset: ``-1`` for one seat earlier, ``1`` for one seat later.
 
         Returns:
             ``None``.
         """
+        if not self.buzzer_controller.move_saved_player(player, offset):
+            return
+        self.players = self.buzzer_controller.connected_players
+        self.dc.scoreboard.refresh_players()
+        self._refresh_score_edit_controls()
+        self._update_all_lecterns()
+
+    def _update_player_numbers(self) -> None:
+        """Renumber players and remap their keyboard shortcuts by position.
+
+        In the resume lobby, numbers come from seats instead (see
+        ``BuzzerController.seat_order``), so this does nothing.
+
+        Returns:
+            ``None``.
+        """
+        if self._in_saved_player_reclaim_mode():
+            return
         for i, player in enumerate(self.players):
             player.player_number = i
             player.key = index_to_key[i]

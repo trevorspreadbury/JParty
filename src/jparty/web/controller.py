@@ -19,6 +19,7 @@ import tornado.ioloop
 from tornado.options import define, options
 
 from jparty.app.config import PORT
+from jparty.domain.input import index_to_key
 from jparty.domain.models import Player
 from jparty.web.app import Application
 
@@ -61,7 +62,12 @@ class SavedPlayerChoicesPayload(TypedDict):
 
 @dataclass
 class SavedPlayerProfile:
-    """Represent one saved player profile that can be reclaimed."""
+    """Represent one saved player profile that can be reclaimed.
+
+    ``player_number`` is the number the player was saved under; it identifies
+    the profile in the saved history. The claimed ``player`` may sit in a
+    different seat (see ``BuzzerController.seat_order``).
+    """
 
     name: str
     player_number: int
@@ -81,6 +87,7 @@ class BuzzerController:
     lectern_connections: dict[int, LecternSocketHandler]
     active_buzzer_sockets: set[BuzzerSocketHandler]
     saved_player_profiles: dict[int, SavedPlayerProfile]
+    seat_order: list[int]
     resume_mode_active: bool
 
     def __init__(self, game: Game) -> None:
@@ -103,6 +110,7 @@ class BuzzerController:
         self.lectern_connections = {}
         self.active_buzzer_sockets = set()
         self.saved_player_profiles = {}
+        self.seat_order = []
         self.resume_mode_active = False
 
     def start(self, threaded: bool = True, tries: int = 0) -> None:
@@ -176,6 +184,7 @@ class BuzzerController:
             ``None``.
         """
         self.saved_player_profiles = {}
+        self.seat_order = []
         self.resume_mode_active = False
 
     def in_saved_player_reclaim_mode(self) -> bool:
@@ -273,6 +282,7 @@ class BuzzerController:
             self.saved_player_profiles[player_number] = SavedPlayerProfile(
                 name=name, player_number=player_number
             )
+        self.seat_order = sorted(self.saved_player_profiles)
         self.resume_mode_active = bool(self.saved_player_profiles)
         current_sockets = list(self.active_buzzer_sockets)
         self.connected_players = []
@@ -319,7 +329,7 @@ class BuzzerController:
             )
             return None
         if profile.player is None:
-            player = Player(profile.name, socket_handler, profile.player_number)
+            player = Player(profile.name, socket_handler, self.seat_number(profile))
             profile.player = player
             profile.claimed_token = player.token.hex()
             self.connected_players.append(player)
@@ -351,19 +361,121 @@ class BuzzerController:
         return None
 
     def claimed_saved_players(self) -> list[Player]:
-        """Return claimed saved players ordered by their saved slot.
+        """Return claimed saved players ordered by their seat.
 
         Returns:
-            Claimed player objects in saved ``player_number`` order.
+            Claimed player objects in seat (current ``player_number``) order.
         """
         return [
             profile.player
             for profile in sorted(
-                self.saved_player_profiles.values(),
-                key=lambda profile: profile.player_number,
+                self.saved_player_profiles.values(), key=self.seat_number
             )
             if profile.player is not None
         ]
+
+    def seat_number(self, profile: SavedPlayerProfile) -> int:
+        """Return the seat, and so the current player number, of a profile.
+
+        Args:
+            profile: Saved player profile.
+
+        Returns:
+            The profile's position in ``seat_order``.
+        """
+        return self.seat_order.index(profile.player_number)
+
+    def saved_profile_for_player(self, player: Player) -> SavedPlayerProfile | None:
+        """Return the saved profile a player has claimed.
+
+        Args:
+            player: Claimed player.
+
+        Returns:
+            The matching profile, or ``None`` when the player claimed none.
+        """
+        for profile in self.saved_player_profiles.values():
+            if profile.player is player:
+                return profile
+        return None
+
+    def _renumber_claimed_players(self) -> None:
+        """Give each claimed player their seat's number and buzzer key."""
+        for profile in self.saved_player_profiles.values():
+            if profile.player is not None:
+                seat = self.seat_number(profile)
+                profile.player.player_number = seat
+                profile.player.key = index_to_key[seat]
+        # Sort in place: the game shares this list and indexes it by number.
+        self.connected_players.sort(
+            key=lambda current_player: current_player.player_number
+        )
+
+    def move_saved_player(self, player: Player, offset: int) -> bool:
+        """Move a claimed player to a neighboring seat in the resume lobby.
+
+        Only the two seats involved change, so every other player keeps their
+        number.
+
+        Args:
+            player: Claimed player to move.
+            offset: ``-1`` to move one seat earlier, ``1`` to move one later.
+
+        Returns:
+            ``True`` when the player moved.
+        """
+        profile = self.saved_profile_for_player(player)
+        if profile is None:
+            return False
+        seat = self.seat_number(profile)
+        other_seat = seat + offset
+        if not 0 <= other_seat < len(self.seat_order):
+            return False
+        self.seat_order[seat], self.seat_order[other_seat] = (
+            self.seat_order[other_seat],
+            self.seat_order[seat],
+        )
+        self._renumber_claimed_players()
+        return True
+
+    def release_saved_player(self, player: Player) -> bool:
+        """Free a claimed saved-player slot so another phone can claim it.
+
+        The seat keeps its place in ``seat_order``, so whoever claims the
+        profile next gets the same number and nobody else is renumbered. The
+        released phone's token stops working and it returns to the chooser.
+
+        Args:
+            player: Claimed player to release.
+
+        Returns:
+            ``True`` when a slot was released.
+        """
+        profile = self.saved_profile_for_player(player)
+        if profile is None:
+            return False
+        profile.player = None
+        profile.claimed_token = None
+        if player in self.connected_players:
+            self.connected_players.remove(player)
+        socket_handler = player.waiter
+        if socket_handler is not None:
+            if getattr(socket_handler, "player", None) is player:
+                socket_handler.player = None
+            socket_handler.send("LOGOUT", "")
+        self.push_saved_player_choices()
+        return True
+
+    def saved_player_renumbering(self) -> dict[int, int]:
+        """Return how saved player numbers map to the current seats.
+
+        Returns:
+            Mapping of saved ``player_number`` to current seat number.
+        """
+        return {
+            profile.player_number: self.seat_number(profile)
+            for profile in self.saved_player_profiles.values()
+        }
 
     def buzz(self, player: Player) -> None:
         """Forward a player's buzz event into the game engine.
