@@ -5,8 +5,11 @@ thumbnail URL. It is used by the service layer when the application wants a
 lightweight image lookup without maintaining its own media catalog.
 """
 
+import logging
+
 import requests
 
+NO_IMAGE_FOUND = "No image found."
 REQUEST_TIMEOUT_SECONDS = 10
 OK_STATUS_CODE = 200
 
@@ -19,7 +22,8 @@ def search_wikimedia_image(query: object) -> object:
 
     Returns:
         The thumbnail image URL when one is available, ``"No image found."``
-        when the page has no thumbnail, or an error string for non-200
+        when the page has no thumbnail or the request fails (for example
+        when the machine is offline), or an error string for non-200
         responses.
     """
     url = "https://en.wikipedia.org/w/api.php"
@@ -31,14 +35,18 @@ def search_wikimedia_image(query: object) -> object:
         "titles": query,
         "pithumbsize": 500,
     }
-    response = requests.get(
-        url, params=params, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS
-    )
-    if response.status_code == OK_STATUS_CODE:
+    try:
+        response = requests.get(
+            url, params=params, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS
+        )
+        if response.status_code != OK_STATUS_CODE:
+            return f"Error: {response.status_code}"
         data = response.json()
-        pages = data.get("query", {}).get("pages", {})
-        for page_data in pages.values():
-            if "thumbnail" in page_data:
-                return page_data["thumbnail"]["source"]
-        return "No image found."
-    return f"Error: {response.status_code}"
+    except requests.RequestException:
+        logging.warning("Wikimedia image lookup failed for %r", query, exc_info=True)
+        return NO_IMAGE_FOUND
+    pages = data.get("query", {}).get("pages", {})
+    for page_data in pages.values():
+        if "thumbnail" in page_data:
+            return page_data["thumbnail"]["source"]
+    return NO_IMAGE_FOUND
