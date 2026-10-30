@@ -1,8 +1,9 @@
 """Configure logging and present crash reporting prompts.
 
-This module initializes the application's log file, exposes helpers for opening
-prefilled error-report emails, and installs a Qt-aware uncaught exception hook
-so unexpected crashes can be logged and surfaced to the user gracefully.
+This module exposes ``install_crash_reporting``, which initializes the
+application's log file and installs a Qt-aware uncaught exception hook so
+unexpected crashes can be logged and surfaced to the user gracefully, plus
+helpers for opening prefilled error-report emails.
 """
 
 import logging
@@ -18,13 +19,8 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from jparty import __version__
 from jparty.app.paths import LOG_FILE
 
-LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-LOG_FILE.touch(exist_ok=True)
-logging.basicConfig(
-    filename=LOG_FILE, encoding="utf-8", level=logging.DEBUG, filemode="w", force=True
-)
 log = logging.getLogger(__name__)
-log.info("Logging initialized at %s", LOG_FILE)
+_installed_hook = None
 
 
 def mailto(recipients: object, subject: object, body: object) -> None:
@@ -63,7 +59,7 @@ def show_exception_box(log_msg: object) -> None:
             defaultButton=QMessageBox.StandardButton.Yes,
         )
         if button is QMessageBox.StandardButton.Yes:
-            with LOG_FILE.open() as f:
+            with LOG_FILE.open(encoding="utf-8", errors="replace") as f:
                 logdata = f.read()
             message = f"JPARTY ERROR REPORT:\n\nVersion: {__version__}\nPlatform: {platform.platform()}\n\n===LOGS===\n\n\n{logdata}\n"
             mailto("me@stuartthomas.us", "JParty Error Report", message)
@@ -123,4 +119,28 @@ class UncaughtHook(QObject):
             self._exception_caught.emit(log_msg)
 
 
-qt_exception_hook = UncaughtHook()
+def install_crash_reporting() -> "UncaughtHook":
+    """Initialize the log file and install the uncaught exception hook.
+
+    This must be called explicitly at GUI startup. Without the hook, PyQt6
+    aborts the process on any unhandled exception raised in a slot or event
+    handler, closing the app with no dialog and no log.
+
+    Returns:
+        The installed ``UncaughtHook``. Repeated calls return the same hook.
+    """
+    global _installed_hook
+    if _installed_hook is not None:
+        return _installed_hook
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LOG_FILE.touch(exist_ok=True)
+    logging.basicConfig(
+        filename=LOG_FILE,
+        encoding="utf-8",
+        level=logging.DEBUG,
+        filemode="w",
+        force=True,
+    )
+    log.info("Logging initialized at %s", LOG_FILE)
+    _installed_hook = UncaughtHook()
+    return _installed_hook
