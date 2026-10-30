@@ -1,0 +1,329 @@
+"""Animated side-border widgets used for buzz and hint feedback.
+
+This module contains the illuminated border panels shown beside the board on
+the host and audience displays. The host variants can also flash keyboard hint
+graphics to guide game control.
+"""
+
+import time
+from threading import Thread, current_thread
+
+from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtGui import QBrush, QColor, QPainter, QPixmap
+from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
+
+from jparty.ui.widgets.common import resource_path
+
+
+class Borders:
+    """Manage the pair of side-border widgets for a display."""
+
+    def __init__(self, parent: object) -> None:
+        """Initialize left and right border widgets for a display.
+
+        Args:
+            parent: Parent display widget that owns the borders.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__()
+        self.left = self.create_widget(parent, -1)
+        self.right = self.create_widget(parent, 1)
+
+    def __iter__(self) -> object:
+        """Iterate over the left and right border widgets.
+
+        Returns:
+            An iterator over both border widgets.
+        """
+        return iter([self.left, self.right])
+
+    def create_widget(self, parent: object, d: object) -> object:
+        """Create one border widget instance.
+
+        Args:
+            parent: Parent display widget.
+            d: Direction marker, typically ``-1`` for left and ``1`` for right.
+
+        Returns:
+            A ``BorderWidget`` instance.
+        """
+        return BorderWidget(parent, d)
+
+    def __flash(self) -> None:
+        """Blink the borders briefly to draw attention.
+
+        Returns:
+            ``None``.
+        """
+        self.lights(False)
+        time.sleep(0.2)
+        self.lights(True)
+        time.sleep(0.2)
+        self.lights(False)
+
+    def flash(self) -> None:
+        """Start a background thread that flashes both border widgets.
+
+        Returns:
+            ``None``.
+        """
+        self.__flash_thread = Thread(target=self.__flash, name="flash")
+        self.__flash_thread.start()
+
+    def lights(self, val: object) -> None:
+        """Turn both border widgets on or off.
+
+        Args:
+            val: Boolean-like value indicating whether the borders should glow.
+
+        Returns:
+            ``None``.
+        """
+        for b in self:
+            b.lights(val)
+
+
+class HostBorders(Borders):
+    """Extend borders with flashing keyboard hint support for the host."""
+
+    def __init__(self, parent: object) -> None:
+        """Initialize host borders and hint-thread state.
+
+        Args:
+            parent: Parent host display widget.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__(parent)
+        self.__active_thread = None
+
+    def create_widget(self, parent: object, d: object) -> object:
+        """Create a host-specific border widget.
+
+        Args:
+            parent: Parent host display widget.
+            d: Direction marker for left or right border.
+
+        Returns:
+            A ``HostBorderWidget`` instance.
+        """
+        return HostBorderWidget(parent, d)
+
+    def __flash_hints(self, key: object) -> None:
+        """Blink the requested hint graphic on both borders.
+
+        Args:
+            key: Hint key identifier, such as ``"arrow"`` or ``"space"``.
+
+        Returns:
+            ``None``.
+        """
+        while self.__active_thread == current_thread():
+            for b in self:
+                b.show_hints(key)
+            time.sleep(0.5)
+            for b in self:
+                b.hide_hints(key)
+            time.sleep(0.5)
+
+    def buzz_hint(self) -> None:
+        """Start the background buzz-hint animation thread.
+
+        Returns:
+            ``None``.
+        """
+        self.__buzz_hint_thread = Thread(target=self.__buzz_hint, name="buzz_hint")
+        self.__buzz_hint_thread.start()
+
+    def arrowhints(self, val: object) -> None:
+        """Show or hide flashing arrow-key hints.
+
+        Args:
+            val: Boolean-like value indicating whether arrow hints should show.
+
+        Returns:
+            ``None``.
+        """
+        for b in self:
+            b.colors = val
+            b.update()
+        if val:
+            self.__active_thread = Thread(
+                target=self.__flash_hints, args=("arrow",), name="arrow_hints"
+            )
+            self.__active_thread.start()
+        else:
+            self.__active_thread = None
+            for b in self:
+                b.hide_hints("arrow")
+
+    def spacehints(self, val: object) -> None:
+        """Show or hide flashing space-bar hints.
+
+        Args:
+            val: Boolean-like value indicating whether space hints should show.
+
+        Returns:
+            ``None``.
+        """
+        if val:
+            self.__active_thread = Thread(
+                target=self.__flash_hints, args=("space",), name="space_hints"
+            )
+            self.__active_thread.start()
+        else:
+            self.__active_thread = None
+            for b in self:
+                b.hide_hints("space")
+
+    def closeEvent(self, event: object) -> None:
+        """Stop hint activity when the host border widget closes.
+
+        Args:
+            event: Qt close event object.
+
+        Returns:
+            ``None``.
+        """
+        super().closeEvent(event)
+        self.__active_hint = None
+
+
+class BorderWidget(QWidget):
+    """Simple illuminated side panel shown beside the board."""
+
+    def __init__(self, parent: object, d: object) -> None:
+        """Initialize a border widget.
+
+        Args:
+            parent: Parent display widget.
+            d: Direction marker for the widget's side.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__(parent)
+        self.d = d
+        self.__lit = False
+        self.show()
+
+    def lights(self, val: object) -> None:
+        """Turn the illuminated border effect on or off.
+
+        Args:
+            val: Boolean-like value indicating whether the border is lit.
+
+        Returns:
+            ``None``.
+        """
+        self.__lit = val
+        self.update()
+
+    def sizeHint(self) -> object:
+        """Return the preferred size for the border widget.
+
+        Returns:
+            An empty ``QSize`` so layout can size the border flexibly.
+        """
+        return QSize()
+
+    def paintEvent(self, event: object) -> None:
+        """Paint the lit background when the border is active.
+
+        Args:
+            event: Qt paint event object.
+
+        Returns:
+            ``None``.
+        """
+        qp = QPainter()
+        qp.begin(self)
+        if self.__lit:
+            qp.setBrush(QBrush(QColor("white")))
+            qp.drawRect(self.rect())
+
+
+class HostBorderWidget(BorderWidget):
+    """Border widget that can also display host control hints."""
+
+    def __init__(self, parent: object, d: object) -> None:
+        """Initialize a host border with hint images and layout.
+
+        Args:
+            parent: Parent host display widget.
+            d: Direction marker for the widget's side.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__(parent, d)
+        self.layout = QVBoxLayout()
+        self.hint_label = QLabel(self)
+        self.layout.addWidget(self.hint_label)
+        self.setLayout(self.layout)
+        self.__hint_images = {
+            "space": QPixmap(resource_path("space.png")),
+            "arrow": QPixmap(
+                resource_path(("right" if d == 1 else "left") + "-arrow.png")
+            ),
+        }
+        self.colors = False
+        self.show()
+
+    def show_hints(self, key: object) -> None:
+        """Display a hint image for the requested control.
+
+        Args:
+            key: Hint key identifier, such as ``"space"`` or ``"arrow"``.
+
+        Returns:
+            ``None``.
+        """
+        self.hint_label.setPixmap(
+            self.__hint_images[key].scaled(
+                self.size() * 0.9,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                transformMode=Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
+    def hide_hints(self, key: object) -> None:
+        """Clear the currently displayed hint image.
+
+        Args:
+            key: Hint key identifier being cleared.
+
+        Returns:
+            ``None``.
+        """
+        self.hint_label.setPixmap(QPixmap())
+
+    def resizeEvent(self, event: object) -> None:
+        """Adjust hint margins when the border widget is resized.
+
+        Args:
+            event: Qt resize event object.
+
+        Returns:
+            ``None``.
+        """
+        self.hint_label.setMargin(int(self.width() * 0.05))
+
+    def paintEvent(self, event: object) -> None:
+        """Paint the host border, including colored judgment hints.
+
+        Args:
+            event: Qt paint event object.
+
+        Returns:
+            ``None``.
+        """
+        super().paintEvent(event)
+        qp = QPainter()
+        qp.begin(self)
+        if self.colors:
+            qp.setBrush(QBrush(QColor("#ff0000" if self.d == 1 else "#33cc33")))
+            qp.drawRect(self.rect())

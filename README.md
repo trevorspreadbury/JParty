@@ -1,18 +1,13 @@
-<img src="resources/icon.png" align="right" height="100"/>
-
 # JParty!
-![](https://img.shields.io/github/v/release/stuartthomas25/JParty)
-![](https://img.shields.io/github/downloads/stuartthomas25/JParty/total)
-![](https://img.shields.io/github/stars/stuartthomas25/JParty?style=social)
 
-_The Jeopardy! Party Game_
-
-Homepage: https://www.stuartthomas.us/jparty/
-
-Ever wanted to play the game show Jeopardy? This Python-based application aims to provide a full _Jeopardy!_ simulator complete with real questions from actual games. This game is perfect for parties and supports 3-8 players plus a host. Typically, _Jeopardy!_ has three contestants which is recommended for the best experience; JParty supports up to 8 players for larger groups (warning: may cause many complaints about buzzer races). For ideal usage, plug a laptop into a TV, setting the laptop as the main monitor. Note that connecting wirelessly using AirPlay works but may cause latency in the buzzer. Instruct contestants to join the same Wifi network as the computer and scan the QR code on the screen. The person with the laptop is the host and runs the game by reading the questions and running the buzzers.
-
-## Download
-See <a href="https://github.com/stuartthomas25/JParty/releases">Releases</a> page.
+This is based on stuartthomas25's [JParty](https://github.com/stuartthomas25/JParty) and updated to include additional features:
+- Physical Buzzers
+- Lectern Monitor displays with player's name, score, countdown timer
+- Image resolution
+- Mixing, matching, and configuring boards from J-archive to create "frankengames"
+- Game logging and resumption
+- Game summary graphics
+- Various code improvements and tests
 
 ## Screenshots:
 
@@ -28,6 +23,12 @@ The host sees the answer on the laptop screen and can adjudicate with the arrow 
 
 <img src="screenshots/alex_view.png" height="300"/>
 
+## Documentation
+
+- [Host guide](HOST.md)
+- [Game logging and saved state](docs/game-logging.md)
+- [Saving question images](docs/saving-question-images.md)
+
 ## Features:
 - WebSocket buzzer for use on mobile devices 
 - Up to 8 players
@@ -36,46 +37,127 @@ The host sees the answer on the laptop screen and can adjudicate with the arrow 
 - Scrape games from https://jeopardylabs.com using this <a href="https://chrome.google.com/webstore/detail/jeopardy-labs-to-csv/biijijhfghhckhlkjbonjedmgnkmenlk?hl=en&authuser=0">Google Chrome extension</a>
 - Final Jeopardy, Daily Doubles, Double Jeopardy
 - Visual Clues
+- Host score correction tools with history-backed audit logging
 
 ## Visual Clues
 
 JParty supports visual clues! By default, any question with a hyperlink on the J-Archive page will prompt the host to either find an image for the question or determine that no image is needed before displaying the question to contestants. The host uses a search box to either enter a url to an image or a query to Wikimedia to find an appropriate image. 
 
-Users also have the option to find images beforehand by going through the following process:
-1. Create a folder in `jparty/data/question_media` with the game of interest's J-Archive url id.
-2. Then for each question that needs visual clues, add an image with the board number (Jeopardy is '0', Double Jeopardy is '1') the name of the question coordinates separated by a "-". For example the first clue of the game is "0-0-0". Any common image file extension should work (tested on jpeg, jpg, webp, png). For reference the layout of the single jeopardy round is as follows:
-<img src="resources/question-media-labelling.png" height="300" />
+If you want to prepare clue images before the game, see
+[Saving Question Images](docs/saving-question-images.md). For the host-side
+workflow for importing and approving image clues, see [HOST.md](HOST.md).
 
 
-## Requirements:
+## Requirements
 ### For running the app (binary)
 - macOS, Windows or Linux
 - Two monitors
 - A device with web access for each player
 
 ### For compiling from source code
-- Python [>=3.9]
-- PyQt6
-- requests
-- simpleaudio
-- tornado
-- BeautifulSoup4
-- qrcode
-- pyinstaller [>=5.0]
+- Python [>=3.10]
+- `uv` is the preferred development workflow
+- `conda` is still supported as a fallback if you run into platform-specific Qt/audio issues
 
-To debug, run 
+## Installation
+### Recommended: `uv`
+Create a virtual environment and install the project with test dependencies:
+
+```
+uv venv
+uv sync --extra test
+```
+
+Install the Playwright browser runtime if you want to run the browser smoke tests:
+
+```
+uv run playwright install chromium
+```
+
+### Fallback: `conda`
+If `uv` gives you trouble on your machine, especially around audio or Qt, you can still use conda:
 
 ```
 conda env create -f environment.yml
-cd jparty
-python ../run.py
+conda activate JParty
+pip install -e .[test]
+python -m playwright install chromium
 ```
 
-To build from source, run
+## Development
+To keep downloads, saved state, logs, and graphs in a predictable repo-local location, create a `.env` file with:
+
+```
+DATA_DIR=.jparty-data
+```
+
+Run the app with either:
+
+```
+uv run jparty
+```
+
+or:
+
+```
+uv run python -m jparty
+```
+
+Useful development commands:
+
+```
+uv run pytest tests -q
+uv run jparty download 4453 4454
+uv run jparty download games.txt
+uv run jparty summary --game-state-directory .jparty-data/game_states/4453-20260422T2130
+```
+
+If you are using conda instead of `uv`, use the same commands without the `uv run` prefix.
+
+### Generate a Summary Image from Saved State
+
+You can render the same audience summary visual used at the end of the game from a saved game-state directory:
+
+```
+jparty summary --game-state-directory /path/to/game_state_dir
+```
+
+Arguments:
+
+- `--game-state-directory`: required path to a saved game-state directory containing `general.json`
+- `--output-file`: optional output path for the rendered image
+
+If `--output-file` is omitted, JParty writes:
+
+```
+<game-state-directory>/summary.png
+```
+
+## Score Corrections
+
+For the host-side score correction workflow, see [HOST.md](HOST.md). For how
+those corrections are stored in `question_history.jsonl`, see
+[Game Logging and Saved State](docs/game-logging.md).
+
+## Build
+To build from source, run:
+
+```
+uv run pyinstaller -y JParty.spec
+```
+
+If you are using conda, run:
 
 ```
 pyinstaller -y JParty.spec
 ```
+
+## Game State Tracking
+
+JParty saves per-session metadata and clue history under the configured data
+directory, with one folder per saved session. For the file layout, field
+definitions, Final Jeopardy logging behavior, and how score edits are recorded,
+see [Game Logging and Saved State](docs/game-logging.md).
 
 ## FAQ
 
