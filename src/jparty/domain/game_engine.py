@@ -797,6 +797,10 @@ class Game(QObject):
             self.start_final()
         else:
             self.dc.board_widget.load_round(self.current_round)
+            # Space is normally enabled by back_to_board after the last clue, so
+            # a session closed on a finished board would otherwise be stuck.
+            if self._round_is_complete(self.current_round):
+                self.keystroke_manager.activate("NEXT_ROUND")
         for player in self.players:
             self._update_lectern_for_player(player)
         self._save_general_state()

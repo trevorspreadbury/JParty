@@ -5,6 +5,7 @@ from copy import deepcopy
 
 import pytest
 from jparty.domain.models import FinalBoard, Player
+from PyQt6.QtCore import Qt
 
 pytestmark = pytest.mark.integration
 
@@ -163,6 +164,62 @@ def test_resume_into_final_starts_final_flow(
     assert isinstance(game.current_round, FinalBoard)
     assert game.active_question is game.current_round.question
     assert game.buzzer_controller.open_wagers_calls
+
+
+def test_resume_finished_board_without_final_can_end_game(
+    game: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """Resuming a fully played board with no Final should let Space end the game."""
+    from jparty.services import game_loader
+
+    restored_data = game.data
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
+    saved_dir = temp_dir / "saved-finished-no-final"
+    saved_dir.mkdir()
+    with (saved_dir / "general.json").open("w") as f:
+        json.dump(
+            {
+                "game_id": "4453",
+                "players": [
+                    {"name": "Alice", "player_number": 0},
+                    {"name": "Bob", "player_number": 1},
+                ],
+                "selected_round_indices": [0],
+            },
+            f,
+        )
+    with (saved_dir / "question_history.jsonl").open("w") as f:
+        for question_number, question in enumerate(
+            restored_data.rounds[0].questions, start=1
+        ):
+            json.dump(
+                {
+                    "question_index": [0, list(question.index)],
+                    "question_number": question_number,
+                    "round_index": 0,
+                    "category": question.category,
+                    "value": question.value,
+                    "is_daily_double": question.dd,
+                    "buzz_phases": [],
+                    "answer_attempts": [],
+                    "completed_at": 1700000000.0 + question_number,
+                },
+                f,
+            )
+            f.write("\n")
+
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(saved_dir)
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+    game.start_game()
+
+    assert game.current_round is game.data.rounds[0]
+    events = game.keystroke_manager._KeystrokeManager__events
+    assert events["NEXT_ROUND"].active is True
+    game.keystroke_manager.call(Qt.Key.Key_Space)
+    assert events["GENERATE_GRAPHS"].active is True
 
 
 def test_resume_skips_deselected_rounds_when_advancing(
