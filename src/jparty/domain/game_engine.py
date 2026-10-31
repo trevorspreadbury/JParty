@@ -797,6 +797,10 @@ class Game(QObject):
             self.start_final()
         else:
             self.dc.board_widget.load_round(self.current_round)
+            # Space is normally enabled by back_to_board after the last clue, so
+            # a session closed on a finished board would otherwise be stuck.
+            if self._round_is_complete(self.current_round):
+                self.keystroke_manager.activate("NEXT_ROUND")
         for player in self.players:
             self._update_lectern_for_player(player)
         self._save_general_state()
@@ -1483,8 +1487,9 @@ class Game(QObject):
             round_index for round_index in playable_round_indices if round_index > i
         ]
         if not future_round_indices:
-            if getattr(self.dc, "final_window", None) is None:
-                self.dc.load_final_judgement()
+            # Only reached from a regular board: a Final round ends through
+            # FinalJeopardyFlow, so no final window exists yet.
+            self.dc.load_final_judgement()
             self.end_game()
             return
         self.current_round = self.data.rounds[future_round_indices[0]]
