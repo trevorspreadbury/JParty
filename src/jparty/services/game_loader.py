@@ -108,6 +108,41 @@ def default_board_row_values(
     ]
 
 
+def original_board_row_values(game_data: object, round_index: int) -> list[int]:
+    """Return the per-row clue values of one round in an original game.
+
+    Each row takes the value of the first clue found in that row, so a clue
+    missing from one category does not shift values in the others. Rows with
+    no clues at all fall back to the default ladder for the round's position
+    among the game's standard boards.
+
+    Args:
+        game_data: Parsed source game containing the round.
+        round_index: Index of the round within ``game_data.rounds``.
+
+    Returns:
+        A five-value list for a standard board, or ``[]`` for a Final board.
+    """
+    round_data = game_data.rounds[round_index]
+    if isinstance(round_data, FinalBoard):
+        return []
+    standard_round_indices = [
+        index
+        for index, candidate in enumerate(game_data.rounds)
+        if not isinstance(candidate, FinalBoard)
+    ]
+    row_values = default_board_row_values(
+        standard_round_indices.index(round_index), len(standard_round_indices)
+    )
+    found_rows = set()
+    for question in sorted(round_data.questions, key=_question_sort_key):
+        row_index = question.index[1]
+        if 0 <= row_index < STANDARD_CLUE_VALUE_COUNT and row_index not in found_rows:
+            row_values[row_index] = question.value
+            found_rows.add(row_index)
+    return row_values
+
+
 def _question_sort_key(question: object) -> tuple[int, int]:
     """Return a stable sort key for a clue."""
     return (int(question.index[0]), int(question.index[1]))
@@ -358,6 +393,7 @@ __all__ = [
     "build_game_from_board_selection_configs",
     "compose_game_from_resolved_board_selections",
     "default_board_row_values",
+    "original_board_row_values",
     "find_question_media",
     "get_Gsheet_game",
     "get_game",

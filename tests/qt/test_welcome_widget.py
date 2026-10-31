@@ -1314,3 +1314,45 @@ def test_franken_preview_start_uses_cached_composed_game_with_local_media(
     assert game.current_round is game.data.rounds[0]
     assert game.dc.board_widget.loaded_rounds == [game.data.rounds[0]]
     assert game.data.rounds[0].questions[0].image_url == str(image_path)
+
+
+def test_regular_start_with_gap_in_first_category_keeps_row_values(
+    qtbot: object,
+    game_with_players: object,
+    fixture_dir: object,
+    temp_dir: object,
+    monkeypatch: object,
+) -> None:
+    """Test a missing category-0 clue does not change any column's values (#53)."""
+    game = game_with_players
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    source = GameParser().process_game_board_from_html(html, "4453")
+    assert source is not None
+    source.rounds[0].questions = [
+        question for question in source.rounds[0].questions if question.index != (0, 2)
+    ]
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game", lambda game_id: deepcopy(source)
+    )
+    monkeypatch.setattr("jparty.services.question_media.QUESTION_MEDIA", temp_dir)
+    monkeypatch.setattr(game, "_save_played_game_html", lambda: None)
+
+    parent = PreviewParent(game)
+    qtbot.addWidget(parent)
+    widget = Welcome(game, parent)
+    widget.textbox.blockSignals(True)
+    widget.textbox.setText("4453")
+    widget.textbox.blockSignals(False)
+    game.data = deepcopy(source)
+    game.set_selected_round_indices([0, 1, 2])
+    widget.on_start_clicked()
+
+    jeopardy, double_jeopardy = game.data.rounds[0], game.data.rounds[1]
+    assert len(jeopardy.questions) == 29
+    for question in jeopardy.questions:
+        assert question.value == (question.index[1] + 1) * 200
+    for question in double_jeopardy.questions:
+        assert question.value == (question.index[1] + 1) * 400
+    assert game._board_selections_match_original_game_subset(
+        "4453", source, game.board_selection_configs(), [0, 1, 2]
+    )
