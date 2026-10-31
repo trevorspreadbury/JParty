@@ -341,6 +341,7 @@ class HostDisplayWindow(DisplayWindow):
         """
         super().__init__(game)
         self.on_image_question = False
+        self.image_question_widget = None
         self.preview_widget = None
 
     def host(self) -> bool:
@@ -501,9 +502,12 @@ class HostDisplayWindow(DisplayWindow):
 
         Returns:
             ``None``.
+
+        The review widget is built before any display state changes so that a
+        failure while constructing it leaves the board usable.
         """
-        self.on_image_question = True
         self.image_question_widget = self.create_image_question_widget(self.game)
+        self.on_image_question = True
         self.board_widget.setVisible(False)
         self.board_layout.replaceWidget(self.board_widget, self.image_question_widget)
 
@@ -518,7 +522,7 @@ class HostDisplayWindow(DisplayWindow):
         """
         self.question_widget = self.create_question_widget(q)
         self.board_widget.setVisible(False)
-        if self.on_image_question:
+        if self.on_image_question and self.image_question_widget is not None:
             self.on_image_question = False
             self.board_layout.replaceWidget(
                 self.image_question_widget, self.question_widget
@@ -526,4 +530,5 @@ class HostDisplayWindow(DisplayWindow):
             self.image_question_widget.deleteLater()
             self.image_question_widget = None
         else:
+            self.on_image_question = False
             self.board_layout.replaceWidget(self.board_widget, self.question_widget)

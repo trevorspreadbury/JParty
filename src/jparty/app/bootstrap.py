@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from simpleaudio._simpleaudio import SimpleaudioError
 
 from jparty.app.config import DEBUG_MODE, PORT
+from jparty.app.logging import install_crash_reporting
 from jparty.app.paths import SAVED_GAMES
 from jparty.domain.game_engine import Game
 from jparty.domain.state import build_end_game_summary, reconstruct_score_history
@@ -405,6 +406,7 @@ def launch_gui() -> None:
     Returns:
         ``None``.
     """
+    install_crash_reporting()
     logging.info("Starting JParty")
     QApplication.setStyle(JPartyStyle())
     app = QApplication(sys.argv)
