@@ -8,6 +8,7 @@ from jparty.domain.models import Board, FinalBoard, GameData, Question
 from jparty.services.game_loader import (
     build_game_from_board_selection_configs,
     normalize_standard_board_daily_doubles,
+    original_board_row_values,
     standard_board_daily_double_indices,
 )
 from jparty.services.game_loading import GameLoader, GameLoadStatus
@@ -255,3 +256,55 @@ def test_game_parser_normalizes_comments_and_image_flags(
     assert isinstance(date, str)
     assert isinstance(comments, str)
     assert comments == game.comments
+
+
+def _parsed_4453_without(fixture_dir: object, round_index: int, indices: set) -> object:
+    """Parse the 4453 fixture and drop the given clues from one round."""
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    game = GameParser().process_game_board_from_html(html, "4453")
+    assert game is not None
+    round_data = game.rounds[round_index]
+    round_data.questions = [
+        question for question in round_data.questions if question.index not in indices
+    ]
+    return game
+
+
+def test_original_board_row_values_ignore_gap_in_first_category(
+    fixture_dir: object,
+) -> None:
+    """Test a missing clue in category 0 does not shift the row values (#53)."""
+    game = _parsed_4453_without(fixture_dir, 0, {(0, 2)})
+    assert original_board_row_values(game, 0) == [200, 400, 600, 800, 1000]
+    assert original_board_row_values(game, 1) == [400, 800, 1200, 1600, 2000]
+    assert original_board_row_values(game, 2) == []
+
+
+def test_original_board_row_values_fall_back_for_an_empty_row(
+    fixture_dir: object,
+) -> None:
+    """Test a row with no clues uses the default ladder for that board."""
+    empty_row = {(col, 2) for col in range(6)}
+    game = _parsed_4453_without(fixture_dir, 1, empty_row)
+    assert original_board_row_values(game, 1) == [400, 800, 1200, 1600, 2000]
+
+
+def test_compose_with_gap_in_first_category_keeps_every_column_value(
+    fixture_dir: object, monkeypatch: object
+) -> None:
+    """Test composing a board with a category-0 gap keeps each row's value."""
+    game = _parsed_4453_without(fixture_dir, 0, {(0, 2)})
+    monkeypatch.setattr("jparty.services.game_loader.get_game", lambda game_id: game)
+    composed = build_game_from_board_selection_configs(
+        [
+            {
+                "game_id": "4453",
+                "source_round_index": 0,
+                "board_type": "standard",
+                "row_values": original_board_row_values(game, 0),
+            }
+        ]
+    )
+    assert composed is not None
+    for question in composed.rounds[0].questions:
+        assert question.value == (question.index[1] + 1) * 200

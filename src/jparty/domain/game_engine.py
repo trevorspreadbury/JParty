@@ -48,6 +48,7 @@ from jparty.domain.state import (
 )
 from jparty.services.game_loader import (
     build_game_from_board_selection_configs,
+    original_board_row_values,
     standard_board_daily_double_indices,
 )
 from jparty.ui.widgets.common import CompoundObject, SongPlayer
@@ -492,17 +493,7 @@ class Game(QObject):
             )
             if selection.get("board_type") != expected_board_type:
                 return False
-            expected_row_values = (
-                []
-                if isinstance(round_data, FinalBoard)
-                else [
-                    question.value
-                    for question in sorted(
-                        getattr(round_data, "questions", []),
-                        key=lambda question: question.index,
-                    )
-                ][:5]
-            )
+            expected_row_values = original_board_row_values(game_data, round_index)
             if list(selection.get("row_values", [])) != expected_row_values:
                 return False
             expected_daily_double_indices = (
