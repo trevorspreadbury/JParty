@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from jparty.domain.models import Player
+from jparty.domain.state import HistoryFileError
 from jparty.ui.widgets.score_correction import ScoreCorrectionDialog
 from jparty.ui.widgets.scoreboard import HostPlayerWidget, HostScoreBoard
 from PyQt6.QtCore import QBuffer, QByteArray, QIODevice
@@ -213,3 +214,25 @@ def test_score_correction_dialog_renders_signature_images_for_player_names(
 
     assert signature_labels
     assert not raw_data_labels
+
+
+def test_host_scoreboard_shows_history_error_instead_of_opening_dialog(
+    qtbot: object,
+) -> None:
+    """Test an unreadable history file is reported to the host (#54)."""
+    game = StubScoreGame()
+    error = HistoryFileError("question_history.jsonl", 3, "not valid JSON")
+    shown_errors = []
+
+    def unreadable(limit: int = 5) -> list[dict]:
+        raise error
+
+    game.get_recent_score_corrections = unreadable
+    game.show_history_error = shown_errors.append
+    scoreboard = HostScoreBoard(game)
+    qtbot.addWidget(scoreboard)
+
+    scoreboard.open_score_editor()
+
+    assert shown_errors == [error]
+    assert game.applied_corrections == []

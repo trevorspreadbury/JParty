@@ -108,10 +108,10 @@ def test_set_score_updates_widget_and_lectern_state(game_with_players: object) -
     assert game.buzzer_controller.broadcasts[-1][0] == player.player_number
 
 
-def test_apply_question_history_correction_rewrites_scores_and_downstream_attempts(
+def test_apply_question_history_correction_appends_one_line_and_updates_scores(
     game_with_players: object,
 ) -> None:
-    """Test correcting an earlier clue rewrites later score values."""
+    """Test correcting an earlier clue appends a correction and keeps the rest."""
     game = game_with_players
     first = game.current_round.get_question(0, 0)
     second = game.current_round.get_question(1, 0)
@@ -149,10 +149,20 @@ def test_apply_question_history_correction_rewrites_scores_and_downstream_attemp
     assert game.players[1].score == 400
     history_file = game._game_state_dir / "question_history.jsonl"
     lines = [json.loads(line) for line in history_file.read_text().splitlines()]
-    assert lines[0]["answer_attempts"][0]["answer_correct"] is False
-    assert lines[0]["answer_attempts"][0]["score_after"] == -200
-    assert lines[2]["answer_attempts"][0]["score_before"] == -200
-    assert lines[2]["answer_attempts"][0]["score_after"] == -400
+    assert len(lines) == 4
+    # The played clues are left exactly as recorded.
+    assert lines[0]["answer_attempts"][0]["answer_correct"] is True
+    assert lines[0]["answer_attempts"][0]["score_after"] == 200
+    assert lines[3] == {
+        "type": "score_correction",
+        "question_number": 1,
+        "timestamp": lines[3]["timestamp"],
+        "player_states": {"0": "incorrect", "1": "no answer", "2": "no answer"},
+        "adjustments": [{"player_index": 0, "score_before": 0, "score_after": -400}],
+    }
+    # Graphs and stats see the clue as it should have been.
+    assert game._reconstruct_score_history()[0] == [0, -200, -200, -400]
+    assert game.get_recent_score_corrections()[-1]["player_states"][0] == "incorrect"
 
 
 def test_apply_question_history_correction_can_add_missing_correct_attempt(
@@ -179,14 +189,18 @@ def test_apply_question_history_correction_can_add_missing_correct_attempt(
     assert game.players[0].score == question.value
     history_file = game._game_state_dir / "question_history.jsonl"
     lines = [json.loads(line) for line in history_file.read_text().splitlines()]
-    assert lines[0]["answer_attempts"][0]["player_index"] == 0
-    assert lines[0]["answer_attempts"][0]["score_after"] == question.value
+    assert lines[0]["answer_attempts"] == []
+    assert lines[1]["type"] == "score_correction"
+    assert lines[1]["adjustments"] == [
+        {"player_index": 0, "score_before": 0, "score_after": question.value}
+    ]
+    assert game._reconstruct_score_history()[0] == [0, question.value]
 
 
 def test_apply_question_history_correction_updates_daily_double_value(
     game_with_players: object, monkeypatch: object
 ) -> None:
-    """Test Daily Double corrections rewrite the stored clue value."""
+    """Test Daily Double corrections record the corrected wager."""
     game = game_with_players
     question = game.current_round.get_question(0, 0)
     question.dd = True
@@ -212,8 +226,12 @@ def test_apply_question_history_correction_updates_daily_double_value(
     assert game.players[0].score == 1000
     history_file = game._game_state_dir / "question_history.jsonl"
     lines = [json.loads(line) for line in history_file.read_text().splitlines()]
-    assert lines[0]["value"] == 1000
-    assert lines[0]["answer_attempts"][0]["score_after"] == 1000
+    assert lines[0]["value"] == 600
+    assert lines[1]["value"] == 1000
+    assert lines[1]["adjustments"] == [
+        {"player_index": 0, "score_before": 600, "score_after": 1000}
+    ]
+    assert game.get_recent_score_corrections()[0]["value"] == 1000
 
 
 def test_adjust_score_logs_manual_override(

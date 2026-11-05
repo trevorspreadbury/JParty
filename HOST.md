@@ -250,7 +250,7 @@ Each player's result can be changed to:
 
 For Daily Doubles, the dialog also exposes the wagered clue value so you can fix an incorrect wager amount.
 
-Saving these changes rewrites the affected clue history and recalculates downstream scores, which is much better than manually patching a total when the real problem was an earlier ruling.
+Saving these changes records a correction in the saved clue history and adjusts the affected players' scores, which is much better than manually patching a total when the real problem was an earlier ruling.
 
 The `Edit Score` button is disabled when:
 

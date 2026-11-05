@@ -121,6 +121,21 @@ def test_get_current_game_state_uses_started_at_and_players(
     assert [player["name"] for player in state["players"]] == ["Alice", "Bob", "Cara"]
 
 
+def test_get_current_game_state_records_history_format_only_when_known(
+    game: object, players: object
+) -> None:
+    """Test the format fields are omitted for sessions with no recorded format."""
+    state = game._get_current_game_state()
+    assert "history_format" not in state
+    assert "jparty_version" not in state
+
+    game._history_format = 2
+    game._started_by_version = "9.9.9"
+    state = game._get_current_game_state()
+    assert state["history_format"] == 2
+    assert state["jparty_version"] == "9.9.9"
+
+
 def test_initialize_game_state_dir_uses_game_id_and_local_timestamp(
     game: object, monkeypatch: object
 ) -> None:

@@ -13,6 +13,7 @@ from PyQt6.QtCore import QPoint, QSize, Qt
 from PyQt6.QtGui import QColor, QIcon, QImage, QPainter, QPalette, QPixmap
 from PyQt6.QtWidgets import QHBoxLayout, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
+from jparty.domain.state import HistoryFileError
 from jparty.ui.styles import MyLabel
 from jparty.ui.widgets.common import resource_path
 from jparty.ui.widgets.score_correction import ScoreCorrectionDialog
@@ -519,16 +520,19 @@ class HostScoreBoard(ScoreBoard):
         Returns:
             ``None``.
         """
-        entries = self.game.get_recent_score_corrections()
-        if not entries:
-            self.refresh_score_edit_button()
-            return
-        self.score_correction_dialog = ScoreCorrectionDialog(
-            entries, self.game.players, self
-        )
-        if self.score_correction_dialog.exec():
-            corrections = self.score_correction_dialog.collect_changes()
-            self.game.apply_question_history_corrections(corrections)
+        try:
+            entries = self.game.get_recent_score_corrections()
+            if not entries:
+                self.refresh_score_edit_button()
+                return
+            self.score_correction_dialog = ScoreCorrectionDialog(
+                entries, self.game.players, self
+            )
+            if self.score_correction_dialog.exec():
+                corrections = self.score_correction_dialog.collect_changes()
+                self.game.apply_question_history_corrections(corrections)
+        except HistoryFileError as error:
+            self.game.show_history_error(error)
         self.refresh_score_edit_button()
 
     def hide_close_buttons(self) -> None:

@@ -4,7 +4,9 @@ import json
 from copy import deepcopy
 
 import pytest
+from jparty import __version__
 from jparty.domain.models import FinalBoard, Player
+from jparty.domain.state import HISTORY_FORMAT
 from PyQt6.QtCore import Qt
 
 pytestmark = pytest.mark.integration
@@ -108,6 +110,67 @@ def test_prepare_and_resume_saved_game_restores_round_scores_and_questions(
     assert game.current_round.get_question(1, 0).complete is True
     assert game.current_round.get_question(2, 0).complete is True
     assert game.current_round.get_question(3, 0).complete is False
+
+
+def _resume_and_read_general_state(game: object, saved_dir: object) -> dict:
+    """Resume ``saved_dir`` and return the ``general.json`` it writes back."""
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(saved_dir)
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+    game.start_game()
+    return json.loads((saved_dir / "general.json").read_text())
+
+
+def test_new_game_records_history_format_and_version(
+    game: object, players: object, monkeypatch: object
+) -> None:
+    """Test a new session stamps general.json with the format and app version."""
+    from jparty.services import archive_client
+
+    monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
+    monkeypatch.setenv("JPARTY_GAME_ID", "4453")
+    game.start_game()
+
+    saved = json.loads((game._game_state_dir / "general.json").read_text())
+    assert saved["history_format"] == HISTORY_FORMAT
+    assert saved["jparty_version"] == __version__
+
+
+def test_resume_keeps_the_recorded_format_and_version(
+    game: object, monkeypatch: object, sample_saved_game_dir: object
+) -> None:
+    """Test resume keeps the version that started the save, not the current one."""
+    from jparty.services import game_loader
+
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: game.data)
+    general_file = sample_saved_game_dir / "general.json"
+    general_state = json.loads(general_file.read_text())
+    general_state["history_format"] = 2
+    general_state["jparty_version"] = "0.0.1-test"
+    general_file.write_text(json.dumps(general_state))
+
+    saved = _resume_and_read_general_state(game, sample_saved_game_dir)
+
+    assert saved["history_format"] == 2
+    assert saved["jparty_version"] == "0.0.1-test"
+
+
+def test_resume_leaves_a_save_without_a_format_unmarked(
+    game: object, monkeypatch: object, sample_saved_game_dir: object
+) -> None:
+    """Test resuming a save from before the fields existed doesn't add them."""
+    from jparty.services import game_loader
+
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: game.data)
+    general_state = json.loads((sample_saved_game_dir / "general.json").read_text())
+    assert "history_format" not in general_state
+
+    saved = _resume_and_read_general_state(game, sample_saved_game_dir)
+
+    assert "history_format" not in saved
+    assert "jparty_version" not in saved
 
 
 def test_resume_into_final_starts_final_flow(
@@ -259,10 +322,10 @@ def test_resume_skips_deselected_rounds_when_advancing(
     assert isinstance(game.current_round, FinalBoard)
 
 
-def test_resume_normalizes_saved_subset_round_indices_to_original_game(
+def test_resume_subset_save_uses_original_round_indices(
     game: object, monkeypatch: object, temp_dir: object
 ) -> None:
-    """Subset saves should resume against the original round identities."""
+    """Subset saves should resume against original round indices, read-only."""
     from jparty.services import game_loader
 
     restored_data = game.data
@@ -284,9 +347,9 @@ def test_resume_normalizes_saved_subset_round_indices_to_original_game(
     with (saved_dir / "question_history.jsonl").open("w") as f:
         json.dump(
             {
-                "question_index": [0, [0, 0]],
+                "question_index": [1, [0, 0]],
                 "question_number": 1,
-                "round_index": 0,
+                "round_index": 1,
                 "category": "Cat 0",
                 "value": 400,
                 "is_daily_double": False,
@@ -296,7 +359,7 @@ def test_resume_normalizes_saved_subset_round_indices_to_original_game(
                         "buzz_attempts": [
                             {
                                 "player_index": 0,
-                                "question_index": [0, [0, 0]],
+                                "question_index": [1, [0, 0]],
                                 "timestamp": 1.0,
                                 "is_early": False,
                                 "is_success": True,
@@ -313,6 +376,8 @@ def test_resume_normalizes_saved_subset_round_indices_to_original_game(
         )
         f.write("\n")
 
+    history_file = saved_dir / "question_history.jsonl"
+    history_before = history_file.read_bytes()
     players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
     game.prepare_resume_from_dir(saved_dir)
     game.buzzer_controller.connected_players = players
@@ -320,24 +385,12 @@ def test_resume_normalizes_saved_subset_round_indices_to_original_game(
     game.dc.scoreboard.refresh_players()
     game.start_game()
 
-    rewritten_general = json.loads((saved_dir / "general.json").read_text())
-    rewritten_history = [
-        json.loads(line)
-        for line in (saved_dir / "question_history.jsonl").read_text().splitlines()
-        if line.strip()
-    ]
     assert len(game.data.rounds) == 3
     assert game.selected_round_indices() == [1, 2]
     assert game.current_round is game.data.rounds[1]
     assert game.data.rounds[1].get_question(0, 0).complete is True
     assert game.data.rounds[0].get_question(0, 0).complete is False
-    assert rewritten_general["history_round_indices_original"] is True
-    assert rewritten_history[0]["round_index"] == 1
-    assert rewritten_history[0]["question_index"][0] == 1
-    assert (
-        rewritten_history[0]["buzz_phases"][0]["buzz_attempts"][0]["question_index"][0]
-        == 1
-    )
+    assert history_file.read_bytes() == history_before
 
 
 def test_resume_same_game_subset_board_selections_keep_original_round_list(
@@ -382,9 +435,9 @@ def test_resume_same_game_subset_board_selections_keep_original_round_list(
     with (saved_dir / "question_history.jsonl").open("w") as file_obj:
         json.dump(
             {
-                "question_index": [0, [0, 0]],
+                "question_index": [1, [0, 0]],
                 "question_number": 1,
-                "round_index": 0,
+                "round_index": 1,
                 "category": restored_data.rounds[1].questions[0].category,
                 "value": 400,
                 "is_daily_double": False,
@@ -396,6 +449,8 @@ def test_resume_same_game_subset_board_selections_keep_original_round_list(
         )
         file_obj.write("\n")
 
+    history_file = saved_dir / "question_history.jsonl"
+    history_before = history_file.read_bytes()
     players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
     game.prepare_resume_from_dir(saved_dir)
     game.buzzer_controller.connected_players = players
@@ -403,20 +458,12 @@ def test_resume_same_game_subset_board_selections_keep_original_round_list(
     game.dc.scoreboard.refresh_players()
     game.start_game()
 
-    rewritten_general = json.loads((saved_dir / "general.json").read_text())
-    rewritten_history = [
-        json.loads(line)
-        for line in (saved_dir / "question_history.jsonl").read_text().splitlines()
-        if line.strip()
-    ]
     assert len(game.data.rounds) == 3
     assert game.selected_round_indices() == [1, 2]
     assert game.current_round is game.data.rounds[1]
     assert game.data.rounds[1].get_question(0, 0).complete is True
     assert game.data.rounds[0].get_question(0, 0).complete is False
-    assert rewritten_general["history_round_indices_original"] is True
-    assert rewritten_history[0]["round_index"] == 1
-    assert rewritten_history[0]["question_index"][0] == 1
+    assert history_file.read_bytes() == history_before
 
 
 def test_resume_preserves_frankenstein_board_selections_and_round_sources(
