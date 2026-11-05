@@ -73,6 +73,20 @@ DEFAULT_DAILY_DOUBLE_J_ROUND_WAGER = 1000
 DEFAULT_DAILY_DOUBLE_DJ_ROUND_WAGER = 2000
 
 
+def _ends_with_newline(path: Path) -> bool:
+    """Return whether the last byte of a non-empty file is a newline.
+
+    Args:
+        path: File to check.
+
+    Returns:
+        ``True`` when the file ends with a newline byte.
+    """
+    with path.open("rb") as file_obj:
+        file_obj.seek(-1, os.SEEK_END)
+        return file_obj.read(1) == b"\n"
+
+
 class Game(QObject):
     """Manage one active JParty game, including state, players, and flow."""
 
@@ -877,7 +891,9 @@ class Game(QObject):
     def _flush_pending_history(self) -> bool:
         """Write every queued history line to the session file, oldest first.
 
-        The lines are written in a single ``write``, then flushed. If anything
+        The lines are written in a single ``write``, then flushed. If the file
+        does not end with a newline (for example, after a hand repair), one is
+        written first so the new lines start on their own line. If anything
         fails, the file is truncated back to its previous size so no partial
         line is left behind, and the lines stay queued. The host is warned on
         the first failure in a row only.
@@ -895,6 +911,8 @@ class Game(QObject):
             text = "".join(
                 json.dumps(entry) + "\n" for entry in self._pending_history_lines
             )
+            if size_before and not _ends_with_newline(history_file):
+                text = "\n" + text
             with history_file.open("a", encoding="utf-8", newline="\n") as file_obj:
                 file_obj.write(text)
                 file_obj.flush()

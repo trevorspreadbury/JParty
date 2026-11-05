@@ -260,6 +260,11 @@ def read_history_file(path: object) -> list[dict]:
     for their first one). A break in that chain means a line is missing or
     was edited.
 
+    The last line may lack its trailing newline, which often happens after
+    a host deletes a damaged line by hand. A JSON object only parses once
+    its closing brace is written, so a last line that parses is complete. A
+    last line that was cut off still fails as invalid JSON.
+
     Args:
         path: Path of the history file.
 
@@ -268,8 +273,7 @@ def read_history_file(path: object) -> list[dict]:
         not exist.
 
     Raises:
-        HistoryFileError: If a line is not valid JSON, the last line has no
-            trailing newline (the file was cut off), or the score chain
+        HistoryFileError: If a line is not valid JSON or the score chain
             breaks.
     """
     path = Path(path)
@@ -299,13 +303,6 @@ def read_history_file(path: object) -> list[dict]:
             ) from exc
         if not isinstance(entry, dict):
             raise HistoryFileError(path, line_number, "not a JSON object")
-        if line_offset == len(lines) - 1:
-            raise HistoryFileError(
-                path,
-                line_number,
-                "no newline at the end of the line, so the file was probably "
-                "cut off while it was being written",
-            )
         entries.append((line_number, entry))
     _check_score_chain(path, entries)
     return [entry for _, entry in entries]

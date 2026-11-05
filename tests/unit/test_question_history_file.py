@@ -68,13 +68,12 @@ def test_cut_off_last_line_reports_its_line_number(
     assert error.reason.startswith("not valid JSON (")
 
 
-def test_valid_last_line_without_newline_is_reported_as_cut_off(
+def test_complete_last_line_without_newline_is_accepted(
     temp_dir: Path, fixture_lines: list[str]
 ) -> None:
-    """Test a missing final newline is caught even if the JSON parses."""
-    error = _read_error(_write_history(temp_dir, "\n".join(fixture_lines)))
-    assert error.line_number == 3
-    assert error.reason.startswith("no newline at the end of the line")
+    """Test a hand-repaired file whose last line lost its newline still loads."""
+    path = _write_history(temp_dir, "\n".join(fixture_lines))
+    assert read_history_file(path) == [json.loads(line) for line in fixture_lines]
 
 
 def test_invalid_middle_line_reports_its_line_number(

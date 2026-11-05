@@ -241,6 +241,23 @@ def _matches_live_scores(game: object, totals: dict[int, int]) -> bool:
     )
 
 
+def test_append_after_a_hand_repair_starts_a_new_line(
+    game_with_players: object,
+) -> None:
+    """Test appending to a file whose last line lost its newline keeps it valid."""
+    game = game_with_players
+    _play_two_clues(game)
+    history_file = game._game_state_dir / "question_history.jsonl"
+    history_file.write_bytes(history_file.read_bytes().rstrip(b"\n"))
+
+    _answer_correctly(game, 2)
+
+    entries = read_history_file(history_file)
+    assert [entry["question_number"] for entry in entries] == [1, 2, 3]
+    assert history_file.read_bytes().endswith(b"}\n")
+    assert _matches_live_scores(game, history_score_totals(entries))
+
+
 def test_failed_append_leaves_the_file_exactly_as_before(
     game_with_players: object, disk_full: dict, warnings_shown: list
 ) -> None:

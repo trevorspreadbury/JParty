@@ -312,9 +312,9 @@ Readers use the file in two ways:
 ## Damaged History Files
 
 Loading `question_history.jsonl` is all-or-nothing. If any line is not valid
-JSON, the last line has no trailing newline (the file was cut off while it was
-being written), or the score chain breaks (a line is missing or was edited),
-every reader stops with the same error:
+JSON (for example, the last line was cut off while it was being written), or
+the score chain breaks (a line is missing or was edited), every reader stops
+with the same error:
 
 ```text
 Could not read saved clue history.
