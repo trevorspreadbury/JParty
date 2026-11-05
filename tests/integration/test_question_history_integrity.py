@@ -61,6 +61,21 @@ def test_resume_reports_cut_off_history(
     assert game._resume_state is None
 
 
+def test_resume_checks_history_before_fetching_the_game(
+    game: object, monkeypatch: object, broken_saved_game_dir: Path
+) -> None:
+    """Test a damaged save fails before the game is fetched or state changes."""
+    from jparty.services import game_loader
+
+    fetched = []
+    monkeypatch.setattr(game_loader, "get_game", fetched.append)
+    data_before = game.data
+    with pytest.raises(HistoryFileError):
+        game.prepare_resume_from_dir(broken_saved_game_dir)
+    assert fetched == []
+    assert game.data is data_before
+
+
 def test_end_game_summary_reports_cut_off_history(
     game: object, broken_saved_game_dir: Path, warnings_shown: list
 ) -> None:

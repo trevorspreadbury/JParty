@@ -414,6 +414,8 @@ class Game(QObject):
                 required metadata file.
             ValueError: If the metadata cannot be loaded or points to an
                 invalid game.
+            HistoryFileError: If the saved clue history cannot be read. This
+                is checked before the game itself is fetched.
         """
         from jparty.services.game_loader import get_game
 
@@ -432,6 +434,9 @@ class Game(QObject):
             raise ValueError("Saved game metadata is missing a game_id")
         if not saved_players:
             raise ValueError("Saved game metadata is missing player information")
+        # Check the history before fetching the game, which can hit the network,
+        # so a damaged save fails right away and leaves the game state untouched.
+        read_history_file(saved_game_path / QUESTION_HISTORY_FILE_NAME)
         board_selection_configs = general_state.get("board_selections")
         selected_round_indices = general_state.get("selected_round_indices")
         original_data = None
@@ -474,7 +479,6 @@ class Game(QObject):
             )
         if not self.valid_game():
             raise ValueError("Saved game points to an invalid or incomplete game")
-        read_history_file(saved_game_path / QUESTION_HISTORY_FILE_NAME)
         self._resume_state = {
             "path": saved_game_path,
             "game_id": game_id,
@@ -865,7 +869,7 @@ class Game(QObject):
             self._initialize_game_state_dir()
         if not self._game_state_dir:
             return None
-        return self._game_state_dir / "question_history.jsonl"
+        return self._game_state_dir / QUESTION_HISTORY_FILE_NAME
 
     def _append_history_entry(self, entry: dict) -> bool:
         """Append a history record to the current session JSONL file.
