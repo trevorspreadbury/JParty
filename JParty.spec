@@ -1,17 +1,20 @@
 import sys, platform
-sys.path.append('')
-from jparty.version import version
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+sys.path.append(str(ROOT / "src"))
+from jparty import __version__ as version
 
 uname = platform.uname()
 arch = uname.machine
 iconfile = "resources/icon.icns" if uname.system=="Darwin" else "resources/icon.ico"
 
-a = Analysis(['run.py'],
-             pathex=['.'],
+a = Analysis(['src/jparty/__main__.py'],
+             pathex=['src'],
              binaries=[],
              datas=[
-                 ("jparty/data/*", "data"),
-                 ("jparty/buzzer", "buzzer"),
+                 ("src/jparty/assets/data/*", "jparty/assets/data"),
+                 ("src/jparty/assets/buzzer", "jparty/assets/buzzer"),
              ],
              hiddenimports=["qrcode"],
              hookspath=[],
