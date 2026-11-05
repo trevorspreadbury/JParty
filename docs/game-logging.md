@@ -44,7 +44,9 @@ schema:
   ],
   "selected_round_indices": [0, 1, 2],
   "started_at": 1700000000.0,
-  "last_updated": 1700000300.0
+  "last_updated": 1700000300.0,
+  "history_format": 2,
+  "jparty_version": "3.0.0"
 }
 ```
 
@@ -60,6 +62,17 @@ Field notes:
   screen
 - `started_at`: Unix timestamp for when the game session started
 - `last_updated`: Unix timestamp for when the metadata was last saved
+- `history_format`: version of the `question_history.jsonl` format the session
+  was started with. `2` is the append-only ledger described below, with
+  `score_correction` lines and the score-chain rule. Saves without this field
+  were started by an older JParty. Resuming such a save doesn't add the field,
+  so a missing value always means "started before format 2".
+- `jparty_version`: the JParty version that started the session, kept as-is
+  when the game is resumed. This is for diagnosing saves only; between
+  releases, dev builds all report the same number.
+
+JParty doesn't read `history_format` or `jparty_version` yet. They record
+where a save came from so that differences between versions can be found.
 
 ## `question_history.jsonl`
 

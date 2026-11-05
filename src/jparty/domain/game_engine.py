@@ -22,6 +22,7 @@ from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QInputDialog, QMessageBox, QWidget
 
 matplotlib.use("Agg")
+from jparty import __version__
 from jparty.app.paths import GAME_SCORES_DIR, GAME_STATES_DIR
 from jparty.domain.gameplay import (
     ClueFlow,
@@ -37,6 +38,7 @@ from jparty.domain.input import (
 )
 from jparty.domain.models import FinalBoard, GameData
 from jparty.domain.state import (
+    HISTORY_FORMAT,
     NO_ANSWER_RESULT,
     QUESTION_HISTORY_FILE_NAME,
     SCORE_CORRECTION_TYPE,
@@ -198,6 +200,8 @@ class Game(QObject):
         self._open_responses_times = []
         self._successful_buzz_times = []
         self._game_started_at = None
+        self._history_format = None
+        self._started_by_version = None
         self._resume_state = None
         self._selected_round_indices = None
         self._board_selection_configs = None
@@ -557,6 +561,8 @@ class Game(QObject):
         self.buzzer_controller.accepting_players = False
         self.song_player.stop()
         self._game_started_at = time.time()
+        self._history_format = HISTORY_FORMAT
+        self._started_by_version = __version__
         self._initialize_game_state_dir()
         self._save_general_state()
         if isinstance(self.current_round, FinalBoard):
@@ -691,6 +697,9 @@ class Game(QObject):
         self._game_started_at = (
             resume_state["general_state"].get("started_at") or time.time()
         )
+        # Keep what the save recorded, so a resumed legacy save stays unmarked.
+        self._history_format = resume_state["general_state"].get("history_format")
+        self._started_by_version = resume_state["general_state"].get("jparty_version")
         self.players = self.buzzer_controller.claimed_saved_players()
         raw_history = self._load_question_history()
         question_history = [

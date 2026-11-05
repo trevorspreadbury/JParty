@@ -15,6 +15,9 @@ from itertools import zip_longest
 from pathlib import Path
 
 QUESTION_HISTORY_FILE_NAME = "question_history.jsonl"
+# Version of the question_history.jsonl format, recorded in general.json
+# as ``history_format``. Saves without it predate the append-only ledger.
+HISTORY_FORMAT = 2
 QUESTION_HISTORY_ENTRY_TYPE = "question"
 MANUAL_SCORE_ADJUSTMENT_TYPE = "manual_score_adjustment"
 SCORE_CORRECTION_TYPE = "score_correction"
@@ -130,14 +133,15 @@ def get_current_game_state(game: object) -> object:
         game: Active ``Game`` instance providing the session state to capture.
 
     Returns:
-        A dictionary containing the game id, player list, and session
-        timestamps.
+        A dictionary containing the game id, player list, session
+        timestamps, and, when known, the history format and JParty version
+        that started the session.
     """
     game_id = game.current_game_id()
     current_time = time.time()
     selected_round_indices = game.selected_round_indices()
     board_selections = game.board_selection_configs()
-    return {
+    state = {
         "game_id": game_id,
         "players": [
             {"name": p.name, "player_number": p.player_number} for p in game.players
@@ -150,6 +154,11 @@ def get_current_game_state(game: object) -> object:
         "started_at": game._game_started_at or current_time,
         "last_updated": current_time,
     }
+    if game._history_format is not None:
+        state["history_format"] = game._history_format
+    if game._started_by_version is not None:
+        state["jparty_version"] = game._started_by_version
+    return state
 
 
 def get_history_entry_type(entry: dict) -> str:
