@@ -203,6 +203,8 @@ class DisplayWindow(QMainWindow):
         Returns:
             ``None``.
         """
+        if self.question_widget is None:
+            return
         self.board_widget.setVisible(True)
         self.board_layout.replaceWidget(self.question_widget, self.board_widget)
         self.question_widget.deleteLater()
@@ -248,11 +250,19 @@ class DisplayWindow(QMainWindow):
 
         Returns:
             ``None``.
+
+        The summary replaces whatever occupies the board slot: the Final
+        Jeopardy clue after a Final round, or the board itself when the game
+        ended without one.
         """
         self.graph_display = EndGameSummaryDisplay(summary, self)
-        self.question_widget.setVisible(False)
-        self.final_display.setVisible(False)
-        self.board_layout.replaceWidget(self.question_widget, self.graph_display)
+        if self.final_display is not None:
+            self.final_display.setVisible(False)
+        layout_item = self.board_layout.itemAt(1)
+        if layout_item is not None and layout_item.widget() is not None:
+            current_widget = layout_item.widget()
+            current_widget.setVisible(False)
+            self.board_layout.replaceWidget(current_widget, self.graph_display)
 
     def closeEvent(self, event: object) -> None:
         """Close the game when the window is closed.
@@ -310,6 +320,7 @@ class DisplayWindow(QMainWindow):
         if self.graph_display is not None:
             self.graph_display.close()
         self.final_display = None
+        self.final_window = None
         self.graph_display = None
         self.board_widget.clear()
         self.show_welcome_widgets()
@@ -330,6 +341,7 @@ class HostDisplayWindow(DisplayWindow):
         """
         super().__init__(game)
         self.on_image_question = False
+        self.image_question_widget = None
         self.preview_widget = None
 
     def host(self) -> bool:
@@ -490,9 +502,12 @@ class HostDisplayWindow(DisplayWindow):
 
         Returns:
             ``None``.
+
+        The review widget is built before any display state changes so that a
+        failure while constructing it leaves the board usable.
         """
-        self.on_image_question = True
         self.image_question_widget = self.create_image_question_widget(self.game)
+        self.on_image_question = True
         self.board_widget.setVisible(False)
         self.board_layout.replaceWidget(self.board_widget, self.image_question_widget)
 
@@ -507,7 +522,7 @@ class HostDisplayWindow(DisplayWindow):
         """
         self.question_widget = self.create_question_widget(q)
         self.board_widget.setVisible(False)
-        if self.on_image_question:
+        if self.on_image_question and self.image_question_widget is not None:
             self.on_image_question = False
             self.board_layout.replaceWidget(
                 self.image_question_widget, self.question_widget
@@ -515,4 +530,5 @@ class HostDisplayWindow(DisplayWindow):
             self.image_question_widget.deleteLater()
             self.image_question_widget = None
         else:
+            self.on_image_question = False
             self.board_layout.replaceWidget(self.board_widget, self.question_widget)

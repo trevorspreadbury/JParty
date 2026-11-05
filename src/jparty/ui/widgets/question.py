@@ -8,9 +8,10 @@ Double prompts, and Final Jeopardy category and answer screens.
 from pathlib import Path
 from uuid import uuid4
 
+from PyQt6 import sip
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
-from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -22,7 +23,13 @@ from PyQt6.QtWidgets import (
 )
 
 from jparty.app.paths import QUESTION_MEDIA
-from jparty.services.image_lookup import search_wikimedia_image
+from jparty.services.image_lookup import (
+    NO_IMAGE_FOUND,
+    REQUEST_TIMEOUT_SECONDS,
+    WIKIMEDIA_USER_AGENT,
+    parse_wikimedia_image_response,
+    wikimedia_image_search_url,
+)
 from jparty.ui.styles import CARDPAL, MyLabel
 
 
@@ -128,7 +135,13 @@ class HostQuestionWidget(QuestionWidget):
 
 
 class HostImageQuestionWidget(QWidget):
-    """Widget to display and manage an image-based question for a game."""
+    """Widget to display and manage an image-based question for a game.
+
+    Image searches and downloads run asynchronously through a shared
+    ``QNetworkAccessManager`` so a slow or missing network never blocks the
+    host UI. Each new request supersedes any still in flight, so a late reply
+    cannot overwrite a newer search or image.
+    """
 
     def __init__(self, game: object, parent: object = None) -> None:
         """Initialize the widget with game state and setup UI components.
@@ -141,9 +154,14 @@ class HostImageQuestionWidget(QWidget):
         self.game = game
         self.question = game.active_question
         self.current_pixmap = None
-        self.image_url = self.get_initial_image_url()
+        self.image_url = self.question.image_url
+        self._request_generation = 0
+        self.network_manager = QNetworkAccessManager(self)
         self.setup_ui()
-        self.fetch_image(self.image_url)
+        if self.image_url:
+            self.fetch_image(self.image_url)
+        else:
+            self.search_image(self.question.answer)
 
     def setup_ui(self) -> None:
         """Set up the UI components and layout."""
@@ -220,9 +238,79 @@ class HostImageQuestionWidget(QWidget):
         self.buttons_layout.addWidget(self.reject_button)
         self.right_layout.addLayout(self.buttons_layout)
 
-    def get_initial_image_url(self) -> object:
-        """Retrieve the initial image URL for the question."""
-        return self.question.image_url or search_wikimedia_image(self.question.answer)
+    def _begin_request(self, status_text: object) -> int:
+        """Invalidate in-flight requests and clear the current image.
+
+        Args:
+            status_text: Placeholder text shown while the request runs.
+
+        Returns:
+            The generation number identifying the new request.
+        """
+        self._request_generation += 1
+        self.current_pixmap = None
+        self.image_label.clear()
+        self.image_label.setText(status_text)
+        return self._request_generation
+
+    def _send_request(self, url: object, handler: object) -> None:
+        """Issue an asynchronous GET and route the reply to ``handler``.
+
+        Args:
+            url: URL string to request.
+            handler: Callable taking the finished ``QNetworkReply``. It is only
+                called if no newer request has started in the meantime and
+                the widget has not been destroyed.
+
+        Returns:
+            ``None``.
+        """
+        generation = self._request_generation
+        request = QNetworkRequest(QUrl(url))
+        request.setHeader(
+            QNetworkRequest.KnownHeaders.UserAgentHeader, WIKIMEDIA_USER_AGENT
+        )
+        request.setTransferTimeout(REQUEST_TIMEOUT_SECONDS * 1000)
+        reply = self.network_manager.get(request)
+
+        def on_finished() -> None:
+            reply.deleteLater()
+            if sip.isdeleted(self) or generation != self._request_generation:
+                return
+            handler(reply)
+
+        reply.finished.connect(on_finished)
+
+    def search_image(self, query: object) -> None:
+        """Look up a Wikimedia thumbnail for ``query`` without blocking.
+
+        Args:
+            query: Page title or search phrase to look up.
+
+        Returns:
+            ``None``.
+        """
+        self.image_url = None
+        self._begin_request("Searching for image...")
+        self._send_request(
+            wikimedia_image_search_url(query), self.on_image_search_finished
+        )
+
+    def on_image_search_finished(self, reply: object) -> None:
+        """Handle a finished Wikimedia lookup and fetch the found image.
+
+        Network failures (for example when offline) and lookups with no
+        thumbnail leave ``image_url`` unset so **No Image Necessary** or a
+        manual search can continue the clue.
+        """
+        image_url = NO_IMAGE_FOUND
+        if reply.error() == QNetworkReply.NetworkError.NoError:
+            image_url = parse_wikimedia_image_response(bytes(reply.readAll()))
+        if image_url == NO_IMAGE_FOUND:
+            self.image_label.setText("Failed to load image.")
+        else:
+            self.image_url = image_url
+            self.fetch_image(image_url)
 
     def fetch_image(self, path_or_url: object) -> None:
         """Fetch the image from a local path or URL."""
@@ -233,19 +321,18 @@ class HostImageQuestionWidget(QWidget):
 
     def load_image_from_file(self, file_path: object) -> None:
         """Load an image from a local file and display it."""
+        self._begin_request("Loading image...")
         pixmap = QPixmap(file_path)
         self.handle_pixmap_load(pixmap)
 
     def load_image_from_url(self, url: object) -> None:
-        """Download and load an image from a URL."""
-        self.network_manager = QNetworkAccessManager(self.image_label)
-        self.network_manager.finished.connect(self.on_image_downloaded)
-        request = QNetworkRequest(QUrl(url))
-        self.network_manager.get(request)
+        """Download and load an image from a URL without blocking."""
+        self._begin_request("Loading image...")
+        self._send_request(url, self.on_image_downloaded)
 
     def on_image_downloaded(self, reply: object) -> None:
         """Handle the downloaded image and display it."""
-        if reply.error() == reply.NetworkError.NoError:
+        if reply.error() == QNetworkReply.NetworkError.NoError:
             pixmap = QPixmap()
             pixmap.loadFromData(reply.readAll())
             self.handle_pixmap_load(pixmap)
@@ -267,12 +354,11 @@ class HostImageQuestionWidget(QWidget):
     def debounced_input_changed(self) -> None:
         """Update the image URL or query after debounce."""
         input_text = self.textbox.text()
-        self.image_url = (
-            input_text
-            if input_text.startswith("https://")
-            else search_wikimedia_image(input_text)
-        )
-        self.fetch_image(self.image_url)
+        if input_text.startswith("https://"):
+            self.image_url = input_text
+            self.fetch_image(self.image_url)
+        else:
+            self.search_image(input_text)
         self.update_accept_button(input_text)
 
     def update_accept_button(self, input_text: object) -> None:

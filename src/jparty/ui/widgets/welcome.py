@@ -42,6 +42,7 @@ from jparty.services.game_loader import (
     get_game,
     get_random_game,
     normalize_standard_board_daily_doubles,
+    original_board_row_values,
     standard_board_daily_double_indices,
 )
 from jparty.services.question_media import (
@@ -98,7 +99,6 @@ ADVANCED_DAILY_DOUBLE_COUNT_MIN = 0
 ADVANCED_DAILY_DOUBLE_COUNT_MAX = 6
 ADVANCED_ROW_DEBOUNCE_MS = 2000
 QUESTION_INDEX_PART_COUNT = 2
-ROW_VALUE_COUNT = 5
 
 _RNG = SystemRandom()
 
@@ -1382,14 +1382,7 @@ QCheckBox {{
             if not 0 <= int(round_index) < len(self.game.data.rounds):
                 continue
             round_data = self.game.data.rounds[int(round_index)]
-            row_values = [
-                question.value
-                for question in sorted(
-                    getattr(round_data, "questions", []),
-                    key=lambda question: question.index,
-                )
-                if not isinstance(round_data, FinalBoard)
-            ][:ROW_VALUE_COUNT]
+            row_values = original_board_row_values(self.game.data, int(round_index))
             if isinstance(round_data, FinalBoard):
                 board_selections.append(
                     {
