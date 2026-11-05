@@ -324,8 +324,7 @@ and flushed. If a write fails partway (for example, the disk is full), the
 file is truncated back to its previous size and the host sees "Could not save
 clue history: ...". The clue that failed to save is missing from the file, so
 the next score change for those players breaks the chain until that line is
-restored. The one-time migration of legacy round indices rewrites the file by
-writing a temporary copy and swapping it in.
+restored. JParty never rewrites or reorders existing lines.
 
 For the host-side gameplay flow and score correction UI, see
 [HOST.md](../HOST.md).

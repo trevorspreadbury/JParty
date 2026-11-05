@@ -61,20 +61,6 @@ def test_resume_reports_cut_off_history(
     assert game._resume_state is None
 
 
-def test_resume_round_index_migration_reports_the_same_error(
-    game: object, monkeypatch: object, broken_saved_game_dir: Path
-) -> None:
-    """Test the legacy round-index migration uses the strict reader too."""
-    general_file = broken_saved_game_dir / "general.json"
-    general_state = json.loads(general_file.read_text(encoding="utf-8"))
-    general_state["selected_round_indices"] = [0, 1, 2]
-    general_file.write_text(json.dumps(general_state), encoding="utf-8")
-    _patch_get_game(monkeypatch, game.data)
-    with pytest.raises(HistoryFileError) as excinfo:
-        game.prepare_resume_from_dir(broken_saved_game_dir)
-    assert excinfo.value.line_number == 3
-
-
 def test_end_game_summary_reports_cut_off_history(
     game: object, broken_saved_game_dir: Path, warnings_shown: list
 ) -> None:

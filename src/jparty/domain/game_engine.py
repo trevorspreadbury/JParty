@@ -201,7 +201,6 @@ class Game(QObject):
         self._board_selection_configs = None
         self._composed_board_selection_configs = None
         self._composed_game_data = None
-        self._history_round_indices_original = False
         self._session_game_id = ""
         self._reveal_answers_after_triple_stumper = False
         self._awaiting_stumped_answer_reveal = False
@@ -249,7 +248,6 @@ class Game(QObject):
         self._board_selection_configs = None
         self._composed_board_selection_configs = None
         self._composed_game_data = None
-        self._history_round_indices_original = False
         self._session_game_id = ""
         if self.buzzer_controller:
             self.buzzer_controller.clear_saved_player_reclaim()
@@ -410,9 +408,6 @@ class Game(QObject):
             raise ValueError(f"Could not load saved game metadata: {e}") from e
         game_id = str(general_state.get("game_id", "")).strip()
         saved_players = general_state.get("players", [])
-        self._history_round_indices_original = bool(
-            general_state.get("history_round_indices_original", False)
-        )
         if not game_id:
             raise ValueError("Saved game metadata is missing a game_id")
         if not saved_players:
@@ -440,9 +435,6 @@ class Game(QObject):
                 self.data = original_data
                 self.set_selected_round_indices(selected_round_indices)
                 self.set_board_selection_configs(board_selection_configs)
-                self._normalize_resume_history_round_indices(
-                    saved_game_path, general_state
-                )
             else:
                 self.data = build_game_from_board_selection_configs(
                     board_selection_configs
@@ -452,7 +444,6 @@ class Game(QObject):
             self.data = get_game(game_id)
             self.set_selected_round_indices(selected_round_indices)
             self.set_board_selection_configs(None)
-            self._normalize_resume_history_round_indices(saved_game_path, general_state)
         self.set_reveal_answers_after_triple_stumper(
             general_state.get("reveal_answers_after_triple_stumper", False)
         )
@@ -529,89 +520,6 @@ class Game(QObject):
             ) != (expected_daily_double_indices):
                 return False
         return True
-
-    def _normalize_resume_history_round_indices(
-        self, saved_game_path: Path, general_state: dict
-    ) -> None:
-        """Rewrite legacy filtered-round history indices to original indices."""
-        if self._history_round_indices_original:
-            return
-        selected_round_indices = general_state.get("selected_round_indices") or []
-        if not selected_round_indices:
-            self._history_round_indices_original = True
-            return
-        selected_round_indices = [int(index) for index in selected_round_indices]
-        history_file = saved_game_path / QUESTION_HISTORY_FILE_NAME
-        if not history_file.exists():
-            self._history_round_indices_original = True
-            return
-        entries = read_history_file(history_file)
-        if not entries:
-            self._history_round_indices_original = True
-            return
-
-        def _legacy_index_detected(index: object) -> bool:
-            return (
-                isinstance(index, int)
-                and 0 <= index < len(selected_round_indices)
-                and index not in selected_round_indices
-            )
-
-        needs_remap = any(
-            _legacy_index_detected(entry.get("round_index"))
-            or _legacy_index_detected(
-                entry.get("question_index", [None])[0]
-                if isinstance(entry.get("question_index"), list | tuple)
-                and entry.get("question_index")
-                else None
-            )
-            or any(
-                _legacy_index_detected(
-                    buzz_attempt.get("question_index", [None])[0]
-                    if isinstance(buzz_attempt.get("question_index"), list | tuple)
-                    and buzz_attempt.get("question_index")
-                    else None
-                )
-                for phase in entry.get("buzz_phases", [])
-                for buzz_attempt in phase.get("buzz_attempts", [])
-            )
-            for entry in entries
-        )
-        if not needs_remap:
-            self._history_round_indices_original = True
-            return
-
-        def _remap_index(index: object) -> object:
-            if isinstance(index, int) and 0 <= index < len(selected_round_indices):
-                return selected_round_indices[index]
-            return index
-
-        for entry in entries:
-            if "round_index" in entry:
-                entry["round_index"] = _remap_index(entry["round_index"])
-            question_index = entry.get("question_index")
-            if isinstance(question_index, list) and question_index:
-                question_index[0] = _remap_index(question_index[0])
-            for phase in entry.get("buzz_phases", []):
-                for buzz_attempt in phase.get("buzz_attempts", []):
-                    buzz_question_index = buzz_attempt.get("question_index")
-                    if isinstance(buzz_question_index, list) and buzz_question_index:
-                        buzz_question_index[0] = _remap_index(buzz_question_index[0])
-
-        # This one-time migration is the only rewrite of the history file, so
-        # write a temporary copy and swap it in atomically.
-        temporary_file = history_file.with_name(history_file.name + ".tmp")
-        temporary_file.write_text(
-            "".join(json.dumps(entry) + "\n" for entry in entries),
-            encoding="utf-8",
-        )
-        temporary_file.replace(history_file)
-        general_state["history_round_indices_original"] = True
-        (saved_game_path / "general.json").write_text(
-            json.dumps(general_state, indent=2),
-            encoding="utf-8",
-        )
-        self._history_round_indices_original = True
 
     def begin(self) -> None:
         """Begin the pre-game lobby state by starting the intro music.

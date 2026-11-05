@@ -202,10 +202,10 @@ def test_resume_skips_deselected_rounds_when_advancing(
     assert isinstance(game.current_round, FinalBoard)
 
 
-def test_resume_normalizes_saved_subset_round_indices_to_original_game(
+def test_resume_subset_save_uses_original_round_indices(
     game: object, monkeypatch: object, temp_dir: object
 ) -> None:
-    """Subset saves should resume against the original round identities."""
+    """Subset saves should resume against original round indices, read-only."""
     from jparty.services import game_loader
 
     restored_data = game.data
@@ -227,9 +227,9 @@ def test_resume_normalizes_saved_subset_round_indices_to_original_game(
     with (saved_dir / "question_history.jsonl").open("w") as f:
         json.dump(
             {
-                "question_index": [0, [0, 0]],
+                "question_index": [1, [0, 0]],
                 "question_number": 1,
-                "round_index": 0,
+                "round_index": 1,
                 "category": "Cat 0",
                 "value": 400,
                 "is_daily_double": False,
@@ -239,7 +239,7 @@ def test_resume_normalizes_saved_subset_round_indices_to_original_game(
                         "buzz_attempts": [
                             {
                                 "player_index": 0,
-                                "question_index": [0, [0, 0]],
+                                "question_index": [1, [0, 0]],
                                 "timestamp": 1.0,
                                 "is_early": False,
                                 "is_success": True,
@@ -256,6 +256,8 @@ def test_resume_normalizes_saved_subset_round_indices_to_original_game(
         )
         f.write("\n")
 
+    history_file = saved_dir / "question_history.jsonl"
+    history_before = history_file.read_bytes()
     players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
     game.prepare_resume_from_dir(saved_dir)
     game.buzzer_controller.connected_players = players
@@ -263,24 +265,12 @@ def test_resume_normalizes_saved_subset_round_indices_to_original_game(
     game.dc.scoreboard.refresh_players()
     game.start_game()
 
-    rewritten_general = json.loads((saved_dir / "general.json").read_text())
-    rewritten_history = [
-        json.loads(line)
-        for line in (saved_dir / "question_history.jsonl").read_text().splitlines()
-        if line.strip()
-    ]
     assert len(game.data.rounds) == 3
     assert game.selected_round_indices() == [1, 2]
     assert game.current_round is game.data.rounds[1]
     assert game.data.rounds[1].get_question(0, 0).complete is True
     assert game.data.rounds[0].get_question(0, 0).complete is False
-    assert rewritten_general["history_round_indices_original"] is True
-    assert rewritten_history[0]["round_index"] == 1
-    assert rewritten_history[0]["question_index"][0] == 1
-    assert (
-        rewritten_history[0]["buzz_phases"][0]["buzz_attempts"][0]["question_index"][0]
-        == 1
-    )
+    assert history_file.read_bytes() == history_before
 
 
 def test_resume_same_game_subset_board_selections_keep_original_round_list(
@@ -325,9 +315,9 @@ def test_resume_same_game_subset_board_selections_keep_original_round_list(
     with (saved_dir / "question_history.jsonl").open("w") as file_obj:
         json.dump(
             {
-                "question_index": [0, [0, 0]],
+                "question_index": [1, [0, 0]],
                 "question_number": 1,
-                "round_index": 0,
+                "round_index": 1,
                 "category": restored_data.rounds[1].questions[0].category,
                 "value": 400,
                 "is_daily_double": False,
@@ -339,6 +329,8 @@ def test_resume_same_game_subset_board_selections_keep_original_round_list(
         )
         file_obj.write("\n")
 
+    history_file = saved_dir / "question_history.jsonl"
+    history_before = history_file.read_bytes()
     players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
     game.prepare_resume_from_dir(saved_dir)
     game.buzzer_controller.connected_players = players
@@ -346,20 +338,12 @@ def test_resume_same_game_subset_board_selections_keep_original_round_list(
     game.dc.scoreboard.refresh_players()
     game.start_game()
 
-    rewritten_general = json.loads((saved_dir / "general.json").read_text())
-    rewritten_history = [
-        json.loads(line)
-        for line in (saved_dir / "question_history.jsonl").read_text().splitlines()
-        if line.strip()
-    ]
     assert len(game.data.rounds) == 3
     assert game.selected_round_indices() == [1, 2]
     assert game.current_round is game.data.rounds[1]
     assert game.data.rounds[1].get_question(0, 0).complete is True
     assert game.data.rounds[0].get_question(0, 0).complete is False
-    assert rewritten_general["history_round_indices_original"] is True
-    assert rewritten_history[0]["round_index"] == 1
-    assert rewritten_history[0]["question_index"][0] == 1
+    assert history_file.read_bytes() == history_before
 
 
 def test_resume_preserves_frankenstein_board_selections_and_round_sources(
