@@ -627,8 +627,9 @@ def load_question_history(game: object) -> object:
 
     Returns:
         A list of decoded JSON history entries ordered as stored on disk,
-        including any ``score_correction`` lines. Returns ``[]`` only when
-        there is no state directory or no history file yet.
+        including any ``score_correction`` lines, followed by any lines the
+        game has queued but could not write yet. Returns ``[]`` only when
+        there is no state directory or no history yet.
 
     Raises:
         HistoryFileError: If the history file cannot be read; see
@@ -636,7 +637,10 @@ def load_question_history(game: object) -> object:
     """
     if not game._game_state_dir:
         return []
-    return read_history_file(Path(game._game_state_dir) / QUESTION_HISTORY_FILE_NAME)
+    saved_entries = read_history_file(
+        Path(game._game_state_dir) / QUESTION_HISTORY_FILE_NAME
+    )
+    return saved_entries + list(getattr(game, "_pending_history_lines", []))
 
 
 def load_corrected_question_history(game: object) -> list[dict]:

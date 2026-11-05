@@ -189,6 +189,8 @@ class Game(QObject):
         self.toolate_trigger.connect(self.__toolate)
         self.lectern_update_trigger.connect(self.__broadcast_lectern_update)
         self._game_state_dir = None
+        self._pending_history_lines = []
+        self._history_save_failing = False
         self._current_question_history = None
         self._all_buzz_attempts = []
         self._answer_attempts = []
@@ -685,6 +687,7 @@ class Game(QObject):
         """
         resume_state = self._resume_state
         self._game_state_dir = resume_state["path"]
+        self._clear_pending_history()
         self._game_started_at = (
             resume_state["general_state"].get("started_at") or time.time()
         )
@@ -783,6 +786,7 @@ class Game(QObject):
             return
         self._game_state_dir = GAME_STATES_DIR / self._game_state_dir_name(game_id)
         self._game_state_dir.mkdir(parents=True, exist_ok=True)
+        self._clear_pending_history()
 
     def _game_state_dir_name(self, game_id: object) -> str:
         """Build the timestamped directory name used for saved game state.
@@ -843,26 +847,47 @@ class Game(QObject):
     def _append_history_entry(self, entry: dict) -> bool:
         """Append a history record to the current session JSONL file.
 
-        The entry is written as one complete line and flushed. If the write
-        fails partway (for example, the disk is full), the file is truncated
-        back to its previous size so no partial line is left behind, and the
-        host is warned.
+        The entry joins the queue of unsaved lines, and the whole queue is
+        written in order. If the write fails (for example, the disk is full or
+        another program briefly locks the file), the lines stay queued and are
+        written again in front of the next entry. The file therefore never
+        skips a line, so its score chain stays intact.
 
         Args:
             entry: Serializable history entry to append.
 
         Returns:
-            ``True`` when the entry was saved.
+            ``True`` when the entry and every earlier queued line were saved.
         """
+        if self._history_file() is None:
+            logging.error("No game state directory available for history append")
+            return False
+        self._pending_history_lines.append(entry)
+        return self._flush_pending_history()
+
+    def _flush_pending_history(self) -> bool:
+        """Write every queued history line to the session file, oldest first.
+
+        The lines are written in a single ``write``, then flushed. If anything
+        fails, the file is truncated back to its previous size so no partial
+        line is left behind, and the lines stay queued. The host is warned on
+        the first failure in a row only.
+
+        Returns:
+            ``True`` when nothing is left in the queue.
+        """
+        if not self._pending_history_lines:
+            return True
         history_file = self._history_file()
         if history_file is None:
-            logging.error("No game state directory available for history append")
             return False
         size_before = history_file.stat().st_size if history_file.exists() else 0
         try:
-            line = json.dumps(entry) + "\n"
+            text = "".join(
+                json.dumps(entry) + "\n" for entry in self._pending_history_lines
+            )
             with history_file.open("a", encoding="utf-8", newline="\n") as file_obj:
-                file_obj.write(line)
+                file_obj.write(text)
                 file_obj.flush()
         except Exception as exc:
             logging.error("Error appending question history: %s", exc, exc_info=True)
@@ -871,12 +896,53 @@ class Game(QObject):
                     file_obj.truncate(size_before)
             except OSError:
                 logging.error("Could not roll back question history", exc_info=True)
+            if not self._history_save_failing:
+                self._history_save_failing = True
+                reason = getattr(exc, "strerror", None) or exc
+                self.show_host_warning(
+                    "Clue History Not Saved",
+                    f"Could not save clue history: {reason}.\n\n"
+                    "JParty is keeping the unsaved clues and will try again "
+                    "after the next clue. The saved game is still safe to "
+                    "load, but it will be missing these clues if the problem "
+                    "continues until you close the game.",
+                )
+            return False
+        if self._history_save_failing:
+            logging.info(
+                "Saved %d delayed question history lines",
+                len(self._pending_history_lines),
+            )
+        self._clear_pending_history()
+        return True
+
+    def _finish_pending_history(self) -> None:
+        """Make a last attempt to save queued lines before the session ends.
+
+        If the lines still cannot be written, the host is told how many are
+        missing from the save. The file on disk still loads, and resumes from
+        before those lines.
+
+        Returns:
+            ``None``.
+        """
+        if not self._flush_pending_history():
             self.show_host_warning(
                 "Clue History Not Saved",
-                f"Could not save clue history: {getattr(exc, 'strerror', None) or exc}",
+                f"Could not save the last {len(self._pending_history_lines)} "
+                "clue history entries. The saved game will still load, but it "
+                "resumes from before those clues.",
             )
-            return False
-        return True
+        self._clear_pending_history()
+
+    def _clear_pending_history(self) -> None:
+        """Drop queued history lines, for example when a session ends.
+
+        Returns:
+            ``None``.
+        """
+        self._pending_history_lines = []
+        self._history_save_failing = False
 
     def show_host_warning(self, title: str, text: str) -> None:
         """Show a warning dialog to the host.
@@ -1010,7 +1076,8 @@ class Game(QObject):
             corrections: Edited clue payloads keyed by ``question_number``.
 
         Returns:
-            ``True`` when any correction was saved.
+            ``True`` when any correction was recorded. A correction that could
+            not be written yet stays queued; see :meth:`_append_history_entry`.
 
         Raises:
             HistoryFileError: If the history file cannot be read.
@@ -1084,17 +1151,14 @@ class Game(QObject):
             correction_lines.append(correction_line)
 
         players_by_number = {player.player_number: player for player in self.players}
-        saved_any = False
         for correction_line in correction_lines:
-            if not self._append_history_entry(correction_line):
-                break
-            saved_any = True
+            self._append_history_entry(correction_line)
             for adjustment in correction_line["adjustments"]:
                 player = players_by_number.get(adjustment["player_index"])
                 if player is not None:
                     self.set_score(player, adjustment["score_after"])
         self._refresh_score_edit_controls()
-        return saved_any
+        return bool(correction_lines)
 
     def apply_manual_score_override(self, player: object, new_score: int) -> bool:
         """Log and apply a host-entered manual player score override.
@@ -1457,14 +1521,19 @@ class Game(QObject):
         Returns:
             ``None``.
         """
+        self._flush_pending_history()
         self.final_jeopardy_flow.generate_final_score_graphs()
 
     def _load_question_history(self) -> object:
-        """Load saved per-question history for the current game session.
+        """Load per-question history for the current game session.
+
+        Queued lines are retried first. Any that still could not be written
+        are included after the saved lines.
 
         Returns:
-            A list of persisted question history entries.
+            A list of question history entries.
         """
+        self._flush_pending_history()
         return load_question_history(self)
 
     def _reconstruct_score_history(self) -> object:
@@ -1565,6 +1634,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
+        self._finish_pending_history()
         self.buzzer_controller.restart()
         if self.buzzer_controller:
             for player_number in list(

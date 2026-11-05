@@ -192,21 +192,17 @@ def test_resume_after_correction_restores_corrected_totals(
     assert game.current_round.get_question(0, 0).complete is True
 
 
-def test_failed_append_leaves_the_file_exactly_as_before(
-    game_with_players: object, monkeypatch: object, warnings_shown: list
-) -> None:
-    """Test a write that fails partway rolls back and warns the host."""
-    game = game_with_players
-    _play_two_clues(game)
-    history_file = game._game_state_dir / "question_history.jsonl"
-    before = history_file.read_bytes()
+@pytest.fixture
+def disk_full(monkeypatch: object) -> dict:
+    """Make history appends fail partway while ``disk_full["on"]`` is true."""
+    switch = {"on": True}
     real_open = Path.open
 
     def failing_open(
         self: Path, mode: str = "r", *args: object, **kwargs: object
     ) -> object:
         handle = real_open(self, mode, *args, **kwargs)
-        if self == history_file and mode == "a":
+        if switch["on"] and self.name == "question_history.jsonl" and mode == "a":
 
             class DiskFull:
                 def __enter__(self) -> object:
@@ -227,13 +223,136 @@ def test_failed_append_leaves_the_file_exactly_as_before(
         return handle
 
     monkeypatch.setattr(Path, "open", failing_open)
+    return switch
+
+
+def _answer_correctly(game: object, row: int) -> None:
+    """Have Alice answer the clue in ``row`` of the first category correctly."""
+    game.load_question(game.current_round.get_question(row, 0))
+    game.open_responses()
+    game.buzz(0)
+    game.correct_answer()
+
+
+def _matches_live_scores(game: object, totals: dict[int, int]) -> bool:
+    """Return whether history ``totals`` equal every player's in-memory score."""
+    return all(
+        totals.get(player.player_number, 0) == player.score for player in game.players
+    )
+
+
+def test_failed_append_leaves_the_file_exactly_as_before(
+    game_with_players: object, disk_full: dict, warnings_shown: list
+) -> None:
+    """Test a write that fails partway rolls back and warns the host."""
+    game = game_with_players
+    _play_two_clues(game)
+    history_file = game._game_state_dir / "question_history.jsonl"
+    before = history_file.read_bytes()
+
     saved = game._append_history_entry({"type": "manual_score_adjustment"})
 
     assert saved is False
     assert history_file.read_bytes() == before
-    assert warnings_shown == [
-        (
-            "Clue History Not Saved",
-            "Could not save clue history: No space left on device",
-        )
+    assert len(warnings_shown) == 1
+    title, text = warnings_shown[0]
+    assert title == "Clue History Not Saved"
+    assert text.startswith("Could not save clue history: No space left on device.")
+    assert "still safe to load" in text
+
+
+def test_failed_appends_are_saved_in_order_once_writing_works(
+    game_with_players: object, disk_full: dict, warnings_shown: list
+) -> None:
+    """Test unsaved clues are written in front of the next one, keeping the chain."""
+    game = game_with_players
+    disk_full["on"] = False
+    _play_two_clues(game)
+    history_file = game._game_state_dir / "question_history.jsonl"
+    saved_before_failure = history_file.read_bytes()
+
+    disk_full["on"] = True
+    _answer_correctly(game, 2)
+    _answer_correctly(game, 3)
+
+    assert history_file.read_bytes() == saved_before_failure
+    assert len(warnings_shown) == 1
+    # Readers during play see the queued clues, so totals and stats stay right.
+    assert _matches_live_scores(
+        game, history_score_totals(game._load_question_history())
+    )
+    assert build_end_game_summary(game).current_players[0].right_count == 3
+
+    disk_full["on"] = False
+    _answer_correctly(game, 4)
+
+    entries = read_history_file(history_file)
+    assert [entry["question_number"] for entry in entries] == [1, 2, 3, 4, 5]
+    assert _matches_live_scores(game, history_score_totals(entries))
+    assert game._pending_history_lines == []
+    assert len(warnings_shown) == 1
+
+
+def test_unsaved_lines_at_close_leave_a_loadable_save(
+    game_with_players: object, disk_full: dict, warnings_shown: list
+) -> None:
+    """Test closing with unsaved clues warns the host and keeps the file valid."""
+    game = game_with_players
+    disk_full["on"] = False
+    _play_two_clues(game)
+    history_file = game._game_state_dir / "question_history.jsonl"
+    saved_totals = history_score_totals(read_history_file(history_file))
+
+    disk_full["on"] = True
+    _answer_correctly(game, 2)
+    game.close_game()
+
+    assert len(warnings_shown) == 2
+    assert warnings_shown[1] == (
+        "Clue History Not Saved",
+        "Could not save the last 1 clue history entries. The saved game will "
+        "still load, but it resumes from before those clues.",
+    )
+    assert history_score_totals(read_history_file(history_file)) == saved_totals
+    assert game._pending_history_lines == []
+
+
+def test_corrections_that_fail_to_save_are_applied_and_saved_later(
+    game_with_players: object, disk_full: dict, warnings_shown: list
+) -> None:
+    """Test a correction batch is kept in full when its write fails."""
+    game = game_with_players
+    disk_full["on"] = False
+    first, second = _play_two_clues(game)
+    history_file = game._game_state_dir / "question_history.jsonl"
+    saved_before_failure = history_file.read_bytes()
+
+    disk_full["on"] = True
+    changed = game.apply_question_history_corrections(
+        [
+            {
+                "question_number": 1,
+                "player_states": {0: "incorrect", 1: "correct", 2: "no answer"},
+                "value": first.value,
+            },
+            {
+                "question_number": 2,
+                "player_states": {0: "no answer", 1: "no answer", 2: "no answer"},
+                "value": second.value,
+            },
+        ]
+    )
+
+    assert changed is True
+    assert history_file.read_bytes() == saved_before_failure
+    assert [player.score for player in game.players[:2]] == [
+        -first.value,
+        first.value,
     ]
+
+    disk_full["on"] = False
+    game.get_recent_score_corrections()
+
+    entries = read_history_file(history_file)
+    assert _matches_live_scores(game, history_score_totals(entries))
+    assert game._pending_history_lines == []

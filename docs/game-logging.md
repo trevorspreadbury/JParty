@@ -320,11 +320,15 @@ changed a score breaks the chain at the next line for that player, so fix
 that line's `score_before` too, or delete the later lines as well.
 
 JParty avoids creating bad lines: each entry is written as one complete line
-and flushed. If a write fails partway (for example, the disk is full), the
-file is truncated back to its previous size and the host sees "Could not save
-clue history: ...". The clue that failed to save is missing from the file, so
-the next score change for those players breaks the chain until that line is
-restored. JParty never rewrites or reorders existing lines.
+and flushed. If a write fails partway (for example, the disk is full, or
+antivirus or a sync tool briefly locks the file), the file is truncated back
+to its previous size and the host sees "Could not save clue history: ...".
+JParty keeps the unsaved lines in memory and writes them, in order, in front
+of the next line. The file never skips a line, so it always passes the
+score-chain check. While lines are waiting, the score editor and end-of-game
+summary include them. If they still can't be written when the host closes the
+game, the host is told how many are missing. The save still loads, and resumes
+from before those clues. JParty never rewrites or reorders existing lines.
 
 For the host-side gameplay flow and score correction UI, see
 [HOST.md](../HOST.md).
