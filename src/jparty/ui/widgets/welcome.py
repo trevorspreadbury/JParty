@@ -657,7 +657,6 @@ QCheckBox {{
         Returns:
             ``None``.
         """
-        media_status = detect_question_media(game_id)
         data = None
         error = None
         try:
@@ -665,6 +664,9 @@ QCheckBox {{
         except Exception as exc:
             logging.error(exc)
             error = exc
+        # Detect after parsing so a media zip that failed to extract during
+        # the parse is reported to the host.
+        media_status = detect_question_media(game_id)
         self.summary_load_result_trigger.emit(
             request_id, game_id, data, error, media_status, False
         )

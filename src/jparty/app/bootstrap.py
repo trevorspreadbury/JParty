@@ -33,6 +33,7 @@ from jparty.domain.state import (
     reconstruct_score_history,
 )
 from jparty.services.archive_client import get_game_html, process_game_board_from_html
+from jparty.services.game_cache import write_text_atomic
 from jparty.ui.styles import JPartyStyle
 from jparty.ui.widgets.common import has_audio_output, resource_path
 from jparty.ui.widgets.final import EndGameSummaryDisplay
@@ -227,8 +228,7 @@ def download_games(inputs: object, delay_seconds: object = 5) -> object:
         if game_obj is None:
             print(f"Skipping {game_id}: downloaded game is invalid or incomplete")
             continue
-        with saved_path.open("w", encoding="utf-8") as file_obj:
-            file_obj.write(game_html)
+        write_text_atomic(saved_path, game_html)
         downloaded.append(game_id)
         time.sleep(delay_seconds)
     return downloaded

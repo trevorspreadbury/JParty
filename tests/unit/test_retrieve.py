@@ -222,3 +222,182 @@ def test_save_game_html_uses_cached_html_and_writes_file(
     saved_path = retrieve.save_game_html(4453)
     assert saved_path == saved_dir / "4453.html"
     assert saved_path.read_text(encoding="utf-8") == "<html>cached game</html>"
+
+
+def _block_network(monkeypatch: object) -> None:
+    """Make any remote fetch fail the test."""
+    monkeypatch.setattr(
+        retrieve,
+        "get_wayback_game_html",
+        lambda game_id: pytest.fail("wayback should not be called"),
+    )
+    monkeypatch.setattr(
+        retrieve,
+        "get_jarchive_game_html",
+        lambda game_id: pytest.fail("j-archive should not be called"),
+    )
+
+
+def test_get_game_parses_cached_html_without_network(
+    temp_dir: object, monkeypatch: object, fixture_dir: object
+) -> None:
+    """A good cached copy should be parsed without any remote fetch."""
+    saved_dir = temp_dir / "saved"
+    saved_dir.mkdir()
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    (saved_dir / "4453.html").write_text(html, encoding="utf-8")
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", saved_dir)
+    monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
+    _block_network(monkeypatch)
+
+    game = retrieve.get_game("4453")
+
+    assert game is not None
+    assert len(game.rounds) == 3
+
+
+def test_get_game_returns_none_for_unparseable_remote_html(
+    temp_dir: object, monkeypatch: object, fixture_dir: object
+) -> None:
+    """A fetched page that is not a game should return ``None``, not raise."""
+    invalid_html = (fixture_dir / "invalid_game.html").read_text(encoding="utf-8")
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", temp_dir / "missing")
+    monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
+    monkeypatch.setattr(retrieve, "get_wayback_game_html", lambda game_id: invalid_html)
+
+    assert retrieve.get_game("9999") is None
+
+
+def test_get_game_propagates_google_sheet_failures(monkeypatch: object) -> None:
+    """Sheet fetch errors should reach the caller so the UI can report them."""
+
+    def failing_rows(file_id: object) -> object:
+        """Simulate a failed Google Sheets download."""
+        raise RuntimeError("sheets failed")
+
+    monkeypatch.setattr(retrieve._FETCHER, "get_google_sheet_rows", failing_rows)
+    with pytest.raises(RuntimeError, match="sheets failed"):
+        retrieve.get_game("abcdefg")
+
+
+def test_get_game_refetches_and_overwrites_truncated_cache(
+    temp_dir: object, monkeypatch: object, fixture_dir: object
+) -> None:
+    """A cut-off cache file should be fetched again and replaced."""
+    saved_dir = temp_dir / "saved"
+    saved_dir.mkdir()
+    full_html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    cut_off_html = full_html[: len(full_html) // 2]
+    (saved_dir / "4453.html").write_text(cut_off_html, encoding="utf-8")
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", saved_dir)
+    monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
+    fetched = []
+
+    def fake_wayback(game_id: object) -> str:
+        """Return the full page and record the fetch."""
+        fetched.append(game_id)
+        return full_html
+
+    monkeypatch.setattr(retrieve, "get_wayback_game_html", fake_wayback)
+
+    game = retrieve.get_game("4453")
+
+    assert fetched == ["4453"]
+    assert game is not None
+    assert len(game.rounds) == 3
+    assert (saved_dir / "4453.html").read_text(encoding="utf-8") == full_html
+
+
+def test_get_game_refetches_cache_that_does_not_parse(
+    temp_dir: object, monkeypatch: object, fixture_dir: object
+) -> None:
+    """A cached copy that does not parse should be replaced by the network copy."""
+    saved_dir = temp_dir / "saved"
+    saved_dir.mkdir()
+    full_html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    (saved_dir / "4453.html").write_text("<html>junk</html>", encoding="utf-8")
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", saved_dir)
+    monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
+    monkeypatch.setattr(retrieve, "get_wayback_game_html", lambda game_id: full_html)
+
+    game = retrieve.get_game("4453")
+
+    assert game is not None
+    assert (saved_dir / "4453.html").read_text(encoding="utf-8") == full_html
+
+
+def test_get_game_keeps_damaged_cache_when_refetch_fails(
+    temp_dir: object, monkeypatch: object
+) -> None:
+    """If the network is down, a damaged cache file is left untouched."""
+    saved_dir = temp_dir / "saved"
+    saved_dir.mkdir()
+    (saved_dir / "4453.html").write_text("<html>junk</html>", encoding="utf-8")
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", saved_dir)
+    monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
+
+    def offline(game_id: object) -> str:
+        """Simulate no network."""
+        raise ConnectionError("offline")
+
+    monkeypatch.setattr(retrieve, "get_wayback_game_html", offline)
+    monkeypatch.setattr(retrieve, "get_jarchive_game_html", offline)
+
+    assert retrieve.get_game("4453") is None
+    assert (saved_dir / "4453.html").read_text(encoding="utf-8") == (
+        "<html>junk</html>"
+    )
+
+
+def test_save_game_html_fetches_when_not_loaded(
+    temp_dir: object, monkeypatch: object
+) -> None:
+    """Saving a game that was never loaded should fetch it, then write it."""
+    saved_dir = temp_dir / "saved"
+    saved_dir.mkdir()
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", saved_dir)
+    monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
+    monkeypatch.setattr(
+        retrieve, "get_wayback_game_html", lambda game_id: "<html>wayback</html>"
+    )
+
+    saved_path = retrieve.save_game_html("4453")
+
+    assert saved_path.read_text(encoding="utf-8") == "<html>wayback</html>"
+
+
+def test_save_game_html_skips_google_sheet_ids(
+    temp_dir: object, monkeypatch: object
+) -> None:
+    """Google Sheets ids have no HTML to cache."""
+    saved_dir = temp_dir / "saved"
+    saved_dir.mkdir()
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", saved_dir)
+    _block_network(monkeypatch)
+
+    assert retrieve.save_game_html("abcdefg") is None
+    assert list(saved_dir.iterdir()) == []
+
+
+def test_save_game_html_leaves_no_partial_file_when_write_fails(
+    temp_dir: object, monkeypatch: object
+) -> None:
+    """A write that fails before the final rename leaves no file behind."""
+    from jparty.services import game_cache
+
+    saved_dir = temp_dir / "saved"
+    saved_dir.mkdir()
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", saved_dir)
+    monkeypatch.setattr(
+        retrieve, "_LOADED_GAME_HTML_CACHE", {"4453": "<html>game</html>"}
+    )
+
+    def failing_replace(source: object, destination: object) -> None:
+        """Simulate the process failing before the final rename."""
+        raise OSError("disk full")
+
+    monkeypatch.setattr(game_cache.os, "replace", failing_replace)
+
+    with pytest.raises(OSError, match="disk full"):
+        retrieve.save_game_html("4453")
+    assert list(saved_dir.iterdir()) == []

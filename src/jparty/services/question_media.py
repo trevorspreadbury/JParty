@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
+import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
-from zipfile import ZipFile
+from zipfile import BadZipFile, ZipFile
 
 from jparty.app.paths import QUESTION_MEDIA
 
@@ -18,6 +21,12 @@ SUPPORTED_IMAGE_EXTENSIONS = {
     ".webp",
 }
 
+# Serializes extraction so two parser workers never race on one game folder.
+_EXTRACT_LOCK = threading.Lock()
+# Zip path -> (zip mtime_ns, zip size, error text) for zips that failed to
+# extract. A zip is retried only after it changes on disk.
+_EXTRACT_FAILURES: dict[str, tuple[int, int, str]] = {}
+
 
 @dataclass(frozen=True)
 class QuestionMediaStatus:
@@ -25,6 +34,7 @@ class QuestionMediaStatus:
 
     directory: Path | None
     zip_file: Path | None
+    error: str | None = None
 
     @property
     def has_directory(self) -> bool:
@@ -43,6 +53,11 @@ class QuestionMediaStatus:
 
     def summary_text(self) -> str:
         """Return a user-facing summary of media detection."""
+        if self.error:
+            return (
+                "Question media status: zip archive could not be extracted "
+                f"({self.error}). Playing without question media."
+            )
         if self.has_directory and self.has_zip:
             return "Question media status: found folder and zip archive."
         if self.has_directory:
@@ -66,9 +81,15 @@ def detect_question_media(game_id: object) -> QuestionMediaStatus:
     """Detect local-media artifacts for a game id."""
     media_dir = question_media_dir(game_id)
     media_zip = question_media_zip(game_id)
+    has_directory = media_dir.is_dir()
+    has_zip = media_zip.is_file()
+    error = None
+    if has_zip and not has_directory:
+        error = _recorded_extract_failure(media_zip)
     return QuestionMediaStatus(
-        directory=media_dir if media_dir.is_dir() else None,
-        zip_file=media_zip if media_zip.is_file() else None,
+        directory=media_dir if has_directory else None,
+        zip_file=media_zip if has_zip else None,
+        error=error,
     )
 
 
@@ -93,30 +114,116 @@ def find_question_media_file(
 
 
 def import_question_media(source_path: object, game_id: object) -> Path:
-    """Import supported media from a folder or zip into the game media directory."""
+    """Import supported media from a folder or zip into the game media directory.
+
+    Files are staged in a temporary folder first, so a damaged zip raises
+    without leaving an empty game folder behind.
+    """
     source = Path(source_path)
     destination = question_media_dir(game_id)
-    destination.mkdir(parents=True, exist_ok=True)
     if source.is_dir():
-        _copy_media_dir(source, destination)
+        stage = _copy_media_dir
     elif source.is_file() and source.suffix.lower() == ".zip":
-        _extract_media_zip(source, destination)
+        stage = _extract_media_zip
     else:
         raise ValueError("Question media must be a directory or .zip file")
+    with _EXTRACT_LOCK:
+        staging = _make_staging_dir(game_id)
+        try:
+            stage(source, staging)
+            destination.mkdir(parents=True, exist_ok=True)
+            for staged_file in staging.iterdir():
+                staged_file.replace(destination / staged_file.name)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        _EXTRACT_FAILURES.pop(str(question_media_zip(game_id)), None)
     return destination
 
 
 def ensure_question_media_dir(game_id: object) -> Path | None:
-    """Return a game-media directory, extracting a same-name zip when needed."""
+    """Return a game-media directory, extracting a same-name zip when needed.
+
+    The zip is extracted into a temporary folder that is renamed into place
+    only once extraction finishes, under a lock. Other workers therefore never
+    see a half-extracted folder, and a damaged zip never leaves an empty
+    folder that would hide the problem on the next load. If the zip cannot be
+    extracted, the error is logged and recorded for ``detect_question_media``
+    so the host is told, and ``None`` is returned so parsing continues.
+    """
     status = detect_question_media(game_id)
     if status.has_directory:
         return status.directory
-    if status.has_zip:
+    if not status.has_zip or status.error:
+        return None
+    with _EXTRACT_LOCK:
         destination = question_media_dir(game_id)
-        destination.mkdir(parents=True, exist_ok=True)
-        _extract_media_zip(status.zip_file, destination)
-        return destination
-    return None
+        if destination.is_dir():
+            return destination
+        try:
+            _extract_zip_into_place(status.zip_file, destination, game_id)
+        except (BadZipFile, OSError) as exc:
+            _record_extract_failure(status.zip_file, exc)
+            return None
+        _EXTRACT_FAILURES.pop(str(status.zip_file), None)
+    return destination
+
+
+def _make_staging_dir(game_id: object) -> Path:
+    """Create a hidden temporary folder beside the game-media folders."""
+    QUESTION_MEDIA.mkdir(parents=True, exist_ok=True)
+    return Path(
+        tempfile.mkdtemp(dir=QUESTION_MEDIA, prefix=f".{str(game_id).strip()}-")
+    )
+
+
+def _extract_zip_into_place(source: Path, destination: Path, game_id: object) -> None:
+    """Extract ``source`` into a staging folder, then rename it to ``destination``."""
+    staging = _make_staging_dir(game_id)
+    try:
+        _extract_media_zip(source, staging)
+        try:
+            staging.rename(destination)
+        except OSError:
+            # Another process may have finished the same extraction first.
+            if not destination.is_dir():
+                raise
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+
+
+def _record_extract_failure(zip_file: Path, exc: Exception) -> None:
+    """Log and remember that ``zip_file`` could not be extracted."""
+    logging.error(
+        "Could not extract question media zip %s; playing without media",
+        zip_file,
+        exc_info=True,
+    )
+    try:
+        stat = zip_file.stat()
+    except OSError:
+        return
+    message = str(exc) or type(exc).__name__
+    _EXTRACT_FAILURES[str(zip_file)] = (
+        stat.st_mtime_ns,
+        stat.st_size,
+        message,
+    )
+
+
+def _recorded_extract_failure(zip_file: Path) -> str | None:
+    """Return the recorded extraction error if ``zip_file`` has not changed."""
+    failure = _EXTRACT_FAILURES.get(str(zip_file))
+    if failure is None:
+        return None
+    try:
+        stat = zip_file.stat()
+    except OSError:
+        return None
+    mtime_ns, size, message = failure
+    if (stat.st_mtime_ns, stat.st_size) != (mtime_ns, size):
+        return None
+    return message
 
 
 def local_media_questions(
