@@ -114,6 +114,20 @@ uv run jparty summary --game-state-directory .jparty-data/game_states/4453-20260
 
 If you are using conda instead of `uv`, use the same commands without the `uv run` prefix.
 
+### Single-monitor debug mode
+
+JParty normally refuses to start unless two displays are attached, so the host
+window (which shows the answers) stays off the audience screen. For development
+on one monitor, turn on debug mode with either:
+
+```bash
+JPARTY_DEBUG=1 uv run jparty
+uv run jparty --debug
+```
+
+`JPARTY_DEBUG` accepts `1`, `true`, `yes` or `on`, and can also go in your
+`.env` file. Debug mode is off by default; don't enable it for real games.
+
 ### Generate a Summary Image from Saved State
 
 You can render the same audience summary visual used at the end of the game from a saved game-state directory:
@@ -140,7 +154,7 @@ those corrections are stored in `question_history.jsonl`, see
 [Game Logging and Saved State](docs/game-logging.md).
 
 ## Build
-To build from source, run:
+PyInstaller lives in the optional `build` extra. To build from source, run:
 
 ```
 uv run --extra build pyinstaller -y JParty.spec
@@ -149,6 +163,7 @@ uv run --extra build pyinstaller -y JParty.spec
 If you are using conda, run:
 
 ```
+pip install -e .[build]
 pyinstaller -y JParty.spec
 ```
 

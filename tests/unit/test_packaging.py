@@ -20,6 +20,26 @@ def test_pyproject_declares_console_script() -> None:
     assert 'jparty = "jparty.app.bootstrap:main"' in pyproject
 
 
+def test_version_has_a_single_source() -> None:
+    """Test pyproject reads the version from jparty._version instead of pinning it."""
+    import jparty
+    from jparty._version import __version__ as source_version
+
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert 'dynamic = ["version"]' in pyproject
+    assert 'version = {attr = "jparty._version.__version__"}' in pyproject
+    assert jparty.__version__ == source_version
+
+
+def test_pyinstaller_is_a_build_extra_not_a_runtime_dependency() -> None:
+    """Test installing JParty does not pull in PyInstaller unless asked for."""
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    runtime_deps = pyproject.split("dependencies = [", 1)[1].split("]", 1)[0]
+    build_extra = pyproject.split("build = [", 1)[1].split("]", 1)[0]
+    assert "pyinstaller" not in runtime_deps.lower()
+    assert "pyinstaller" in build_extra.lower()
+
+
 def test_module_entrypoint_delegates_to_bootstrap() -> None:
     """Test test module entrypoint delegates to bootstrap."""
     import jparty.__main__ as module_entry

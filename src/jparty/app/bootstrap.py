@@ -19,7 +19,7 @@ import requests
 from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from jparty.app.config import DEBUG_MODE, PORT
+from jparty.app.config import DEBUG_ENV_VAR, DEBUG_MODE, PORT, env_flag_enabled
 from jparty.app.logging import install_crash_reporting
 from jparty.app.paths import SAVED_GAMES
 from jparty.domain.game_engine import Game
@@ -159,10 +159,11 @@ def check_second_monitor() -> None:
 
     Raises:
         SystemExit: Exits the process after showing an error dialog when fewer
-            than two screens are available outside debug mode.
+            than two screens are available outside debug mode. Debug mode is
+            enabled with ``JPARTY_DEBUG=1`` or the ``--debug`` CLI flag.
     """
     if DEBUG_MODE:
-        logging.warning("Single monitor mode enabled (DEBUG_MODE)")
+        logging.warning("Single monitor mode enabled (debug mode)")
         return
     if len(QApplication.instance().screens()) < MIN_MONITORS:
         logging.error("No two monitors")
@@ -240,6 +241,14 @@ def build_parser() -> object:
         and arguments.
     """
     parser = argparse.ArgumentParser(prog="jparty")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help=(
+            "developer mode: allow running on a single monitor "
+            "(same as setting JPARTY_DEBUG=1)"
+        ),
+    )
     subparsers = parser.add_subparsers(dest="command")
     download_parser = subparsers.add_parser(
         "download", help="download archived games into the local saved-games cache"
@@ -470,8 +479,13 @@ def main(argv: object = None) -> int | None:
         saved clue history cannot be read. The GUI launch path does not return
         a status code before handing control to Qt.
     """
+    global DEBUG_MODE  # --debug (or JPARTY_DEBUG from .env) turns debug mode on.
     parser = build_parser()
     args = parser.parse_args(argv)
+    # Re-check the env var here because ``.env`` is loaded by ``jparty.app.paths``
+    # after ``jparty.app.config`` has already been imported.
+    if args.debug or env_flag_enabled(DEBUG_ENV_VAR):
+        DEBUG_MODE = True
     if args.command == "download":
         download_games(args.inputs)
         return 0

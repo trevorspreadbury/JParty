@@ -704,7 +704,6 @@ wheels = [
 
 [[package]]
 name = "jparty"
-version = "3.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },

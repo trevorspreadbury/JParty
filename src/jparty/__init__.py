@@ -1,14 +1,5 @@
 """Jparty package."""
 
-from importlib.metadata import PackageNotFoundError, version
+from jparty._version import __version__
 
-
-def get_version() -> str:
-    """Run get version."""
-    try:
-        return version("jparty")
-    except PackageNotFoundError:
-        return "3.0.0"
-
-
-__version__ = get_version()
+__all__ = ["__version__"]
