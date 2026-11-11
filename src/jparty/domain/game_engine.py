@@ -648,6 +648,11 @@ class Game(QObject):
         saved numbers to current ones, so the history reader can translate
         every earlier line before scores are restored.
 
+        Unlike clue lines, a mapping that fails to save is not kept for a
+        later retry. The game stays in the lobby, and pressing Start again
+        builds the full mapping again, so a queued copy would be written
+        twice and the two would cancel each other out.
+
         Returns:
             ``True`` when resuming can continue; ``False`` if the mapping
             could not be saved (the host has already been warned).
@@ -655,7 +660,10 @@ class Game(QObject):
         mapping = self.buzzer_controller.saved_player_renumbering()
         if all(saved == current for saved, current in mapping.items()):
             return True
-        return self._append_history_entry(
+        if self._history_file() is None:
+            logging.error("No game state directory available for player renumber")
+            return False
+        self._pending_history_lines.append(
             {
                 "type": PLAYER_RENUMBER_TYPE,
                 "mapping": {
@@ -664,6 +672,16 @@ class Game(QObject):
                 "timestamp": time.time(),
             }
         )
+        if self._flush_pending_history(warn_host=False):
+            return True
+        self._clear_pending_history()
+        self.show_host_warning(
+            "Seat Order Not Saved",
+            "Could not save the new seat order, so the game has not started. "
+            "Check that the saved game folder can be written to, then press "
+            "Start again.",
+        )
+        return False
 
     def _restore_player_scores(self, history_entries: list[dict]) -> None:
         """Restore each connected player's score from persisted history.
@@ -915,7 +933,7 @@ class Game(QObject):
         self._pending_history_lines.append(entry)
         return self._flush_pending_history()
 
-    def _flush_pending_history(self) -> bool:
+    def _flush_pending_history(self, warn_host: bool = True) -> bool:
         """Write every queued history line to the session file, oldest first.
 
         The lines are written in a single ``write``, then flushed. If the file
@@ -924,6 +942,10 @@ class Game(QObject):
         fails, the file is truncated back to its previous size so no partial
         line is left behind, and the lines stay queued. The host is warned on
         the first failure in a row only.
+
+        Args:
+            warn_host: Whether to show the "Clue History Not Saved" warning
+                on failure. Callers that show their own warning pass ``False``.
 
         Returns:
             ``True`` when nothing is left in the queue.
@@ -950,7 +972,7 @@ class Game(QObject):
                     file_obj.truncate(size_before)
             except OSError:
                 logging.error("Could not roll back question history", exc_info=True)
-            if not self._history_save_failing:
+            if warn_host and not self._history_save_failing:
                 self._history_save_failing = True
                 reason = getattr(exc, "strerror", None) or exc
                 self.show_host_warning(

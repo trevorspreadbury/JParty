@@ -323,9 +323,7 @@ def history_score_events(entry: dict) -> list[tuple]:
     return []
 
 
-def read_history_file(
-    path: object, apply_player_renumbering: bool = True
-) -> list[dict]:
+def read_history_file(path: object) -> list[dict]:
     """Strictly read every line of a ``question_history.jsonl`` file.
 
     Each ``player_renumber`` line (written when the host reorders seats in
@@ -344,10 +342,6 @@ def read_history_file(
 
     Args:
         path: Path of the history file.
-        apply_player_renumbering: Whether to translate player numbers through
-            ``player_renumber`` lines. Pass ``False`` only to rewrite the file
-            as stored; the score chain is not checked then, because it only
-            holds once renumbering is applied.
 
     Returns:
         Decoded history entries in file order, or ``[]`` when the file does
@@ -384,14 +378,13 @@ def read_history_file(
             ) from exc
         if not isinstance(entry, dict):
             raise HistoryFileError(path, line_number, "not a JSON object")
-        if apply_player_renumbering and is_player_renumber(entry):
+        if is_player_renumber(entry):
             mapping = _player_renumber_mapping(path, line_number, entry)
             for _, earlier_entry in entries:
                 if not is_player_renumber(earlier_entry):
                     _remap_player_indices(earlier_entry, mapping)
         entries.append((line_number, entry))
-    if apply_player_renumbering:
-        _check_score_chain(path, entries)
+    _check_score_chain(path, entries)
     return [entry for _, entry in entries]
 
 

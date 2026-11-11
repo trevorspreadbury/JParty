@@ -203,6 +203,58 @@ def test_resuming_a_renumbered_save_again_keeps_scores(
     assert len(renumber_lines) == 1
 
 
+def test_start_that_cannot_save_the_seat_order_stays_in_the_lobby(
+    game: object, lobby: BuzzerController, saved_dir: Path, monkeypatch: object
+) -> None:
+    """Test a failed mapping write keeps the lobby and is not written twice later."""
+    warnings_shown = []
+    monkeypatch.setattr(
+        game, "show_host_warning", lambda title, text: warnings_shown.append(title)
+    )
+    disk_full = {"on": True}
+    real_open = Path.open
+
+    def failing_open(
+        self: Path, mode: str = "r", *args: object, **kwargs: object
+    ) -> object:
+        if disk_full["on"] and self.name == "question_history.jsonl" and mode == "a":
+            raise OSError(28, "No space left on device")
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", failing_open)
+    history_file = saved_dir / "question_history.jsonl"
+    general_file = saved_dir / "general.json"
+    history_before = history_file.read_bytes()
+    general_before = general_file.read_bytes()
+    claimed = _claim_all(lobby)
+    game.move_player_up(claimed["Bob"][1])
+
+    game.start_game()
+
+    assert warnings_shown == ["Seat Order Not Saved"]
+    assert lobby.accepting_players is True
+    assert history_file.read_bytes() == history_before
+    assert general_file.read_bytes() == general_before
+    assert game._pending_history_lines == []
+
+    # Once the disk works again, lobby actions refresh the score-edit button,
+    # which reads (and so flushes) the history. Nothing may be waiting then.
+    disk_full["on"] = False
+    game.can_open_score_editor()
+    assert history_file.read_bytes() == history_before
+
+    game.start_game()
+
+    assert _seats(game) == [("Bob", 0, 600), ("Alice", 1, 2400), ("Cara", 2, -200)]
+    renumber_lines = [
+        line
+        for line in history_file.read_text().splitlines()
+        if json.loads(line).get("type") == "player_renumber"
+    ]
+    assert len(renumber_lines) == 1
+    assert warnings_shown == ["Seat Order Not Saved"]
+
+
 def test_releasing_a_middle_slot_frees_it_without_renumbering(
     game: object, lobby: BuzzerController
 ) -> None:

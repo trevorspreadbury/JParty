@@ -279,13 +279,3 @@ def test_renumber_mapping_must_be_one_to_one(
     error = _read_error(_write_history(temp_dir, text + "\n"))
     assert error.line_number == 4
     assert "one-to-one" in error.reason
-
-
-def test_raw_read_leaves_player_numbers_as_stored(
-    temp_dir: Path, fixture_lines: list[str]
-) -> None:
-    """Test the migration's raw read does not bake in the renumbering."""
-    text = "\n".join([*fixture_lines, _renumber({"0": 1, "1": 0})])
-    path = _write_history(temp_dir, text + "\n")
-    entries = read_history_file(path, apply_player_renumbering=False)
-    assert entries[0]["answer_attempts"][0]["player_index"] == 0

@@ -321,6 +321,12 @@ Later resumes add further `player_renumber` lines, which apply on top of the
 earlier ones. `general.json` is rewritten with the new numbers at the same
 time. Saves without a `player_renumber` line read exactly as before.
 
+If the `player_renumber` line can't be saved (for example, the disk is full),
+the host sees "Seat Order Not Saved" and the game stays in the lobby. Unlike
+clue lines, the mapping is not kept for a later retry: pressing Start again
+builds the whole mapping again, so a kept copy would be written twice, and two
+copies of the same mapping cancel each other out.
+
 ## The Score Chain
 
 Every line that changes a score records `score_before` and `score_after`
