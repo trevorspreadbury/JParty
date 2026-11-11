@@ -53,11 +53,14 @@ schema:
 Field notes:
 
 - `game_id`: the J-Archive game id or Google Sheets id currently being played
-- `players`: the players in slot order when the state file was written
+- `players`: the players as they were when the session started. Resuming
+  keeps this list as it is, even if the host reorders seats in the resume
+  lobby; see [Player Numbers](#player-numbers-and-player_renumber)
 - `players[].name`: either plain text or the signature image data URL used by
   the scoreboard/lecterns
-- `players[].player_number`: stable player slot index used for saved-game
-  restore and stat tracking
+- `players[].player_number`: the player's number when the session started.
+  Their current number is this number with every `player_renumber` line in
+  `question_history.jsonl` applied in order
 - `selected_round_indices`: the original round indices chosen on the welcome
   screen
 - `started_at`: Unix timestamp for when the game session started
@@ -318,8 +321,14 @@ always a one-to-one reordering. When reading the file, every `player_index`
 (and every `player_states` key) on the lines *before* a `player_renumber`
 line is translated through its mapping, and then the score chain is checked.
 Later resumes add further `player_renumber` lines, which apply on top of the
-earlier ones. `general.json` is rewritten with the new numbers at the same
-time. Saves without a `player_renumber` line read exactly as before.
+earlier ones. Saves without a `player_renumber` line read exactly as before.
+
+`general.json` is not changed when seats move: its `players` keep the numbers
+the session started with. To find a player's current number, start from
+`general.json` and apply every `player_renumber` line in file order (in code,
+`current_saved_players`). The history is the only record of seat changes, so
+the two files can't disagree: if the app stops right after Start, the next
+resume still matches every player to their own score.
 
 If the `player_renumber` line can't be saved (for example, the disk is full),
 the host sees "Seat Order Not Saved" and the game stays in the lobby. Unlike

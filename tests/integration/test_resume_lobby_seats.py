@@ -112,6 +112,20 @@ def _claim_all(controller: BuzzerController) -> dict[str, tuple]:
     return claimed
 
 
+def _claim_all_by_current_number(
+    controller: BuzzerController, seats: list[tuple[str, int]]
+) -> dict[str, object]:
+    """Claim each ``(name, number)`` slot, checking the lobby offers that name."""
+    claimed = {}
+    for name, number in seats:
+        socket = FakeSocket()
+        controller.register_socket(socket)
+        player = controller.claim_saved_player(socket, number)
+        assert player.name == name
+        claimed[name] = player
+    return claimed
+
+
 def _seats(game: object) -> list[tuple]:
     """Return ``(name, player_number, score)`` for every player in order."""
     return [
@@ -160,10 +174,11 @@ def test_swapping_players_keeps_each_score_and_logs_new_numbers(
     renumber = json.loads(history_file.read_text().splitlines()[-1])
     assert renumber["type"] == "player_renumber"
     assert renumber["mapping"] == {"0": 1, "1": 0, "2": 2}
+    # general.json keeps the starting numbers; the mapping line records the move.
     general = json.loads((saved_dir / "general.json").read_text())
     assert [(p["name"], p["player_number"]) for p in general["players"]] == [
-        ("Bob", 0),
-        ("Alice", 1),
+        ("Alice", 0),
+        ("Bob", 1),
         ("Cara", 2),
     ]
 
@@ -201,6 +216,64 @@ def test_resuming_a_renumbered_save_again_keeps_scores(
         line for line in lines if json.loads(line).get("type") == "player_renumber"
     ]
     assert len(renumber_lines) == 1
+
+
+def test_resume_after_start_never_rewrote_general_json_keeps_scores(
+    game: object, lobby: BuzzerController, saved_dir: Path
+) -> None:
+    """Test the mapping line alone is enough, e.g. if the app stopped after it."""
+    general_before = (saved_dir / "general.json").read_bytes()
+    claimed = _claim_all(lobby)
+    game.move_player_up(claimed["Bob"][1])
+    game._save_general_state = lambda: None
+    game.start_game()
+    del game._save_general_state
+    assert (saved_dir / "general.json").read_bytes() == general_before
+
+    game.prepare_resume_from_dir(saved_dir)
+    _claim_all_by_current_number(lobby, [("Bob", 0), ("Alice", 1), ("Cara", 2)])
+    game.start_game()
+
+    assert _seats(game) == [("Bob", 0, 600), ("Alice", 1, 2400), ("Cara", 2, -200)]
+
+
+def test_seat_changes_from_two_resumes_stack_in_order(
+    game: object, lobby: BuzzerController, saved_dir: Path
+) -> None:
+    """Test a swap in a second resume applies on top of the first one."""
+    claimed = _claim_all(lobby)
+    game.move_player_up(claimed["Bob"][1])
+    game.start_game()
+
+    game.prepare_resume_from_dir(saved_dir)
+    seated = _claim_all_by_current_number(
+        lobby, [("Bob", 0), ("Alice", 1), ("Cara", 2)]
+    )
+    game.move_player_up(seated["Cara"])
+    game.start_game()
+    assert _seats(game) == [("Bob", 0, 600), ("Cara", 1, -200), ("Alice", 2, 2400)]
+
+    game.prepare_resume_from_dir(saved_dir)
+    _claim_all_by_current_number(lobby, [("Bob", 0), ("Cara", 1), ("Alice", 2)])
+    game.start_game()
+    assert _seats(game) == [("Bob", 0, 600), ("Cara", 1, -200), ("Alice", 2, 2400)]
+
+
+def test_summary_cli_names_players_by_their_current_seat(
+    game: object, lobby: BuzzerController, saved_dir: Path
+) -> None:
+    """Test ``jparty summary`` pairs each name with that player's own score."""
+    from jparty.app import bootstrap
+
+    claimed = _claim_all(lobby)
+    game.move_player_up(claimed["Bob"][1])
+    game.start_game()
+
+    summary = bootstrap.load_summary_from_game_state_directory(saved_dir)
+
+    assert sorted(
+        (player.name, player.final_score) for player in summary.current_players
+    ) == [("Alice", 2400), ("Bob", 600), ("Cara", -200)]
 
 
 def test_start_that_cannot_save_the_seat_order_stays_in_the_lobby(

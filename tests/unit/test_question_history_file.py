@@ -7,6 +7,7 @@ import pytest
 from jparty.domain.state import (
     HistoryFileError,
     corrected_history_entries,
+    current_saved_players,
     history_score_totals,
     read_history_file,
 )
@@ -279,3 +280,41 @@ def test_renumber_mapping_must_be_one_to_one(
     error = _read_error(_write_history(temp_dir, text + "\n"))
     assert error.line_number == 4
     assert "one-to-one" in error.reason
+
+
+def test_current_saved_players_applies_seat_changes_in_file_order(
+    temp_dir: Path,
+) -> None:
+    """Test a rotation then a swap moves players as the host made them."""
+    text = "\n".join(
+        [_renumber({"0": 1, "1": 2, "2": 0}), _renumber({"0": 1, "1": 0, "2": 2})]
+    )
+    entries = read_history_file(_write_history(temp_dir, text + "\n"))
+    saved_players = [
+        {"name": "Alice", "player_number": 0},
+        {"name": "Bob", "player_number": 1},
+        {"name": "Cara", "player_number": 2},
+    ]
+
+    players = current_saved_players(saved_players, entries)
+
+    assert [(p["name"], p["player_number"]) for p in players] == [
+        ("Alice", 0),
+        ("Bob", 2),
+        ("Cara", 1),
+    ]
+    assert saved_players[1]["player_number"] == 1
+
+
+def test_current_saved_players_without_seat_changes_is_unchanged(
+    fixture_lines: list[str], temp_dir: Path
+) -> None:
+    """Test saves without ``player_renumber`` lines keep their numbers."""
+    entries = read_history_file(
+        _write_history(temp_dir, "\n".join(fixture_lines) + "\n")
+    )
+    saved_players = [
+        {"name": "Alice", "player_number": 0},
+        {"name": "Bob", "player_number": 1},
+    ]
+    assert current_saved_players(saved_players, entries) == saved_players

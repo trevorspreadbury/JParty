@@ -136,17 +136,23 @@ def get_current_game_state(game: object) -> object:
     Returns:
         A dictionary containing the game id, player list, session
         timestamps, and, when known, the history format and JParty version
-        that started the session.
+        that started the session. For a resumed game the player list is the
+        one the save started with, not the current seats; see
+        :func:`current_saved_players`.
     """
     game_id = game.current_game_id()
     current_time = time.time()
     selected_round_indices = game.selected_round_indices()
     board_selections = game.board_selection_configs()
+    if game._starting_roster is not None:
+        players = game._starting_roster
+    else:
+        players = [
+            {"name": p.name, "player_number": p.player_number} for p in game.players
+        ]
     state = {
         "game_id": game_id,
-        "players": [
-            {"name": p.name, "player_number": p.player_number} for p in game.players
-        ],
+        "players": players,
         "selected_round_indices": selected_round_indices,
         "board_selections": board_selections,
         "reveal_answers_after_triple_stumper": (
@@ -282,6 +288,42 @@ def _player_renumber_mapping(
             "player numbers",
         )
     return mapping
+
+
+def current_saved_players(
+    saved_players: list[dict], history_entries: list[dict]
+) -> list[dict]:
+    """Return the saved players with every seat change in the history applied.
+
+    ``general.json`` keeps each player under the number they had when the
+    session started, and is never rewritten when the host reorders seats.
+    The ``player_renumber`` lines in the history are the only record of
+    those changes. Use this instead of reading ``general.json["players"]``
+    directly whenever a player number is matched against history.
+
+    Args:
+        saved_players: ``players`` list from ``general.json``.
+        history_entries: Entries from :func:`read_history_file`, in file
+            order. Its ``player_renumber`` lines are left as written.
+
+    Returns:
+        Copies of ``saved_players`` whose ``player_number`` is the player's
+        current number. Entries without a usable number are copied as-is.
+    """
+    players = [dict(player) for player in saved_players]
+    for entry in history_entries:
+        if not is_player_renumber(entry):
+            continue
+        mapping = {
+            int(saved): int(current) for saved, current in entry["mapping"].items()
+        }
+        for player in players:
+            try:
+                number = int(player["player_number"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            player["player_number"] = mapping.get(number, number)
+    return players
 
 
 def history_score_events(entry: dict) -> list[tuple]:

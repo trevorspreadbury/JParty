@@ -48,6 +48,7 @@ from jparty.domain.state import (
     clue_player_results,
     clue_score_effects,
     corrected_history_entries,
+    current_saved_players,
     get_current_game_state,
     history_score_totals,
     is_question_history_entry,
@@ -218,6 +219,9 @@ class Game(QObject):
         self._game_started_at = None
         self._history_format = None
         self._started_by_version = None
+        # Players as general.json recorded them when the save started; see
+        # current_saved_players. None for a fresh game.
+        self._starting_roster = None
         self._resume_state = None
         self._selected_round_indices = None
         self._board_selection_configs = None
@@ -438,7 +442,10 @@ class Game(QObject):
             raise ValueError("Saved game metadata is missing player information")
         # Check the history before fetching the game, which can hit the network,
         # so a damaged save fails right away and leaves the game state untouched.
-        read_history_file(saved_game_path / QUESTION_HISTORY_FILE_NAME)
+        history_entries = read_history_file(
+            saved_game_path / QUESTION_HISTORY_FILE_NAME
+        )
+        current_players = current_saved_players(saved_players, history_entries)
         board_selection_configs = general_state.get("board_selections")
         selected_round_indices = general_state.get("selected_round_indices")
         original_data = None
@@ -488,7 +495,7 @@ class Game(QObject):
             "player_count": len(saved_players),
         }
         if self.buzzer_controller:
-            self.buzzer_controller.begin_saved_player_reclaim(saved_players)
+            self.buzzer_controller.begin_saved_player_reclaim(current_players)
         return self._resume_state
 
     def _board_selections_match_original_game_subset(
@@ -573,6 +580,7 @@ class Game(QObject):
         self._game_started_at = time.time()
         self._history_format = HISTORY_FORMAT
         self._started_by_version = __version__
+        self._starting_roster = None
         self._initialize_game_state_dir()
         self._save_general_state()
         if isinstance(self.current_round, FinalBoard):
@@ -753,6 +761,9 @@ class Game(QObject):
         # Keep what the save recorded, so a resumed legacy save stays unmarked.
         self._history_format = resume_state["general_state"].get("history_format")
         self._started_by_version = resume_state["general_state"].get("jparty_version")
+        # general.json keeps the numbers the save started with. Seat changes
+        # are recorded only as player_renumber lines in the history.
+        self._starting_roster = resume_state["general_state"].get("players", [])
         self.players = self.buzzer_controller.claimed_saved_players()
         if not self._record_player_renumbering():
             return
@@ -1687,9 +1698,12 @@ class Game(QObject):
             logging.warning("No score history found to generate graph")
             return
         general_state = self._load_general_state()
+        saved_players = current_saved_players(
+            general_state.get("players", []), self._load_question_history()
+        )
         original_player_map = {
             p.get("player_number"): p.get("name", f"Player {p.get('player_number')}")
-            for p in general_state.get("players", [])
+            for p in saved_players
         }
         current_player_map = {p.player_number: p.name for p in self.players}
         if players == "original":
