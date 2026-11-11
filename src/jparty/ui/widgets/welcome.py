@@ -103,6 +103,11 @@ QUESTION_INDEX_PART_COUNT = 2
 _RNG = SystemRandom()
 
 
+def _is_playable_game_data(data: object) -> bool:
+    """Return whether loaded game data has at least one playable round."""
+    return data is not None and bool(getattr(data, "rounds", None))
+
+
 class Image(qrcode.image.base.BaseImage):
     """Adapter that renders QR codes into Qt image objects."""
 
@@ -223,9 +228,10 @@ class StartWidget(QWidget):
 class Welcome(StartWidget):
     """Host-side lobby screen for choosing, previewing, and resuming games."""
 
-    gameid_trigger = pyqtSignal(str)
     summary_trigger = pyqtSignal(str)
     advanced_row_load_result_trigger = pyqtSignal(int, int, object, object, object)
+    # (request_id, game_id, data, error, media_status, from_random)
+    summary_load_result_trigger = pyqtSignal(int, str, object, object, object, bool)
 
     def __init__(self, game: object, parent: object = None) -> None:
         """Initialize the welcome screen and its lobby controls.
@@ -244,6 +250,7 @@ class Welcome(StartWidget):
         self.resume_path = None
         self._base_summary_text = ""
         self._loading_summary = False
+        self._summary_request_id = 0
         self._question_media_status = None
         self.round_checkboxes = []
         self._advanced_rows = []
@@ -416,11 +423,11 @@ class Welcome(StartWidget):
         main_layout.addWidget(self.reveal_answers_radio, 2)
         main_layout.addLayout(footer_layout, 3)
         main_layout.addStretch(3)
-        self.gameid_trigger.connect(self.set_gameid)
         self.summary_trigger.connect(self.set_summary)
         self.advanced_row_load_result_trigger.connect(
             self.handle_advanced_row_load_result
         )
+        self.summary_load_result_trigger.connect(self.handle_summary_load_result)
         self.setLayout(main_layout)
         self.update_reveal_answers_after_triple_stumper(
             self.reveal_answers_radio.isChecked()
@@ -564,29 +571,58 @@ QCheckBox {{
                     f"QRadioButton {{ color: black; font-size: {advanced_status_font_size}px; font-weight: 600; }}"
                 )
 
-    def __random(self) -> None:
-        """Return random."""
+    def _begin_summary_request(self, loading: bool) -> int:
+        """Invalidate any single-game load in flight and return a new request id.
+
+        Every load result carries the id it was started with, and
+        ``handle_summary_load_result`` drops results whose id is no longer
+        current. Typing, Random, Load Saved, and toggling Advanced all call
+        this, so a slow load can never overwrite newer state.
+
+        Args:
+            loading: Whether a new load is about to start or is waiting on the
+                debounce timer. Start stays disabled while this is true.
+
+        Returns:
+            The new request id.
+        """
+        self._summary_request_id += 1
+        self._loading_summary = loading
+        self.presenter.set_loading(loading)
+        return self._summary_request_id
+
+    def _load_random_game(self, request_id: int) -> None:
+        """Pick and load a random game on a worker thread.
+
+        The worker only computes. It never touches ``self.game`` or widgets;
+        ``handle_summary_load_result`` applies the result on the UI thread.
+
+        Args:
+            request_id: Id of the request this load belongs to.
+
+        Returns:
+            ``None``.
+        """
         game_id = ""
+        data = None
+        error = None
         try:
-            self.resume_path = None
-            self.game.clear_resume_state()
-            while True:
-                game_id = get_random_game()
+            # Stop picking games once a newer request has replaced this one.
+            while request_id == self._summary_request_id:
+                game_id = str(get_random_game())
                 logging.info(f"GAMEID {game_id}")
-                self.game.data = get_game(game_id)
-                if self.game.valid_game():
+                data = get_game(game_id)
+                if _is_playable_game_data(data):
                     break
-                else:
-                    time.sleep(0.25)
-            if hasattr(self.game, "set_session_game_id"):
-                self.game.set_session_game_id(game_id)
-            self.gameid_trigger.emit(str(game_id))
-            self._question_media_status = detect_question_media(game_id)
-            self.summary_trigger.emit(self.build_summary_text())
-        except Exception as e:
-            logging.error(e)
-            media_status = self.question_media_summary_text(game_id)
-            self.summary_trigger.emit("\n\n".join(["Cannot get game", media_status]))
+                time.sleep(0.25)
+        except Exception as exc:
+            logging.error(exc)
+            data = None
+            error = exc
+        media_status = detect_question_media(game_id) if game_id else None
+        self.summary_load_result_trigger.emit(
+            request_id, game_id, data, error, media_status, True
+        )
 
     def random(self, checked: object) -> None:
         """Begin asynchronously loading a random game.
@@ -597,38 +633,125 @@ QCheckBox {{
         Returns:
             ``None``.
         """
-        self._loading_summary = True
+        self.debounce_timer.stop()
+        self._clear_prepared_resume()
+        request_id = self._begin_summary_request(loading=True)
         self.clear_round_selector()
         self.summary_trigger.emit("Loading...")
-        self.presenter.set_loading(True)
-        self.loader.run_async(self.__random)
-
-    def __show_summary(self) -> None:
-        """Return show summary."""
-        game_id = self.textbox.text()
-        self._question_media_status = (
-            detect_question_media(game_id) if game_id else None
-        )
-        try:
-            self.resume_path = None
-            self.game.clear_resume_state()
-            self.game.data = get_game(game_id)
-            if hasattr(self.game, "set_session_game_id"):
-                self.game.set_session_game_id(game_id)
-            if self.game.valid_game():
-                self.summary_trigger.emit(self.build_summary_text())
-            else:
-                self.summary_trigger.emit(
-                    "\n\n".join(
-                        ["Cannot load game", self.question_media_summary_text()]
-                    )
-                )
-        except Exception as e:
-            logging.error(e)
-            self.summary_trigger.emit(
-                "\n\n".join(["Cannot get game", self.question_media_summary_text()])
-            )
         self.check_start()
+        self.loader.run_async(partial(self._load_random_game, request_id))
+
+    def _load_summary_game(self, request_id: int, game_id: str) -> None:
+        """Load one typed game id on a worker thread.
+
+        The worker only computes. It never touches ``self.game`` or widgets;
+        ``handle_summary_load_result`` applies the result on the UI thread.
+        A failure is returned as a value and never cached, so the same id can
+        be retried.
+
+        Args:
+            request_id: Id of the request this load belongs to.
+            game_id: Game id to load.
+
+        Returns:
+            ``None``.
+        """
+        media_status = detect_question_media(game_id)
+        data = None
+        error = None
+        try:
+            data = get_game(game_id)
+        except Exception as exc:
+            logging.error(exc)
+            error = exc
+        self.summary_load_result_trigger.emit(
+            request_id, game_id, data, error, media_status, False
+        )
+
+    def handle_summary_load_result(
+        self,
+        request_id: int,
+        game_id: str,
+        data: object,
+        error: object,
+        media_status: object,
+        from_random: bool,
+    ) -> None:
+        """Apply a single-game load result on the UI thread if it is still current.
+
+        Args:
+            request_id: Id the load was started with.
+            game_id: Game id that was loaded.
+            data: Loaded game data, or ``None`` when the load failed.
+            error: Exception raised by the load, or ``None``.
+            media_status: Local question-media status for ``game_id``.
+            from_random: Whether the load came from the Random button. If so,
+                the textbox is updated to show the picked id.
+
+        Returns:
+            ``None``.
+        """
+        if request_id != self._summary_request_id:
+            return
+        if self.advanced_options_checkbox.isChecked():
+            return
+        game_id = str(game_id).strip()
+        if from_random:
+            if game_id:
+                # Block signals so showing the picked id doesn't start a reload.
+                self.textbox.blockSignals(True)
+                self.textbox.setText(game_id)
+                self.textbox.blockSignals(False)
+        elif game_id != self.textbox.text().strip():
+            return
+        self._apply_summary_game(game_id, data, error, media_status)
+
+    def _apply_summary_game(
+        self, game_id: str, data: object, error: object, media_status: object
+    ) -> None:
+        """Make one loaded (or failed) game the current regular-mode game.
+
+        A failed or unplayable load clears ``game.data``, so the previous game
+        can't be started under the new id.
+
+        Args:
+            game_id: Game id that was loaded, or ``""`` for an empty textbox.
+            data: Loaded game data, or ``None``.
+            error: Exception raised by the load, or ``None``.
+            media_status: Local question-media status for ``game_id``.
+
+        Returns:
+            ``None``.
+        """
+        playable = error is None and _is_playable_game_data(data)
+        self.game.data = data if playable else None
+        if hasattr(self.game, "set_session_game_id"):
+            self.game.set_session_game_id(game_id if playable else "")
+        self._question_media_status = media_status
+        media_text = self.question_media_summary_text(game_id) if game_id else ""
+        if not game_id:
+            summary = ""
+        elif error is not None:
+            summary = "\n\n".join(["Cannot get game", media_text])
+        elif not playable:
+            summary = "\n\n".join(["Cannot load game", media_text])
+        else:
+            summary = self.build_summary_text()
+        self.set_summary(summary)
+        self.check_start()
+
+    def _clear_prepared_resume(self) -> None:
+        """Discard a prepared Load Saved resume and reset the Start button.
+
+        Returns:
+            ``None``.
+        """
+        if self.resume_path is None:
+            return
+        self.resume_path = None
+        self.presenter.set_resume_path(None)
+        self.game.clear_resume_state()
+        self.start_button.setText("Start!")
 
     def build_summary_text(self) -> str:
         """Build the current welcome summary including load warnings.
@@ -730,21 +853,16 @@ QCheckBox {{
         elif self.resume_path is None:
             self.clear_round_selector()
 
-    def set_gameid(self, text: object) -> None:
-        """Update the game-id input field.
-
-        Args:
-            text: New game-id text.
-
-        Returns:
-            ``None``.
-        """
-        self.textbox.setText(text)
-
     def toggle_advanced_options(self, _: object = None) -> None:
         """Show or hide the advanced Frankenstein-board controls."""
         enabled = self.advanced_options_checkbox.isChecked()
         self.presenter.set_advanced_enabled(enabled)
+        # A single-game load in flight belongs to the mode being left.
+        self.debounce_timer.stop()
+        self._begin_summary_request(loading=False)
+        # A prepared resume belongs to the regular-mode save. Advanced mode
+        # builds a new board, so starting it must not write into that save.
+        self._clear_prepared_resume()
         if not enabled:
             self.clear_advanced_configuration()
         self.advanced_controls_widget.setVisible(enabled)
@@ -1609,12 +1727,13 @@ QCheckBox {{
         """Start the debounce timer whenever the text changes."""
         if self.advanced_options_checkbox.isChecked():
             return
-        if self.resume_path is not None:
-            self.resume_path = None
-            self.game.clear_resume_state()
-            self.start_button.setText("Start!")
+        self._clear_prepared_resume()
+        # Typing invalidates any load in flight and keeps Start disabled until
+        # the typed id has loaded.
+        self._begin_summary_request(loading=True)
         self._question_media_status = None
         self.clear_round_selector()
+        self.check_start()
         self.debounce_timer.start(2000)
 
     def debounced_show_summary(self) -> None:
@@ -1634,12 +1753,18 @@ QCheckBox {{
         if self.advanced_options_checkbox.isChecked():
             self.sync_active_configuration()
             return
-        self._loading_summary = True
-        self.presenter.set_loading(True)
+        self.debounce_timer.stop()
+        self._clear_prepared_resume()
+        game_id = self.textbox.text().strip()
         self.clear_round_selector()
+        if not game_id:
+            self._begin_summary_request(loading=False)
+            self._apply_summary_game("", None, None, None)
+            return
+        request_id = self._begin_summary_request(loading=True)
         self.summary_trigger.emit("Loading...")
-        self.loader.run_async(self.__show_summary)
         self.check_start()
+        self.loader.run_async(partial(self._load_summary_game, request_id, game_id))
 
     def on_start_clicked(self, checked: object = False) -> None:
         """Start the game or open the local-media preview when available."""
@@ -1705,6 +1830,9 @@ QCheckBox {{
         )
         if not selected_dir:
             return
+        # Drop any single-game load in flight so it can't replace this resume.
+        self.debounce_timer.stop()
+        self._begin_summary_request(loading=False)
         try:
             resume_state = self.game.prepare_resume_from_dir(selected_dir)
         except Exception as e:

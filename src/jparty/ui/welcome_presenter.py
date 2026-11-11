@@ -86,7 +86,12 @@ class WelcomePresenter:
             )
 
         startable = bool(getattr(self.game, "startable", lambda: False)())
-        start_enabled = startable and rounds_selected
+        # In regular mode, game data can belong to the previous id until the
+        # current load finishes, so Start waits for it.
+        regular_load_pending = (
+            self.state.loading_summary and not self.state.advanced_enabled
+        )
+        start_enabled = startable and rounds_selected and not regular_load_pending
         self.state.start_enabled = start_enabled
         self.state.advanced_start_enabled = start_enabled
 

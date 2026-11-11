@@ -1356,3 +1356,302 @@ def test_regular_start_with_gap_in_first_category_keeps_row_values(
     assert game._board_selections_match_original_game_subset(
         "4453", source, game.board_selection_configs(), [0, 1, 2]
     )
+
+
+class LoadingStubGame(StubGame):
+    """Stub game whose readiness follows the loaded data, like the real ``Game``."""
+
+    def __init__(self) -> None:
+        """Start with no game loaded."""
+        super().__init__()
+        self.data = None
+
+    def valid_game(self) -> bool:
+        """Return whether playable data is loaded."""
+        return self.data is not None and bool(self.data.rounds)
+
+    def startable(self) -> bool:
+        """Return whether a fresh game could start."""
+        if self.resume_expected is not None:
+            return self.resume_claimed == self.resume_expected
+        return self.valid_game()
+
+
+class ImmediateLoader:
+    """Loader that runs each task inline, so results arrive synchronously."""
+
+    def run_async(self, target: object) -> None:
+        """Run the task right away."""
+        target()
+
+
+class DeferredLoader:
+    """Loader that holds tasks so a test can finish them in any order."""
+
+    def __init__(self) -> None:
+        """Start with no pending tasks."""
+        self.pending = []
+
+    def run_async(self, target: object) -> None:
+        """Queue the task without running it."""
+        self.pending.append(target)
+
+
+def _fixture_source_game(comments: str) -> GameData:
+    """Return a small playable game whose comments identify it."""
+    data = StubGame().data
+    data.comments = comments
+    return data
+
+
+def _loading_widget(
+    qtbot: object, monkeypatch: object, loader: object, games: dict
+) -> tuple[Welcome, LoadingStubGame]:
+    """Build a welcome widget whose loads read from ``games``.
+
+    A value that is an exception is raised by ``get_game`` instead.
+    """
+
+    def fake_get_game(game_id: object) -> object:
+        result = games[str(game_id)]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_game", fake_get_game)
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+    game = LoadingStubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = loader
+    return widget, game
+
+
+def _type_game_id(widget: Welcome, game_id: str) -> None:
+    """Type a game id and fire the debounce right away."""
+    widget.textbox.setText(game_id)
+    widget.show_summary()
+
+
+def test_failed_load_after_good_one_clears_the_old_game(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A failed load must not leave the previous game startable (#56)."""
+    good = _fixture_source_game("Game 111")
+    widget, game = _loading_widget(
+        qtbot,
+        monkeypatch,
+        ImmediateLoader(),
+        {"111": good, "1112222": IndexError("sheet is not shared")},
+    )
+
+    _type_game_id(widget, "111")
+    assert game.data is good
+    assert widget.start_button.isEnabled() is True
+
+    _type_game_id(widget, "1112222")
+
+    assert game.data is None
+    assert game._session_game_id == ""
+    assert widget.start_button.isEnabled() is False
+    assert widget.summary_label.text().startswith("Cannot get game")
+    assert widget.round_checkboxes == []
+
+
+def test_older_load_finishing_last_is_ignored(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A slow earlier load must not replace the game the textbox shows (#56)."""
+    slow = _fixture_source_game("Game 111")
+    fast = _fixture_source_game("Game 222")
+    loader = DeferredLoader()
+    widget, game = _loading_widget(
+        qtbot, monkeypatch, loader, {"111": slow, "222": fast}
+    )
+
+    _type_game_id(widget, "111")
+    _type_game_id(widget, "222")
+    assert widget.start_button.isEnabled() is False
+    older, newer = loader.pending
+    newer()
+    older()
+
+    assert widget.textbox.text() == "222"
+    assert game.data is fast
+    assert game._session_game_id == "222"
+    assert "Game 222" in widget.summary_label.text()
+    assert widget.start_button.isEnabled() is True
+
+
+def test_typing_during_a_load_disables_start_and_drops_the_result(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Editing the id while a load runs keeps Start off and drops that load (#56)."""
+    first = _fixture_source_game("Game 111")
+    second = _fixture_source_game("Game 222")
+    loader = DeferredLoader()
+    widget, game = _loading_widget(
+        qtbot, monkeypatch, loader, {"111": first, "222": second}
+    )
+    _type_game_id(widget, "111")
+    loader.pending.pop()()
+    assert widget.start_button.isEnabled() is True
+
+    _type_game_id(widget, "222")
+    widget.textbox.setText("2223")
+    assert widget.start_button.isEnabled() is False
+    loader.pending.pop()()
+
+    assert game.data is not second
+    assert "Game 222" not in widget.summary_label.text()
+    assert widget.start_button.isEnabled() is False
+    assert widget.debounce_timer.isActive() is True
+
+
+def test_failed_id_loads_on_retry(qtbot: object, monkeypatch: object) -> None:
+    """A failed load is not cached, so the same id loads once it is reachable."""
+    good = _fixture_source_game("Game 111")
+    games = {"111": ConnectionError("offline")}
+    widget, game = _loading_widget(qtbot, monkeypatch, ImmediateLoader(), games)
+
+    _type_game_id(widget, "111")
+    assert game.data is None
+    assert widget.summary_label.text().startswith("Cannot get game")
+
+    games["111"] = good
+    widget.show_summary()
+
+    assert game.data is good
+    assert widget.start_button.isEnabled() is True
+
+
+def test_random_shows_the_picked_id_without_reloading_it(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Random fills in the id without starting a second, debounced load."""
+    picked = _fixture_source_game("Random game")
+    widget, game = _loading_widget(
+        qtbot, monkeypatch, ImmediateLoader(), {"4321": picked}
+    )
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 4321)
+
+    widget.random(False)
+
+    assert widget.textbox.text() == "4321"
+    assert widget.debounce_timer.isActive() is False
+    assert game.data is picked
+    assert game._session_game_id == "4321"
+    assert widget.start_button.isEnabled() is True
+
+
+def test_random_result_is_dropped_after_typing(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Typing while Random is loading wins over the random pick."""
+    picked = _fixture_source_game("Random game")
+    loader = DeferredLoader()
+    widget, game = _loading_widget(qtbot, monkeypatch, loader, {"4321": picked})
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 4321)
+
+    widget.random(False)
+    widget.textbox.setText("111")
+    loader.pending.pop()()
+
+    assert widget.textbox.text() == "111"
+    assert game.data is None
+
+
+def test_load_saved_drops_a_load_in_flight(qtbot: object, monkeypatch: object) -> None:
+    """A load that finishes after Load Saved must not clear the prepared resume."""
+    loader = DeferredLoader()
+    widget, game = _loading_widget(
+        qtbot, monkeypatch, loader, {"111": _fixture_source_game("Game 111")}
+    )
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved"
+    )
+    game.data = _fixture_source_game("Saved game")
+    _type_game_id(widget, "111")
+
+    widget.load_saved_game()
+    loader.pending.pop()()
+
+    assert widget.resume_path == "C:/saved"
+    assert widget.start_button.text() == "Resume!"
+    assert game.resume_expected == 2
+
+
+def test_enabling_advanced_clears_a_prepared_resume(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Ticking Advanced after Load Saved must drop the resume (#58)."""
+    game = StubGame()
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved"
+    )
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.load_saved_game()
+    assert widget.resume_path == "C:/saved"
+    clears_before = game.clear_resume_state_calls
+
+    widget.advanced_options_checkbox.setChecked(True)
+
+    assert widget.resume_path is None
+    assert game.resume_expected is None
+    assert game.clear_resume_state_calls > clears_before
+    assert widget.start_button.text() == "Start!"
+
+
+def test_advanced_start_after_load_saved_leaves_the_save_untouched(
+    qtbot: object,
+    game_with_players: object,
+    sample_saved_game_dir: object,
+    monkeypatch: object,
+) -> None:
+    """Load Saved, then an Advanced board, then Start makes a new save (#58)."""
+    game = game_with_players
+    general_before = (sample_saved_game_dir / "general.json").read_bytes()
+    history_before = (sample_saved_game_dir / "question_history.jsonl").read_bytes()
+    source = deepcopy(game.data)
+    for target in (
+        "jparty.services.game_loader.get_game",
+        "jparty.ui.widgets.welcome.get_game",
+    ):
+        monkeypatch.setattr(target, lambda game_id: deepcopy(source))
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+    monkeypatch.setattr(game, "_save_played_game_html", lambda: None)
+    monkeypatch.setattr(
+        QFileDialog,
+        "getExistingDirectory",
+        lambda *args, **kwargs: str(sample_saved_game_dir),
+    )
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+
+    widget.load_saved_game()
+    assert widget.resume_path == str(sample_saved_game_dir)
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(1)
+    widget._advanced_rows[0]["gameid_edit"].setText("9999")
+    widget.refresh_advanced_row(0)
+    widget._advanced_rows[1]["gameid_edit"].setText("9999")
+    widget.refresh_advanced_row(1)
+    widget.on_start_clicked()
+
+    assert game._game_state_dir != sample_saved_game_dir
+    assert (game._game_state_dir / "general.json").exists()
+    assert (sample_saved_game_dir / "general.json").read_bytes() == general_before
+    assert (
+        sample_saved_game_dir / "question_history.jsonl"
+    ).read_bytes() == history_before
+    assert game.question_number == 1
+    assert all(player.score == 0 for player in game.players)
+    assert not any(question.complete for question in game.data.rounds[0].questions)

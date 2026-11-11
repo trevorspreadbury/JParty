@@ -558,6 +558,20 @@ class Game(QObject):
         Returns:
             ``None``.
         """
+        if self._resume_state and not self._resume_matches_current_game():
+            # Resuming would apply the save's history to a different board and
+            # overwrite its general.json, so start this board fresh instead.
+            logging.error(
+                "Prepared resume is for game %r but the current game is %r; "
+                "starting a fresh game instead of writing into the save",
+                self._resume_state["general_state"].get(
+                    "game_id", self._resume_state.get("game_id")
+                ),
+                self.current_game_id(),
+            )
+            self._resume_state = None
+            if self.buzzer_controller:
+                self.buzzer_controller.clear_saved_player_reclaim()
         if self._resume_state:
             self._start_resumed_game()
             return
@@ -591,6 +605,21 @@ class Game(QObject):
             self.dc.board_widget.load_round(self.current_round)
         Thread(target=self._save_played_game_html, daemon=True).start()
         self._refresh_score_edit_controls()
+
+    def _resume_matches_current_game(self) -> bool:
+        """Return whether the prepared resume is for the game about to start.
+
+        ``prepare_resume_from_dir`` sets the session id to the save's
+        ``game_id``. Anything that later swaps in a different game (such as a
+        Frankenstein board built in advanced mode) changes the session id.
+
+        Returns:
+            ``True`` when the save's game id matches ``current_game_id()``.
+        """
+        saved_game_id = self._resume_state["general_state"].get(
+            "game_id", self._resume_state.get("game_id")
+        )
+        return str(saved_game_id).strip() == str(self.current_game_id()).strip()
 
     def _save_played_game_html(self) -> None:
         """Persist the current J-Archive game's HTML once play actually begins.
