@@ -43,6 +43,7 @@ from jparty.domain.state import (
     QUESTION_HISTORY_FILE_NAME,
     SCORE_CORRECTION_TYPE,
     HistoryFileError,
+    board_selections_match_original_game_subset,
     classify_buzz_phases,
     clue_player_results,
     clue_score_effects,
@@ -53,16 +54,13 @@ from jparty.domain.state import (
     is_question_history_entry,
     load_general_state,
     load_question_history,
+    load_saved_game_data,
     read_history_file,
     reconstruct_score_history,
     ruling_score_effect,
     save_general_state,
 )
-from jparty.services.game_loader import (
-    build_game_from_board_selection_configs,
-    original_board_row_values,
-    standard_board_daily_double_indices,
-)
+from jparty.services.game_loader import build_game_from_board_selection_configs
 from jparty.ui.widgets.common import CompoundObject, SongPlayer
 
 QUESTION_INDEX_PART_COUNT = 2
@@ -418,8 +416,6 @@ class Game(QObject):
             HistoryFileError: If the saved clue history cannot be read. This
                 is checked before the game itself is fetched.
         """
-        from jparty.services.game_loader import get_game
-
         saved_game_path = Path(saved_game_dir)
         general_file = saved_game_path / "general.json"
         if not general_file.exists():
@@ -441,46 +437,14 @@ class Game(QObject):
             saved_game_path / QUESTION_HISTORY_FILE_NAME
         )
         current_players = current_saved_players(saved_players, history_entries)
-        board_selection_configs = general_state.get("board_selections")
-        selected_round_indices = general_state.get("selected_round_indices")
-        original_data = None
-        is_original_subset_resume = False
-        if board_selection_configs:
-            source_game_ids = {
-                str(selection.get("game_id", "")).strip()
-                for selection in board_selection_configs
-            }
-            if source_game_ids == {game_id}:
-                original_data = get_game(game_id)
-                is_original_subset_resume = (
-                    self._board_selections_match_original_game_subset(
-                        game_id,
-                        original_data,
-                        board_selection_configs,
-                        selected_round_indices,
-                    )
-                )
-            if is_original_subset_resume:
-                self.data = original_data
-                self.set_selected_round_indices(selected_round_indices)
-                self.set_board_selection_configs(board_selection_configs)
-            else:
-                self.data = build_game_from_board_selection_configs(
-                    board_selection_configs
-                )
-                self.set_board_selection_configs(board_selection_configs)
-        else:
-            self.data = get_game(game_id)
-            self.set_selected_round_indices(selected_round_indices)
-            self.set_board_selection_configs(None)
+        saved_game = load_saved_game_data(general_state)
+        self.data = saved_game.data
+        self.set_board_selection_configs(saved_game.board_selection_configs)
+        self.set_selected_round_indices(saved_game.selected_round_indices)
         self.set_reveal_answers_after_triple_stumper(
             general_state.get("reveal_answers_after_triple_stumper", False)
         )
         self.set_session_game_id(general_state.get("game_id", game_id))
-        if board_selection_configs and not is_original_subset_resume:
-            self.set_selected_round_indices(
-                list(range(len(self.data.rounds))) if self.data else []
-            )
         if not self.valid_game():
             raise ValueError("Saved game points to an invalid or incomplete game")
         self._resume_state = {
@@ -500,44 +464,13 @@ class Game(QObject):
         board_selection_configs: list[dict],
         selected_round_indices: object,
     ) -> bool:
-        """Return whether saved board selections describe a simple original-game subset."""
-        if not game_data or selected_round_indices is None:
-            return False
-        normalized_indices = [int(index) for index in selected_round_indices]
-        if len(board_selection_configs) != len(normalized_indices):
-            return False
-        for selection, round_index in zip(
-            board_selection_configs, normalized_indices, strict=False
-        ):
-            if str(selection.get("game_id", "")).strip() != game_id:
-                return False
-            if int(selection.get("source_round_index", -1)) != round_index:
-                return False
-            if not 0 <= round_index < len(game_data.rounds):
-                return False
-            round_data = game_data.rounds[round_index]
-            expected_board_type = (
-                "final" if isinstance(round_data, FinalBoard) else "standard"
-            )
-            if selection.get("board_type") != expected_board_type:
-                return False
-            expected_row_values = original_board_row_values(game_data, round_index)
-            if list(selection.get("row_values", [])) != expected_row_values:
-                return False
-            expected_daily_double_indices = (
-                []
-                if isinstance(round_data, FinalBoard)
-                else standard_board_daily_double_indices(round_data)
-            )
-            if selection.get(
-                "daily_double_count", len(expected_daily_double_indices)
-            ) != len(expected_daily_double_indices):
-                return False
-            if list(
-                selection.get("daily_double_indices", expected_daily_double_indices)
-            ) != (expected_daily_double_indices):
-                return False
-        return True
+        """Return whether saved board selections describe a simple original-game subset.
+
+        See :func:`board_selections_match_original_game_subset`.
+        """
+        return board_selections_match_original_game_subset(
+            game_id, game_data, board_selection_configs, selected_round_indices
+        )
 
     def begin(self) -> None:
         """Begin the pre-game lobby state by starting the intro music.

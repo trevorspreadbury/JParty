@@ -14,6 +14,8 @@ from dataclasses import asdict, dataclass
 from itertools import zip_longest
 from pathlib import Path
 
+from jparty.domain.models import FinalBoard
+
 QUESTION_HISTORY_FILE_NAME = "question_history.jsonl"
 # Version of the question_history.jsonl format, recorded in general.json
 # as ``history_format``. Saves without it predate the append-only ledger.
@@ -871,6 +873,147 @@ def load_general_state(game: object) -> object:
         return {}
 
 
+@dataclass
+class SavedGameData:
+    """Game data rebuilt from a save's ``general.json``.
+
+    The saved history's ``round_index`` values index into ``data.rounds``, so
+    resume and the ``jparty summary`` CLI must both use this exact layout.
+
+    Attributes:
+        data: Loaded ``GameData``, or ``None`` when the game could not be
+            loaded.
+        selected_round_indices: Indices into ``data.rounds`` that are played,
+            or ``None`` to play every round.
+        board_selection_configs: Saved advanced board selections, or ``None``
+            for a regular-mode save.
+    """
+
+    data: object
+    selected_round_indices: list[int] | None
+    board_selection_configs: list[dict] | None
+
+
+def board_selections_match_original_game_subset(
+    game_id: str,
+    game_data: object,
+    board_selection_configs: list[dict],
+    selected_round_indices: object,
+) -> bool:
+    """Return whether saved board selections describe a plain original-game subset.
+
+    Such saves were started from one archived game with unchanged boards, so
+    their history uses the original game's round indices.
+
+    Args:
+        game_id: Saved game id.
+        game_data: The original game's ``GameData``.
+        board_selection_configs: Saved ``board_selections`` list.
+        selected_round_indices: Saved ``selected_round_indices`` list.
+
+    Returns:
+        ``True`` when every selection is an unchanged board from ``game_id``
+        at the matching selected round index.
+    """
+    from jparty.services.game_loader import (
+        original_board_row_values,
+        standard_board_daily_double_indices,
+    )
+
+    if not game_data or selected_round_indices is None:
+        return False
+    normalized_indices = [int(index) for index in selected_round_indices]
+    if len(board_selection_configs) != len(normalized_indices):
+        return False
+    for selection, round_index in zip(
+        board_selection_configs, normalized_indices, strict=False
+    ):
+        if str(selection.get("game_id", "")).strip() != game_id:
+            return False
+        if int(selection.get("source_round_index", -1)) != round_index:
+            return False
+        if not 0 <= round_index < len(game_data.rounds):
+            return False
+        round_data = game_data.rounds[round_index]
+        expected_board_type = (
+            "final" if isinstance(round_data, FinalBoard) else "standard"
+        )
+        if selection.get("board_type") != expected_board_type:
+            return False
+        expected_row_values = original_board_row_values(game_data, round_index)
+        if list(selection.get("row_values", [])) != expected_row_values:
+            return False
+        expected_daily_double_indices = (
+            []
+            if isinstance(round_data, FinalBoard)
+            else standard_board_daily_double_indices(round_data)
+        )
+        if selection.get(
+            "daily_double_count", len(expected_daily_double_indices)
+        ) != len(expected_daily_double_indices):
+            return False
+        if list(
+            selection.get("daily_double_indices", expected_daily_double_indices)
+        ) != (expected_daily_double_indices):
+            return False
+    return True
+
+
+def load_saved_game_data(general_state: dict) -> SavedGameData:
+    """Rebuild a save's game data and round mapping from ``general.json``.
+
+    Resume and the ``jparty summary`` CLI both call this, so saved
+    ``round_index`` values point at the same boards in both. The three save
+    layouts are:
+
+    - Regular mode: the full original game, with ``selected_round_indices``
+      as saved (``None`` means every round).
+    - Advanced mode that only picks unchanged boards from the saved game: the
+      full original game, with the saved ``selected_round_indices``. These
+      saves record original round indices in their history.
+    - Any other advanced-mode save: the composed game built from
+      ``board_selections``, with every composed round selected.
+
+    Args:
+        general_state: Decoded ``general.json`` contents.
+
+    Returns:
+        The loaded game data and round mapping. ``data`` is ``None`` when the
+        game could not be loaded; callers decide how to report that.
+    """
+    from jparty.services import game_loader
+
+    game_id = str(general_state.get("game_id", "")).strip()
+    board_selection_configs = general_state.get("board_selections")
+    selected_round_indices = general_state.get("selected_round_indices")
+    if not board_selection_configs:
+        return SavedGameData(
+            data=game_loader.get_game(game_id),
+            selected_round_indices=selected_round_indices,
+            board_selection_configs=None,
+        )
+    source_game_ids = {
+        str(selection.get("game_id", "")).strip()
+        for selection in board_selection_configs
+    }
+    if source_game_ids == {game_id}:
+        original_data = game_loader.get_game(game_id)
+        if board_selections_match_original_game_subset(
+            game_id, original_data, board_selection_configs, selected_round_indices
+        ):
+            return SavedGameData(
+                data=original_data,
+                selected_round_indices=selected_round_indices,
+                board_selection_configs=board_selection_configs,
+            )
+    data = game_loader.build_game_from_board_selection_configs(board_selection_configs)
+    return SavedGameData(
+        data=data,
+        selected_round_indices=list(range(len(data.rounds))) if data else [],
+        board_selection_configs=board_selection_configs,
+    )
+
+
 def _question_for_history_entry(game: object, entry: object) -> object:
     """Resolve the archived clue referenced by a saved question-history entry.
 
@@ -959,26 +1102,49 @@ def reconstruct_original_score_history(game: object) -> dict[str, list[int]]:
     return score_history
 
 
+def _score_event_indices(score_history: dict[int, list[int]]) -> range:
+    """Return every point in a score history after the starting zero.
+
+    Score histories have one point per history event, and manual score
+    adjustments are events with no question number. Walking the whole series,
+    rather than counting up to the last question number, keeps every event in
+    view, including the last ones (often Final Jeopardy).
+
+    Args:
+        score_history: Score history keyed by player number.
+
+    Returns:
+        Indices ``1`` through the last point of the longest series.
+    """
+    point_count = max((len(scores) for scores in score_history.values()), default=0)
+    return range(1, point_count)
+
+
+def _score_at(scores: list[int], index: int) -> int:
+    """Return the score at ``index``, holding the last known score after the end."""
+    if not scores:
+        return INITIAL_SCORE
+    return scores[min(index, len(scores) - 1)]
+
+
 def _lead_change_count(
-    score_history: dict[int, list[int]], player_numbers: list[int], question_count: int
+    score_history: dict[int, list[int]], player_numbers: list[int]
 ) -> int:
     """Count how many times the current-game lead changed hands.
 
     Args:
-        score_history: Current-player score history keyed by player number.
+        score_history: Current-player score history keyed by player number,
+            with one point per history event.
         player_numbers: Ordered player numbers participating in the summary.
-        question_count: Number of played questions.
 
     Returns:
-        Count of distinct leader-set changes across played questions.
+        Count of distinct leader-set changes across all history events.
     """
     previous_leaders: set[int] | None = None
     lead_changes = 0
-    for question_index in range(1, question_count + 1):
+    for event_index in _score_event_indices(score_history):
         scores_at_point = {
-            player_number: score_history.get(player_number, [0])[
-                min(question_index, len(score_history.get(player_number, [0])) - 1)
-            ]
+            player_number: _score_at(score_history.get(player_number, []), event_index)
             for player_number in player_numbers
         }
         if not scores_at_point:
@@ -998,22 +1164,30 @@ def _lead_change_count(
 def _victory_summary(
     score_history: dict[int, list[int]],
     winner_player_numbers: list[int],
-    question_count: int,
 ) -> str:
-    """Summarize whether the winner came from behind or led wire to wire."""
+    """Summarize whether the winner came from behind or led wire to wire.
+
+    Args:
+        score_history: Current-player score history keyed by player number,
+            with one point per history event.
+        winner_player_numbers: Player numbers tied for the top final score.
+
+    Returns:
+        Short description of how the game was won.
+    """
     if len(winner_player_numbers) != SINGLE_WINNER_COUNT:
         return "Tied finish"
     winner_player_number = winner_player_numbers[INITIAL_SCORE]
     winner_scores = score_history.get(winner_player_number, [INITIAL_SCORE])
     max_trail = INITIAL_SCORE
     wire_to_wire = True
-    for question_index in range(1, question_count + 1):
-        scores_at_point = []
-        for scores in score_history.values():
-            scores_at_point.append(scores[min(question_index, len(scores) - 1)])
+    for event_index in _score_event_indices(score_history):
+        scores_at_point = [
+            _score_at(scores, event_index) for scores in score_history.values()
+        ]
         if not scores_at_point:
             continue
-        winner_score = winner_scores[min(question_index, len(winner_scores) - 1)]
+        winner_score = _score_at(winner_scores, event_index)
         top_score = max(scores_at_point)
         max_trail = max(max_trail, top_score - winner_score)
         if winner_score != top_score:
@@ -1021,6 +1195,27 @@ def _victory_summary(
     if wire_to_wire:
         return "Wire-to-wire victory"
     return f"${max_trail:,} come-from-behind victory"
+
+
+def _entry_counts_toward_coryat(game: object, entry: dict) -> bool:
+    """Return whether a clue entry belongs to a regular (non-Final) board.
+
+    Coryat and triple stumpers leave out Final Jeopardy. Final is found by
+    board type rather than position, because a round subset may end on a
+    regular board or have no Final at all.
+
+    Args:
+        game: Game whose loaded rounds match the history's ``round_index``.
+        entry: Saved clue history entry.
+
+    Returns:
+        ``True`` when the entry points at a loaded regular board.
+    """
+    round_index = entry.get("round_index")
+    rounds = getattr(game.data, "rounds", None) or []
+    if not isinstance(round_index, int) or not 0 <= round_index < len(rounds):
+        return False
+    return not isinstance(rounds[round_index], FinalBoard)
 
 
 def build_end_game_summary(game: object) -> EndGameSummary:
@@ -1092,9 +1287,9 @@ def build_end_game_summary(game: object) -> EndGameSummary:
                 race_wins[winner_player_number] = (
                     race_wins.get(winner_player_number, 0) + 1
                 )
+        counts_toward_coryat = _entry_counts_toward_coryat(game, entry)
         if (
-            entry.get("round_index") is not None
-            and entry.get("round_index") < len(getattr(game.data, "rounds", [])) - 1
+            counts_toward_coryat
             and not entry.get("is_daily_double")
             and not any(attempt.get("answer_correct") for attempt in answer_attempts)
         ):
@@ -1108,12 +1303,7 @@ def build_end_game_summary(game: object) -> EndGameSummary:
                 right_count[player_number] = right_count.get(player_number, 0) + 1
             else:
                 wrong_count[player_number] = wrong_count.get(player_number, 0) + 1
-            if (
-                not entry.get("is_daily_double")
-                and entry.get("round_index") is not None
-                and entry.get("round_index") >= 0
-                and entry.get("round_index") < len(getattr(game.data, "rounds", [])) - 1
-            ):
+            if counts_toward_coryat and not entry.get("is_daily_double"):
                 clue_value = int(entry.get("value", 0) or 0)
                 if attempt.get("answer_correct"):
                     coryat[player_number] = coryat.get(player_number, 0) + clue_value
@@ -1179,15 +1369,11 @@ def build_end_game_summary(game: object) -> EndGameSummary:
         question_count=question_count,
         current_players=current_players,
         game_stats=EndGameGameStats(
-            lead_changes=_lead_change_count(
-                score_history, all_player_numbers, question_count
-            ),
+            lead_changes=_lead_change_count(score_history, all_player_numbers),
             combined_coryat=sum(player.coryat for player in current_players),
             buzzer_races=buzzer_races,
             triple_stumpers=triple_stumpers,
-            victory_summary=_victory_summary(
-                score_history, winner_player_numbers, question_count
-            ),
+            victory_summary=_victory_summary(score_history, winner_player_numbers),
         ),
         current_series=current_series,
         original_series=original_series,

@@ -28,6 +28,7 @@ from jparty.domain.state import (
     HistoryFileError,
     build_end_game_summary,
     current_saved_players,
+    load_saved_game_data,
     read_history_file,
     reconstruct_score_history,
 )
@@ -306,11 +307,6 @@ def load_summary_from_game_state_directory(game_state_directory: object) -> obje
         ValueError: If the game state metadata cannot be used to build a
             playable summary.
     """
-    from jparty.services.game_loader import (
-        build_game_from_board_selection_configs,
-        get_game,
-    )
-
     game_state_path = Path(game_state_directory)
     general_file = game_state_path / "general.json"
     if not general_file.exists():
@@ -322,20 +318,9 @@ def load_summary_from_game_state_directory(game_state_directory: object) -> obje
     if not game_id:
         raise ValueError("Saved game metadata is missing a game_id")
 
-    board_selection_configs = general_state.get("board_selections")
-    if board_selection_configs:
-        data = build_game_from_board_selection_configs(board_selection_configs)
-    else:
-        data = get_game(game_id)
-        if data is None:
-            raise ValueError("Saved game points to an invalid or incomplete game")
-        selected_round_indices = general_state.get("selected_round_indices")
-        if selected_round_indices is not None:
-            data.rounds = [
-                data.rounds[int(index)]
-                for index in selected_round_indices
-                if 0 <= int(index) < len(data.rounds)
-            ]
+    # Load the game exactly as resume does, so history round indices point at
+    # the same boards as in the app.
+    data = load_saved_game_data(general_state).data
     if data is None:
         raise ValueError("Saved game points to an invalid or incomplete game")
 
