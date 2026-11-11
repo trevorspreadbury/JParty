@@ -40,6 +40,7 @@ from jparty.domain.models import FinalBoard, GameData
 from jparty.domain.state import (
     HISTORY_FORMAT,
     NO_ANSWER_RESULT,
+    PLAYER_RENUMBER_TYPE,
     QUESTION_HISTORY_FILE_NAME,
     SCORE_CORRECTION_TYPE,
     HistoryFileError,
@@ -47,6 +48,7 @@ from jparty.domain.state import (
     clue_player_results,
     clue_score_effects,
     corrected_history_entries,
+    current_saved_players,
     get_current_game_state,
     history_score_totals,
     is_question_history_entry,
@@ -217,6 +219,9 @@ class Game(QObject):
         self._game_started_at = None
         self._history_format = None
         self._started_by_version = None
+        # Players as general.json recorded them when the save started; see
+        # current_saved_players. None for a fresh game.
+        self._starting_roster = None
         self._resume_state = None
         self._selected_round_indices = None
         self._board_selection_configs = None
@@ -437,7 +442,10 @@ class Game(QObject):
             raise ValueError("Saved game metadata is missing player information")
         # Check the history before fetching the game, which can hit the network,
         # so a damaged save fails right away and leaves the game state untouched.
-        read_history_file(saved_game_path / QUESTION_HISTORY_FILE_NAME)
+        history_entries = read_history_file(
+            saved_game_path / QUESTION_HISTORY_FILE_NAME
+        )
+        current_players = current_saved_players(saved_players, history_entries)
         board_selection_configs = general_state.get("board_selections")
         selected_round_indices = general_state.get("selected_round_indices")
         original_data = None
@@ -487,7 +495,7 @@ class Game(QObject):
             "player_count": len(saved_players),
         }
         if self.buzzer_controller:
-            self.buzzer_controller.begin_saved_player_reclaim(saved_players)
+            self.buzzer_controller.begin_saved_player_reclaim(current_players)
         return self._resume_state
 
     def _board_selections_match_original_game_subset(
@@ -572,6 +580,7 @@ class Game(QObject):
         self._game_started_at = time.time()
         self._history_format = HISTORY_FORMAT
         self._started_by_version = __version__
+        self._starting_roster = None
         self._initialize_game_state_dir()
         self._save_general_state()
         if isinstance(self.current_round, FinalBoard):
@@ -638,6 +647,49 @@ class Game(QObject):
             question = self.data.rounds[round_index].get_question(*question_coords)
             if question is not None:
                 question.complete = True
+
+    def _record_player_renumbering(self) -> bool:
+        """Log any seat changes the host made in the resume lobby.
+
+        Players keep their history under the number they were saved with. If
+        the host reordered seats, append one ``player_renumber`` line mapping
+        saved numbers to current ones, so the history reader can translate
+        every earlier line before scores are restored.
+
+        Unlike clue lines, a mapping that fails to save is not kept for a
+        later retry. The game stays in the lobby, and pressing Start again
+        builds the full mapping again, so a queued copy would be written
+        twice and the two would cancel each other out.
+
+        Returns:
+            ``True`` when resuming can continue; ``False`` if the mapping
+            could not be saved (the host has already been warned).
+        """
+        mapping = self.buzzer_controller.saved_player_renumbering()
+        if all(saved == current for saved, current in mapping.items()):
+            return True
+        if self._history_file() is None:
+            logging.error("No game state directory available for player renumber")
+            return False
+        self._pending_history_lines.append(
+            {
+                "type": PLAYER_RENUMBER_TYPE,
+                "mapping": {
+                    str(saved): current for saved, current in sorted(mapping.items())
+                },
+                "timestamp": time.time(),
+            }
+        )
+        if self._flush_pending_history(warn_host=False):
+            return True
+        self._clear_pending_history()
+        self.show_host_warning(
+            "Seat Order Not Saved",
+            "Could not save the new seat order, so the game has not started. "
+            "Check that the saved game folder can be written to, then press "
+            "Start again.",
+        )
+        return False
 
     def _restore_player_scores(self, history_entries: list[dict]) -> None:
         """Restore each connected player's score from persisted history.
@@ -709,7 +761,12 @@ class Game(QObject):
         # Keep what the save recorded, so a resumed legacy save stays unmarked.
         self._history_format = resume_state["general_state"].get("history_format")
         self._started_by_version = resume_state["general_state"].get("jparty_version")
+        # general.json keeps the numbers the save started with. Seat changes
+        # are recorded only as player_renumber lines in the history.
+        self._starting_roster = resume_state["general_state"].get("players", [])
         self.players = self.buzzer_controller.claimed_saved_players()
+        if not self._record_player_renumbering():
+            return
         raw_history = self._load_question_history()
         question_history = [
             entry
@@ -887,7 +944,7 @@ class Game(QObject):
         self._pending_history_lines.append(entry)
         return self._flush_pending_history()
 
-    def _flush_pending_history(self) -> bool:
+    def _flush_pending_history(self, warn_host: bool = True) -> bool:
         """Write every queued history line to the session file, oldest first.
 
         The lines are written in a single ``write``, then flushed. If the file
@@ -896,6 +953,10 @@ class Game(QObject):
         fails, the file is truncated back to its previous size so no partial
         line is left behind, and the lines stay queued. The host is warned on
         the first failure in a row only.
+
+        Args:
+            warn_host: Whether to show the "Clue History Not Saved" warning
+                on failure. Callers that show their own warning pass ``False``.
 
         Returns:
             ``True`` when nothing is left in the queue.
@@ -922,7 +983,7 @@ class Game(QObject):
                     file_obj.truncate(size_before)
             except OSError:
                 logging.error("Could not roll back question history", exc_info=True)
-            if not self._history_save_failing:
+            if warn_host and not self._history_save_failing:
                 self._history_save_failing = True
                 reason = getattr(exc, "strerror", None) or exc
                 self.show_host_warning(
@@ -1253,10 +1314,18 @@ class Game(QObject):
 
         Returns:
             ``None``.
+
+        In the resume lobby this releases the player's saved slot instead, so
+        another phone can claim it without renumbering anyone else.
         """
-        self.players.remove(player)
-        player.waiter.close()
-        self._update_player_numbers()
+        if self._in_saved_player_reclaim_mode():
+            if not self.buzzer_controller.release_saved_player(player):
+                return
+            self.players = self.buzzer_controller.connected_players
+        else:
+            self.players.remove(player)
+            player.waiter.close()
+            self._update_player_numbers()
         self.dc.scoreboard.refresh_players()
         self._refresh_score_edit_controls()
         self.host_display.welcome_widget.check_start()
@@ -1273,6 +1342,9 @@ class Game(QObject):
             ``None``.
         """
         if player not in self.players:
+            return
+        if self._in_saved_player_reclaim_mode():
+            self._move_saved_player(player, -1)
             return
         index = self.players.index(player)
         if index > 0:
@@ -1296,6 +1368,9 @@ class Game(QObject):
         """
         if player not in self.players:
             return
+        if self._in_saved_player_reclaim_mode():
+            self._move_saved_player(player, 1)
+            return
         index = self.players.index(player)
         if index < len(self.players) - 1:
             (self.players[index], self.players[index + 1]) = (
@@ -1307,12 +1382,41 @@ class Game(QObject):
             self._refresh_score_edit_controls()
             self._update_all_lecterns()
 
-    def _update_player_numbers(self) -> None:
-        """Renumber players and remap their keyboard shortcuts by position.
+    def _in_saved_player_reclaim_mode(self) -> bool:
+        """Return whether the lobby is reclaiming players from a saved game."""
+        return bool(
+            self.buzzer_controller
+            and self.buzzer_controller.in_saved_player_reclaim_mode()
+        )
+
+    def _move_saved_player(self, player: object, offset: int) -> None:
+        """Move a reclaimed player one seat and refresh the lobby.
+
+        Args:
+            player: Claimed player to move.
+            offset: ``-1`` for one seat earlier, ``1`` for one seat later.
 
         Returns:
             ``None``.
         """
+        if not self.buzzer_controller.move_saved_player(player, offset):
+            return
+        self.players = self.buzzer_controller.connected_players
+        self.dc.scoreboard.refresh_players()
+        self._refresh_score_edit_controls()
+        self._update_all_lecterns()
+
+    def _update_player_numbers(self) -> None:
+        """Renumber players and remap their keyboard shortcuts by position.
+
+        In the resume lobby, numbers come from seats instead (see
+        ``BuzzerController.seat_order``), so this does nothing.
+
+        Returns:
+            ``None``.
+        """
+        if self._in_saved_player_reclaim_mode():
+            return
         for i, player in enumerate(self.players):
             player.player_number = i
             player.key = index_to_key[i]
@@ -1594,9 +1698,12 @@ class Game(QObject):
             logging.warning("No score history found to generate graph")
             return
         general_state = self._load_general_state()
+        saved_players = current_saved_players(
+            general_state.get("players", []), self._load_question_history()
+        )
         original_player_map = {
             p.get("player_number"): p.get("name", f"Player {p.get('player_number')}")
-            for p in general_state.get("players", [])
+            for p in saved_players
         }
         current_player_map = {p.player_number: p.name for p in self.players}
         if players == "original":

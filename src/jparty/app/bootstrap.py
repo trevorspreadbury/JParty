@@ -25,8 +25,11 @@ from jparty.app.logging import install_crash_reporting
 from jparty.app.paths import SAVED_GAMES
 from jparty.domain.game_engine import Game
 from jparty.domain.state import (
+    QUESTION_HISTORY_FILE_NAME,
     HistoryFileError,
     build_end_game_summary,
+    current_saved_players,
+    read_history_file,
     reconstruct_score_history,
 )
 from jparty.services.archive_client import get_game_html, process_game_board_from_html
@@ -335,8 +338,12 @@ def load_summary_from_game_state_directory(game_state_directory: object) -> obje
         players=[],
     )
     score_history = reconstruct_score_history(summary_game)
+    saved_players = current_saved_players(
+        general_state.get("players", []),
+        read_history_file(game_state_path / QUESTION_HISTORY_FILE_NAME),
+    )
     players = []
-    for saved_player in general_state.get("players", []):
+    for saved_player in saved_players:
         player_number = int(saved_player.get("player_number", 0))
         players.append(
             SimpleNamespace(

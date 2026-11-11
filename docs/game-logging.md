@@ -53,11 +53,14 @@ schema:
 Field notes:
 
 - `game_id`: the J-Archive game id or Google Sheets id currently being played
-- `players`: the players in slot order when the state file was written
+- `players`: the players as they were when the session started. Resuming
+  keeps this list as it is, even if the host reorders seats in the resume
+  lobby; see [Player Numbers](#player-numbers-and-player_renumber)
 - `players[].name`: either plain text or the signature image data URL used by
   the scoreboard/lecterns
-- `players[].player_number`: stable player slot index used for saved-game
-  restore and stat tracking
+- `players[].player_number`: the player's number when the session started.
+  Their current number is this number with every `player_renumber` line in
+  `question_history.jsonl` applied in order
 - `selected_round_indices`: the original round indices chosen on the welcome
   screen
 - `started_at`: Unix timestamp for when the game session started
@@ -77,11 +80,14 @@ where a save came from so that differences between versions can be found.
 ## `question_history.jsonl`
 
 `question_history.jsonl` is append-only: lines are only ever added to the
-end during play, and the file is never rewritten. There are three line types:
+end during play, and the file is never rewritten. There are four line types:
 
 - clue lines (no `type`, or `"type": "question"`), one per completed clue
 - `manual_score_adjustment` lines, one per manual podium override
 - `score_correction` lines, one per clue changed in the `Edit Score` dialog
+- `player_renumber` lines, written when a resumed game starts after the host
+  reordered players in the lobby (see
+  [Player Numbers](#player-numbers-and-player_renumber))
 
 Standard clues and Final Jeopardy use the same top-level shape:
 
@@ -288,6 +294,47 @@ Field notes:
 
 If the same clue is corrected more than once, the latest `score_correction`
 line for that `question_number` wins.
+
+## Player Numbers and `player_renumber`
+
+Every line identifies players by `player_index`, which is the same number as
+`players[].player_number` in `general.json`. In the resume lobby each phone
+reclaims a saved profile, and the host can still rearrange the lobby:
+
+- `▲`/`▼` swap two neighboring seats. The two players trade numbers (and
+  buzzer keys); everyone else keeps theirs.
+- `✕` releases a player's saved slot: the phone returns to the chooser, its
+  reconnect token stops working, and another phone can claim the slot. The
+  seat keeps its number, so whoever claims it next gets the same number and
+  nobody else is renumbered. Start is blocked until every slot is claimed
+  again.
+
+When the resumed game starts and any player's seat differs from the number
+they were saved under, JParty appends one line before restoring scores:
+
+```json
+{"type": "player_renumber", "mapping": {"0": 1, "1": 0, "2": 2}, "timestamp": 1730200000.0}
+```
+
+`mapping` maps each saved player number to the player's new number, and is
+always a one-to-one reordering. When reading the file, every `player_index`
+(and every `player_states` key) on the lines *before* a `player_renumber`
+line is translated through its mapping, and then the score chain is checked.
+Later resumes add further `player_renumber` lines, which apply on top of the
+earlier ones. Saves without a `player_renumber` line read exactly as before.
+
+`general.json` is not changed when seats move: its `players` keep the numbers
+the session started with. To find a player's current number, start from
+`general.json` and apply every `player_renumber` line in file order (in code,
+`current_saved_players`). The history is the only record of seat changes, so
+the two files can't disagree: if the app stops right after Start, the next
+resume still matches every player to their own score.
+
+If the `player_renumber` line can't be saved (for example, the disk is full),
+the host sees "Seat Order Not Saved" and the game stays in the lobby. Unlike
+clue lines, the mapping is not kept for a later retry: pressing Start again
+builds the whole mapping again, so a kept copy would be written twice, and two
+copies of the same mapping cancel each other out.
 
 ## The Score Chain
 

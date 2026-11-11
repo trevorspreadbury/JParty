@@ -7,6 +7,7 @@ import pytest
 from jparty.domain.state import (
     HistoryFileError,
     corrected_history_entries,
+    current_saved_players,
     history_score_totals,
     read_history_file,
 )
@@ -217,3 +218,103 @@ def test_manual_override_replays_as_its_recorded_change(
     assert corrected[3]["score_before"] == -400
     assert corrected[3]["score_after"] == 600
     assert history_score_totals(corrected) == history_score_totals(entries)
+
+
+def _renumber(mapping: dict) -> str:
+    """Return one serialized ``player_renumber`` line."""
+    return json.dumps(
+        {"type": "player_renumber", "mapping": mapping, "timestamp": 1700000500.0}
+    )
+
+
+def test_player_renumber_maps_every_earlier_line(
+    temp_dir: Path, fixture_lines: list[str]
+) -> None:
+    """Test a seat swap renumbers attempts, buzzes, and corrections before it."""
+    correction = _correction(
+        1,
+        {"0": "incorrect", "1": "no answer"},
+        [{"player_index": 0, "score_before": 0, "score_after": -400}],
+    )
+    later_clue = json.loads(fixture_lines[1])
+    later_clue["question_number"] = 4
+    later_clue["answer_attempts"][0].update(
+        {"player_index": 0, "score_before": 400, "score_after": 600}
+    )
+    text = "\n".join(
+        [
+            *fixture_lines,
+            correction,
+            _renumber({"0": 1, "1": 0}),
+            json.dumps(later_clue),
+        ]
+    )
+    entries = read_history_file(_write_history(temp_dir, text + "\n"))
+
+    assert entries[0]["answer_attempts"][0]["player_index"] == 1
+    assert entries[3]["player_states"] == {"1": "incorrect", "0": "no answer"}
+    assert entries[3]["adjustments"][0]["player_index"] == 1
+    assert entries[4]["mapping"] == {"0": 1, "1": 0}
+    assert entries[5]["answer_attempts"][0]["player_index"] == 0
+    assert history_score_totals(entries) == {1: -400, 0: 600}
+    corrected = corrected_history_entries(entries)
+    assert all(entry.get("type") != "player_renumber" for entry in corrected)
+    assert history_score_totals(corrected) == {1: -400, 0: 600}
+
+
+def test_two_renumber_lines_compose(temp_dir: Path, fixture_lines: list[str]) -> None:
+    """Test each resume's mapping applies on top of the previous one."""
+    text = "\n".join(
+        [*fixture_lines, _renumber({"0": 1, "1": 0}), _renumber({"0": 1, "1": 0})]
+    )
+    entries = read_history_file(_write_history(temp_dir, text + "\n"))
+    assert entries[0]["answer_attempts"][0]["player_index"] == 0
+    assert history_score_totals(entries) == {0: 0, 1: 400}
+
+
+def test_renumber_mapping_must_be_one_to_one(
+    temp_dir: Path, fixture_lines: list[str]
+) -> None:
+    """Test a mapping that merges two players is rejected."""
+    text = "\n".join([*fixture_lines, _renumber({"0": 1, "1": 1})])
+    error = _read_error(_write_history(temp_dir, text + "\n"))
+    assert error.line_number == 4
+    assert "one-to-one" in error.reason
+
+
+def test_current_saved_players_applies_seat_changes_in_file_order(
+    temp_dir: Path,
+) -> None:
+    """Test a rotation then a swap moves players as the host made them."""
+    text = "\n".join(
+        [_renumber({"0": 1, "1": 2, "2": 0}), _renumber({"0": 1, "1": 0, "2": 2})]
+    )
+    entries = read_history_file(_write_history(temp_dir, text + "\n"))
+    saved_players = [
+        {"name": "Alice", "player_number": 0},
+        {"name": "Bob", "player_number": 1},
+        {"name": "Cara", "player_number": 2},
+    ]
+
+    players = current_saved_players(saved_players, entries)
+
+    assert [(p["name"], p["player_number"]) for p in players] == [
+        ("Alice", 0),
+        ("Bob", 2),
+        ("Cara", 1),
+    ]
+    assert saved_players[1]["player_number"] == 1
+
+
+def test_current_saved_players_without_seat_changes_is_unchanged(
+    fixture_lines: list[str], temp_dir: Path
+) -> None:
+    """Test saves without ``player_renumber`` lines keep their numbers."""
+    entries = read_history_file(
+        _write_history(temp_dir, "\n".join(fixture_lines) + "\n")
+    )
+    saved_players = [
+        {"name": "Alice", "player_number": 0},
+        {"name": "Bob", "player_number": 1},
+    ]
+    assert current_saved_players(saved_players, entries) == saved_players
