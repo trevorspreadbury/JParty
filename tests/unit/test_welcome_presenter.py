@@ -79,3 +79,30 @@ def test_presenter_resume_status_includes_claim_progress() -> None:
 
     assert "Claimed 1 of 3 saved players." in state.status_text
     assert "Claim every saved player profile to resume (1/3)." in state.status_text
+
+
+def test_presenter_disables_regular_start_while_a_game_is_loading() -> None:
+    """Regular-mode Start waits for the current game id to finish loading."""
+    game = StubWelcomeGame()
+    game._startable = True
+    game._selected_round_indices = [0]
+    presenter = WelcomePresenter(game)
+    presenter.set_summary_text("Previous game")
+    presenter.set_loading(True)
+
+    assert presenter.sync_from_game().start_enabled is False
+
+    presenter.set_loading(False)
+    assert presenter.sync_from_game().start_enabled is True
+
+
+def test_presenter_loading_flag_does_not_block_advanced_start() -> None:
+    """Advanced rows track their own loads, so the regular flag is ignored."""
+    game = StubWelcomeGame()
+    game._startable = True
+    game._board_selection_configs = [{"game_id": "111"}]
+    presenter = WelcomePresenter(game)
+    presenter.set_advanced_enabled(True)
+    presenter.set_loading(True)
+
+    assert presenter.sync_from_game().advanced_start_enabled is True

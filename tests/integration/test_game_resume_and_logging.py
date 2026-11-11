@@ -623,6 +623,50 @@ def test_resume_rebuilds_saved_daily_double_locations(
     assert restored_indices == [[0, 1], [4, 3]]
 
 
+def test_start_game_ignores_a_resume_prepared_for_another_game(
+    game: object, monkeypatch: object, sample_saved_game_dir: object
+) -> None:
+    """A resume for game 4453 must not run, or write, when another game starts."""
+    from jparty.services import game_loader
+
+    source = deepcopy(game.data)
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: deepcopy(source))
+    monkeypatch.setattr(game, "_save_played_game_html", lambda: None)
+    general_before = (sample_saved_game_dir / "general.json").read_bytes()
+    history_before = (sample_saved_game_dir / "question_history.jsonl").read_bytes()
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(sample_saved_game_dir)
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    # What advanced mode does after Load Saved: swap in a different board.
+    game.set_board_selection_configs(
+        [
+            {
+                "game_id": "9999",
+                "source_round_index": 0,
+                "source_round_label": "Jeopardy!",
+                "board_type": "standard",
+                "row_values": [200, 400, 600, 800, 1000],
+            }
+        ]
+    )
+    game.set_session_game_id("frankenstein-9999")
+
+    game.start_game()
+
+    assert game._resume_state is None
+    assert game._game_state_dir != sample_saved_game_dir
+    saved = json.loads((game._game_state_dir / "general.json").read_text())
+    assert saved["game_id"] == "frankenstein-9999"
+    assert (sample_saved_game_dir / "general.json").read_bytes() == general_before
+    assert (
+        sample_saved_game_dir / "question_history.jsonl"
+    ).read_bytes() == history_before
+    assert game.question_number == 1
+    assert [player.score for player in game.players] == [0, 0]
+    assert not any(question.complete for question in game.data.rounds[0].questions)
+
+
 def test_close_game_resets_state(game_with_players: object) -> None:
     """Test test close game resets state."""
     game = game_with_players
