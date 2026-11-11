@@ -89,6 +89,7 @@ class Game(QObject):
     buzz_trigger = pyqtSignal(int)
     new_player_trigger = pyqtSignal()
     stumped_trigger = pyqtSignal()
+    final_finished_trigger = pyqtSignal()
     wager_trigger = pyqtSignal(int, int)
     toolate_trigger = pyqtSignal()
     lectern_update_trigger = pyqtSignal(int, dict)
@@ -198,6 +199,7 @@ class Game(QObject):
         self.buzz_trigger.connect(self.buzz)
         self.new_player_trigger.connect(self.new_player)
         self.stumped_trigger.connect(self.__handle_stumped_timeout)
+        self.final_finished_trigger.connect(self.__handle_final_finished_song)
         self.toolate_trigger.connect(self.__toolate)
         self.lectern_update_trigger.connect(self.__broadcast_lectern_update)
         self._game_state_dir = None
@@ -1281,7 +1283,7 @@ class Game(QObject):
             self.players = self.buzzer_controller.connected_players
         else:
             self.players.remove(player)
-            player.waiter.close()
+            self.buzzer_controller.close_socket(player.waiter)
             self._update_player_numbers()
         self.dc.scoreboard.refresh_players()
         self._refresh_score_edit_controls()
@@ -1597,6 +1599,17 @@ class Game(QObject):
     def final_finished_song(self) -> None:
         """Handle the end of the Final Jeopardy think music.
 
+        The music timer calls this from its own thread, so the work is sent
+        to the game object's Qt thread through a signal.
+
+        Returns:
+            ``None``.
+        """
+        self.final_finished_trigger.emit()
+
+    def __handle_final_finished_song(self) -> None:
+        """Run end-of-music handling on the game object's Qt thread.
+
         Returns:
             ``None``.
         """
@@ -1740,8 +1753,10 @@ class Game(QObject):
             ):
                 if player_number in self.buzzer_controller.lectern_connections:
                     try:
-                        self.buzzer_controller.lectern_connections[player_number].send(
-                            "NO_PLAYER", ""
+                        self.buzzer_controller.send_to(
+                            self.buzzer_controller.lectern_connections[player_number],
+                            "NO_PLAYER",
+                            "",
                         )
                     except Exception:
                         logging.error(
@@ -1856,6 +1871,9 @@ class Game(QObject):
     def stumped(self) -> None:
         """Handle a clue expiring without a correct response.
 
+        The clue timer calls this from its own thread, so the work is sent to
+        the game object's Qt thread through a signal.
+
         Returns:
             ``None``.
         """
@@ -1864,9 +1882,16 @@ class Game(QObject):
     def __handle_stumped_timeout(self) -> None:
         """Run stumped handling on the game object's Qt thread.
 
+        The timeout is queued, so a buzz can be handled before it arrives.
+        It is ignored unless the buzz window is still open and nobody is
+        answering.
+
         Returns:
             ``None``.
         """
+        if not self.accepting_responses or self.answering_player is not None:
+            logging.info("Ignoring stumped timeout: responses are closed")
+            return
         self.clue_flow.stumped()
 
     def reveal_stumped_answer(self) -> None:

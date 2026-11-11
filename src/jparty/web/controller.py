@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import logging
 import socket
-from collections.abc import Iterable
+import threading
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from threading import Thread
 from typing import TYPE_CHECKING, TypedDict
@@ -79,6 +80,7 @@ class BuzzerController:
     """Manage player, lectern, and websocket interactions for the game."""
 
     thread: Thread | None
+    loop: tornado.ioloop.IOLoop | None
     game: Game
     app: Application
     port: int
@@ -101,6 +103,8 @@ class BuzzerController:
             ``None``.
         """
         self.thread = None
+        self.loop = None
+        self._loop_thread_id: int | None = None
         self.game = game
         tornado.options.parse_command_line()
         self.app = Application(self)
@@ -135,12 +139,67 @@ class BuzzerController:
             self.port += 1
             self.start(threaded, tries + 1)
             return
+        self.loop = tornado.ioloop.IOLoop.current()
         if threaded:
-            self.thread = Thread(target=tornado.ioloop.IOLoop.current().start)
+            self.thread = Thread(target=self.loop.start)
             self.thread.setDaemon(True)
             self.thread.start()
+            self._loop_thread_id = self.thread.ident
         else:
-            tornado.ioloop.IOLoop.current().start()
+            self._loop_thread_id = threading.get_ident()
+            self.loop.start()
+
+    def run_on_loop(self, callback: Callable[..., object], *args: object) -> None:
+        """Run ``callback`` on the Tornado loop thread.
+
+        Websocket writes and closes are not thread-safe, so calls made from
+        the Qt thread are handed to the loop with ``add_callback``. Calls made
+        on the loop thread, or before the loop has started (tests and fakes),
+        run right away.
+
+        Args:
+            callback: Function to run.
+            *args: Positional arguments forwarded to ``callback``.
+
+        Returns:
+            ``None``.
+        """
+        loop = self.loop
+        if loop is None or threading.get_ident() == self._loop_thread_id:
+            callback(*args)
+        else:
+            loop.add_callback(callback, *args)
+
+    def send_to(
+        self,
+        socket_handler: BuzzerSocketHandler | LecternSocketHandler,
+        msg: str,
+        text: str = "",
+    ) -> None:
+        """Send a websocket message from the Tornado loop thread.
+
+        Args:
+            socket_handler: Player or lectern socket to write to.
+            msg: Message type identifier.
+            text: Optional message payload text.
+
+        Returns:
+            ``None``.
+        """
+        self.run_on_loop(socket_handler.send, msg, text)
+
+    def close_socket(
+        self, socket_handler: BuzzerSocketHandler | LecternSocketHandler
+    ) -> None:
+        """Close a websocket from the Tornado loop thread.
+
+        Args:
+            socket_handler: Player or lectern socket to close.
+
+        Returns:
+            ``None``.
+        """
+        self.run_on_loop(socket_handler.close)
 
     def restart(self) -> None:
         """Disconnect all players and reset lobby acceptance state.
@@ -150,7 +209,7 @@ class BuzzerController:
         """
         for p in self.connected_players:
             if p.waiter is not None:
-                p.waiter.close()
+                self.close_socket(p.waiter)
         self.connected_players = []
         self.accepting_players = True
         self.clear_saved_player_reclaim()
@@ -259,7 +318,7 @@ class BuzzerController:
         payload = tornado.escape.json_encode(self.saved_player_choices_payload())
         for socket_handler in list(self.active_buzzer_sockets):
             if socket_handler.player is None:
-                socket_handler.send("SHOW_CHOOSER", payload)
+                self.send_to(socket_handler, "SHOW_CHOOSER", payload)
 
     def begin_saved_player_reclaim(
         self, saved_players: Iterable[dict[str, object]]
@@ -271,31 +330,63 @@ class BuzzerController:
 
         Returns:
             ``None``.
+
+        The Tornado thread may read the reclaim state at any time, so the new
+        profiles are built first and then swapped in whole, never changed in
+        place. Work on the open sockets runs on the Tornado loop.
         """
-        self.saved_player_profiles = {}
+        profiles = {}
         for saved_player in saved_players:
             try:
                 player_number = int(saved_player["player_number"])
                 name = str(saved_player["name"])
             except (KeyError, TypeError, ValueError):
                 continue
-            self.saved_player_profiles[player_number] = SavedPlayerProfile(
+            profiles[player_number] = SavedPlayerProfile(
                 name=name, player_number=player_number
             )
-        self.seat_order = sorted(self.saved_player_profiles)
-        self.resume_mode_active = bool(self.saved_player_profiles)
-        current_sockets = list(self.active_buzzer_sockets)
+        # Turn off claims while the profiles and seats are swapped.
+        self.resume_mode_active = False
+        self.saved_player_profiles = profiles
+        self.seat_order = sorted(profiles)
         self.connected_players = []
+        self.resume_mode_active = bool(profiles)
+        current_sockets = list(self.active_buzzer_sockets)
         self.game.new_player_trigger.emit()
         if not self.resume_mode_active:
             return
         if len(current_sockets) > self.saved_player_total_count():
-            for socket_handler in current_sockets:
-                socket_handler.send("LOGOUT", "Saved game loaded. Please reconnect.")
-                socket_handler.close()
+            self.run_on_loop(self._log_out_sockets, current_sockets)
             return
         payload = tornado.escape.json_encode(self.saved_player_choices_payload())
-        for socket_handler in current_sockets:
+        self.run_on_loop(self._show_chooser_on_sockets, current_sockets, payload)
+
+    def _log_out_sockets(self, sockets: list[BuzzerSocketHandler]) -> None:
+        """Ask phones to reconnect, then close them. Runs on the Tornado loop.
+
+        Args:
+            sockets: Open player sockets to close.
+
+        Returns:
+            ``None``.
+        """
+        for socket_handler in sockets:
+            socket_handler.send("LOGOUT", "Saved game loaded. Please reconnect.")
+            socket_handler.close()
+
+    def _show_chooser_on_sockets(
+        self, sockets: list[BuzzerSocketHandler], payload: str
+    ) -> None:
+        """Detach phones and show them the chooser. Runs on the Tornado loop.
+
+        Args:
+            sockets: Open player sockets to reset.
+            payload: Encoded saved-player chooser payload.
+
+        Returns:
+            ``None``.
+        """
+        for socket_handler in sockets:
             socket_handler.player = None
             socket_handler.send("LOGOUT", "")
             socket_handler.send("SHOW_CHOOSER", payload)
@@ -316,14 +407,16 @@ class BuzzerController:
             return None
         profile = self.saved_player_profiles.get(player_number)
         if profile is None:
-            socket_handler.send(
+            self.send_to(
+                socket_handler,
                 "SHOW_CHOOSER",
                 tornado.escape.json_encode(self.saved_player_choices_payload()),
             )
             return None
         if profile.player is not None and profile.player.waiter is not socket_handler:
-            socket_handler.send("PLAYER_TAKEN")
-            socket_handler.send(
+            self.send_to(socket_handler, "PLAYER_TAKEN")
+            self.send_to(
+                socket_handler,
                 "SHOW_CHOOSER",
                 tornado.escape.json_encode(self.saved_player_choices_payload()),
             )
@@ -462,7 +555,7 @@ class BuzzerController:
         if socket_handler is not None:
             if getattr(socket_handler, "player", None) is player:
                 socket_handler.player = None
-            socket_handler.send("LOGOUT", "")
+            self.send_to(socket_handler, "LOGOUT", "")
         self.push_saved_player_choices()
         return True
 
@@ -587,7 +680,7 @@ class BuzzerController:
         if players is None:
             players = self.connected_players
         for p in players:
-            p.waiter.send("PROMPTWAGER", str(max(p.score, 0)))
+            self.send_to(p.waiter, "PROMPTWAGER", str(max(p.score, 0)))
             p.page = "wager"
 
     def prompt_answers(self) -> None:
@@ -597,7 +690,7 @@ class BuzzerController:
             ``None``.
         """
         for p in self.connected_players:
-            p.waiter.send("PROMPTANSWER")
+            self.send_to(p.waiter, "PROMPTANSWER")
             p.page = "answer"
 
     def toolate(self) -> None:
@@ -607,7 +700,7 @@ class BuzzerController:
             ``None``.
         """
         for p in self.connected_players:
-            p.waiter.send("TOOLATE")
+            self.send_to(p.waiter, "TOOLATE")
 
     def get_player_by_number(self, player_number: int) -> Player | None:
         """Return the current game player assigned to a lectern slot.
@@ -655,7 +748,9 @@ class BuzzerController:
         if player_number in self.lectern_connections:
             lectern = self.lectern_connections[player_number]
             try:
-                lectern.send("PLAYER_STATE", tornado.escape.json_encode(state_dict))
+                self.send_to(
+                    lectern, "PLAYER_STATE", tornado.escape.json_encode(state_dict)
+                )
             except Exception:
                 logging.error(
                     f"Error broadcasting to lectern {player_number}", exc_info=True
