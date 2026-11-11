@@ -5,7 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 from PyQt6 import sip
+from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPixmap
+from PyQt6.QtNetwork import QNetworkReply
 
 from jparty.domain.models import Question
 from jparty.services import image_lookup
@@ -156,3 +158,132 @@ def test_deleting_widget_with_pending_lookup_is_safe(
     widget = _review_widget(_lookup_question())
     sip.delete(widget)
     qtbot.wait(2500)
+
+
+class _FakeReply(QObject):
+    """Stand-in for ``QNetworkReply`` whose completion the test controls."""
+
+    finished = pyqtSignal()
+
+    def __init__(self, url: str) -> None:
+        """Create a pending reply for ``url``."""
+        super().__init__()
+        self.url = url
+        self.aborted = False
+        self._error = QNetworkReply.NetworkError.NoError
+        self._data = QByteArray()
+
+    def respond(self, data: QByteArray) -> None:
+        """Finish successfully with ``data`` as the body."""
+        self._data = data
+        self.finished.emit()
+
+    def fail(self) -> None:
+        """Finish with a connection error."""
+        self._error = QNetworkReply.NetworkError.ConnectionRefusedError
+        self.finished.emit()
+
+    def abort(self) -> None:
+        """Record that the widget cancelled this reply."""
+        self.aborted = True
+
+    def error(self) -> QNetworkReply.NetworkError:
+        """Return the reply's network error."""
+        return self._error
+
+    def readAll(self) -> QByteArray:
+        """Return the reply body."""
+        return self._data
+
+
+def _png_bytes(color: str) -> QByteArray:
+    """Return a 10x10 PNG filled with ``color``."""
+    pixmap = QPixmap(10, 10)
+    pixmap.fill(QColor(color))
+    data = QByteArray()
+    buffer = QBuffer(data)
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    assert pixmap.save(buffer, "PNG")
+    buffer.close()
+    return data
+
+
+def _review_widget_with_fake_network(
+    qtbot: object, monkeypatch: object, temp_dir: Path, accepted: list
+) -> tuple:
+    """Build a review widget whose image downloads return ``_FakeReply`` objects.
+
+    Returns:
+        The widget and the list of fake replies, in request order.
+    """
+    monkeypatch.setattr("jparty.ui.widgets.question.QUESTION_MEDIA", temp_dir)
+    game = SimpleNamespace(
+        active_question=_lookup_question(),
+        accept_image=lambda: accepted.append(True),
+        current_game_id=lambda: "4453",
+    )
+    widget = HostImageQuestionWidget(game)
+    qtbot.addWidget(widget)
+    replies = []
+
+    def fake_get(request: object) -> _FakeReply:
+        reply = _FakeReply(request.url().toString())
+        replies.append(reply)
+        return reply
+
+    monkeypatch.setattr(widget.network_manager, "get", fake_get)
+    return widget, replies
+
+
+def test_failed_fetch_after_good_one_disables_accept(
+    qtbot: object, temp_dir: Path, monkeypatch: object, offline_image_lookup: None
+) -> None:
+    """Test a failed load clears the old image so Accept saves nothing (#68)."""
+    accepted = []
+    widget, replies = _review_widget_with_fake_network(
+        qtbot, monkeypatch, temp_dir, accepted
+    )
+    widget.fetch_image("https://example.com/good.png")
+    replies[-1].respond(_png_bytes("green"))
+    assert widget.current_pixmap is not None
+    assert widget.start_button.isEnabled()
+
+    widget.fetch_image("https://example.com/broken.png")
+    assert widget.current_pixmap is None
+    assert not widget.start_button.isEnabled()
+    replies[-1].fail()
+
+    assert widget.image_label.text() == "Failed to load image."
+    assert widget.current_pixmap is None
+    assert not widget.start_button.isEnabled()
+    qtbot.mouseClick(widget.start_button, Qt.MouseButton.LeftButton)
+    widget.on_accept_image_clicked()
+    assert accepted == []
+    assert widget.question.image_url is None
+    assert not (temp_dir / "reviewed").exists()
+
+
+def test_first_reply_arriving_last_does_not_replace_newer_image(
+    qtbot: object, temp_dir: Path, monkeypatch: object, offline_image_lookup: None
+) -> None:
+    """Test the shown and accepted image is from the latest request (#68)."""
+    accepted = []
+    widget, replies = _review_widget_with_fake_network(
+        qtbot, monkeypatch, temp_dir, accepted
+    )
+    widget.fetch_image("https://example.com/first.png")
+    widget.fetch_image("https://example.com/second.png")
+    first, second = replies
+    assert first.aborted
+    assert not second.aborted
+
+    second.respond(_png_bytes("blue"))
+    first.respond(_png_bytes("red"))
+
+    assert widget.current_pixmap.toImage().pixelColor(0, 0) == QColor("blue")
+    assert widget.start_button.isEnabled()
+    qtbot.mouseClick(widget.start_button, Qt.MouseButton.LeftButton)
+    assert accepted == [True]
+    saved = QPixmap(widget.question.image_url)
+    assert temp_dir in Path(widget.question.image_url).parents
+    assert saved.toImage().pixelColor(0, 0) == QColor("blue")
