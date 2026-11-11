@@ -228,7 +228,6 @@ class StartWidget(QWidget):
 class Welcome(StartWidget):
     """Host-side lobby screen for choosing, previewing, and resuming games."""
 
-    gameid_trigger = pyqtSignal(str)
     summary_trigger = pyqtSignal(str)
     advanced_row_load_result_trigger = pyqtSignal(int, int, object, object, object)
     # (request_id, game_id, data, error, media_status, from_random)
@@ -424,7 +423,6 @@ class Welcome(StartWidget):
         main_layout.addWidget(self.reveal_answers_radio, 2)
         main_layout.addLayout(footer_layout, 3)
         main_layout.addStretch(3)
-        self.gameid_trigger.connect(self.set_gameid)
         self.summary_trigger.connect(self.set_summary)
         self.advanced_row_load_result_trigger.connect(
             self.handle_advanced_row_load_result
@@ -854,17 +852,6 @@ QCheckBox {{
             self.configure_round_selector()
         elif self.resume_path is None:
             self.clear_round_selector()
-
-    def set_gameid(self, text: object) -> None:
-        """Update the game-id input field.
-
-        Args:
-            text: New game-id text.
-
-        Returns:
-            ``None``.
-        """
-        self.textbox.setText(text)
 
     def toggle_advanced_options(self, _: object = None) -> None:
         """Show or hide the advanced Frankenstein-board controls."""
