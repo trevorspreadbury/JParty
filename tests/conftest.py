@@ -556,12 +556,18 @@ def game(
 ) -> object:
     """Test game."""
     import jparty.domain.game_engine as game_module
+    import jparty.domain.gameplay as gameplay_module
 
     FakeTimer.instances = []
+    wave = FakeWave()
     monkeypatch.setattr(game_module, "SongPlayer", FakeSongPlayer)
     monkeypatch.setattr(game_module, "QuestionTimer", FakeTimer)
     monkeypatch.setattr(game_module.time, "time", time_controller.time)
+    # Daily Doubles play dd.wav through simpleaudio, whose native playback
+    # thread outlives the test and crashes the process on Windows later on.
+    monkeypatch.setattr(gameplay_module.sa.WaveObject, "from_wave_file", lambda _: wave)
     game = Game()
+    game.wave = wave
     game._game_state_dir = temp_dir / "game_state"
     game._game_state_dir.mkdir()
     game._game_started_at = time_controller.time()
