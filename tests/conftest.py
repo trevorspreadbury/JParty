@@ -42,27 +42,6 @@ from jparty.domain import Board, FinalBoard, Game, GameData, Player, Question
 atexit.register(_cleanup_test_temp_dir)
 
 
-class FakeWave:
-    """Test helper for fakewave."""
-
-    def __init__(self) -> None:
-        """Test init."""
-        self.play_calls = 0
-
-    def play(self) -> object:
-        """Test play."""
-        self.play_calls += 1
-        return self
-
-    def wait_done(self) -> None:
-        """Test wait done."""
-        return None
-
-    def stop(self) -> None:
-        """Test stop."""
-        return None
-
-
 class FakeSongPlayer:
     """Test helper for fakesongplayer."""
 
