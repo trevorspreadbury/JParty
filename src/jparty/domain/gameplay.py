@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import time
 
-import simpleaudio as sa
 from PyQt6.QtWidgets import QApplication
 
 from jparty.app.config import EARLY_BUZZ_PENALTY, FJTIME, QUESTIONTIME
@@ -15,7 +14,6 @@ from jparty.domain.state import (
     HistoryFileError,
     build_end_game_summary,
 )
-from jparty.ui.widgets.common import resource_path
 
 
 class PlayerStateBroadcaster:
@@ -330,7 +328,7 @@ class ClueFlow:
             }
         if q.dd:
             logging.info("Daily double!")
-            sa.WaveObject.from_wave_file(resource_path("dd.wav")).play()
+            self.game.song_player.daily_double()
             self.game.soliciting_player = True
         else:
             self.game.keystroke_manager.activate("OPEN_RESPONSES")

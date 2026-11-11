@@ -36,7 +36,7 @@ def test_daily_double_load_and_wager_flow(
         lambda *args, **kwargs: (700, True),
     )
     game.load_question(question)
-    assert game.wave.play_calls == 1
+    assert game.song_player.daily_double_calls == 1
     game.get_dd_wager(game.players[0])
     assert game.soliciting_player is False
     assert question.value == 700

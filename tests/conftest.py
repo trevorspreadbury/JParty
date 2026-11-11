@@ -71,6 +71,7 @@ class FakeSongPlayer:
         self.play_calls = []
         self.final_calls = 0
         self.stumped_calls = 0
+        self.daily_double_calls = 0
         self.stop_calls = 0
 
     def play(self, repeat: object = False) -> None:
@@ -84,6 +85,10 @@ class FakeSongPlayer:
     def stumped(self) -> None:
         """Test stumped cue playback."""
         self.stumped_calls += 1
+
+    def daily_double(self) -> None:
+        """Test Daily Double cue playback."""
+        self.daily_double_calls += 1
 
     def stop(self) -> None:
         """Test stop."""
@@ -556,18 +561,15 @@ def game(
 ) -> object:
     """Test game."""
     import jparty.domain.game_engine as game_module
-    import jparty.domain.gameplay as gameplay_module
 
     FakeTimer.instances = []
-    wave = FakeWave()
+    # All game sounds go through SongPlayer. Real simpleaudio playback runs on
+    # a native thread that outlives the test and crashes the process on
+    # Windows later on, so it must stay faked.
     monkeypatch.setattr(game_module, "SongPlayer", FakeSongPlayer)
     monkeypatch.setattr(game_module, "QuestionTimer", FakeTimer)
     monkeypatch.setattr(game_module.time, "time", time_controller.time)
-    # Daily Doubles play dd.wav through simpleaudio, whose native playback
-    # thread outlives the test and crashes the process on Windows later on.
-    monkeypatch.setattr(gameplay_module.sa.WaveObject, "from_wave_file", lambda _: wave)
     game = Game()
-    game.wave = wave
     game._game_state_dir = temp_dir / "game_state"
     game._game_state_dir.mkdir()
     game._game_started_at = time_controller.time()

@@ -45,6 +45,7 @@ class SongPlayer:
         self.__wave_obj = sa.WaveObject.from_wave_file(resource_path("intro.wav"))
         self.__final = sa.WaveObject.from_wave_file(resource_path("final.wav"))
         self.__stumped = sa.WaveObject.from_wave_file(resource_path("stumped.wav"))
+        self.__daily_double = sa.WaveObject.from_wave_file(resource_path("dd.wav"))
         self.__play_obj = None
         self.__repeating = False
         self.__repeat_thread = None
@@ -95,6 +96,14 @@ class SongPlayer:
             ``None``.
         """
         self.__stumped.play()
+
+    def daily_double(self) -> None:
+        """Play the Daily Double cue using the preloaded audio asset.
+
+        Returns:
+            ``None``.
+        """
+        self.__daily_double.play()
 
     def __repeat(self) -> None:
         """Loop playback while repeating is enabled.
