@@ -542,9 +542,8 @@ def game(
     import jparty.domain.game_engine as game_module
 
     FakeTimer.instances = []
-    # All game sounds go through SongPlayer. Real simpleaudio playback runs on
-    # a native thread that outlives the test and crashes the process on
-    # Windows later on, so it must stay faked.
+    # All game sounds go through SongPlayer. Keep it faked so tests never play
+    # real audio on the machine running them.
     monkeypatch.setattr(game_module, "SongPlayer", FakeSongPlayer)
     monkeypatch.setattr(game_module, "QuestionTimer", FakeTimer)
     monkeypatch.setattr(game_module.time, "time", time_controller.time)

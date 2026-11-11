@@ -108,9 +108,9 @@ def _game_with_real_windows(qtbot: object, game: object, monkeypatch: object) ->
     """Attach real audience and host windows to a test game."""
     from jparty.services import archive_client
     from jparty.ui import welcome_loader
-    from jparty.ui.widgets import borders, common, scoreboard
+    from jparty.ui.widgets import borders, scoreboard
 
-    for module in (borders, common, scoreboard, welcome_loader):
+    for module in (borders, scoreboard, welcome_loader):
         monkeypatch.setattr(module, "Thread", _InertThread)
     monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
     monkeypatch.setenv("JPARTY_GAME_ID", "4453")
