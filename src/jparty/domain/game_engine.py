@@ -1610,9 +1610,15 @@ class Game(QObject):
     def __handle_final_finished_song(self) -> None:
         """Run end-of-music handling on the game object's Qt thread.
 
+        The timeout is queued, so the game may have been closed before it
+        arrives. It is ignored unless Final Jeopardy is still being played.
+
         Returns:
             ``None``.
         """
+        if not isinstance(self.current_round, FinalBoard):
+            logging.info("Ignoring Final Jeopardy timeout: not in Final Jeopardy")
+            return
         self.final_jeopardy_flow.finished_song()
 
     def end_game(self) -> None:
@@ -1769,7 +1775,12 @@ class Game(QObject):
         self.active_question = None
         self.current_round = None
         self.answering_player = None
+        # Stop the clue or Final Jeopardy timer. Dropping the reference alone
+        # leaves its thread running, and it would fire later in the lobby.
+        if self.timer:
+            self.timer.cancel()
         self.timer = None
+        self.accepting_responses = False
         self.data = None
         self._judgement_round = 0
         self.early_buzzes = set()

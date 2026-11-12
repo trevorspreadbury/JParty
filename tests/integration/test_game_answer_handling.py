@@ -131,6 +131,7 @@ def test_final_song_end_from_timer_thread_runs_on_main_thread(
 ) -> None:
     """Test the Final Jeopardy timeout is handled on the Qt thread."""
     game = game_with_players
+    game.current_round = game.data.rounds[-1]
     flash_threads = []
     game.dc.borders.flash = lambda: flash_threads.append(threading.current_thread())
 

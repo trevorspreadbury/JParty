@@ -109,6 +109,28 @@ def test_saved_player_reclaim_updates_sockets_on_loop_thread(
     assert socket.player is None
 
 
+def test_saved_player_reclaim_logs_out_extra_phones_on_loop_thread(
+    controller: BuzzerController, running_loop: object
+) -> None:
+    """Test a save with fewer players than open phones logs every phone out.
+
+    Each phone is asked to reconnect and then closed, all from the loop thread.
+    """
+    _, loop_thread = running_loop
+    sockets = [ThreadRecordingSocket() for _ in range(3)]
+    for socket in sockets:
+        controller.register_socket(socket)
+
+    controller.begin_saved_player_reclaim(
+        [{"name": "Alice", "player_number": 0}, {"name": "Bob", "player_number": 1}]
+    )
+
+    _wait_for(lambda: all(socket.closed_on for socket in sockets))
+    for socket in sockets:
+        assert socket.sent == [("LOGOUT", loop_thread)]
+        assert socket.closed_on is loop_thread
+
+
 def test_sends_run_directly_when_no_loop_has_started(
     game: object, monkeypatch: object
 ) -> None:

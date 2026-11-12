@@ -683,6 +683,82 @@ def test_close_game_resets_state(game_with_players: object) -> None:
     assert game.dc.restart_calls == 1
 
 
+class _RecordingTimer:
+    """Stand-in clue timer that records cancels."""
+
+    def __init__(self) -> None:
+        """Start with no cancels."""
+        self.cancel_calls = 0
+
+    def cancel(self) -> None:
+        """Record a cancel."""
+        self.cancel_calls += 1
+
+
+def test_close_game_cancels_timer_and_closes_responses(
+    game_with_players: object,
+) -> None:
+    """Closing mid-clue stops the clue timer instead of leaving it running."""
+    game = game_with_players
+    timer = _RecordingTimer()
+    game.timer = timer
+    game.accepting_responses = True
+
+    game.close_game()
+
+    assert timer.cancel_calls == 1
+    assert game.timer is None
+    assert not game.accepting_responses
+
+
+def test_stumped_timeout_after_close_game_is_ignored(
+    game_with_players: object, monkeypatch: object
+) -> None:
+    """A clue timeout already on its way when the game closes does nothing."""
+    game = game_with_players
+    stumped_calls = []
+    monkeypatch.setattr(game.clue_flow, "stumped", lambda: stumped_calls.append(1))
+    game.accepting_responses = True
+
+    game.close_game()
+    game.stumped()
+
+    assert stumped_calls == []
+
+
+def test_final_timeout_after_close_game_is_ignored(
+    game_with_players: object, monkeypatch: object
+) -> None:
+    """A Final Jeopardy timeout arriving after the game closes does nothing."""
+    game = game_with_players
+    finished_calls = []
+    monkeypatch.setattr(
+        game.final_jeopardy_flow, "finished_song", lambda: finished_calls.append(1)
+    )
+    game.current_round = game.data.rounds[-1]
+
+    game.close_game()
+    game.final_finished_song()
+
+    assert finished_calls == []
+
+
+def test_final_timeout_during_final_jeopardy_still_runs(
+    game_with_players: object, monkeypatch: object
+) -> None:
+    """The Final Jeopardy timeout guard lets the real timeout through."""
+    game = game_with_players
+    finished_calls = []
+    monkeypatch.setattr(
+        game.final_jeopardy_flow, "finished_song", lambda: finished_calls.append(1)
+    )
+    game.current_round = game.data.rounds[-1]
+
+    game.final_finished_song()
+
+    assert finished_calls == [1]
+
+
 def test_start_game_saves_html_when_play_begins(
     game: object, monkeypatch: object
 ) -> None:
