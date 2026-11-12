@@ -127,3 +127,31 @@ def test_generate_end_game_summary_loads_audience_display(
     game.end_game()
     game.generate_final_score_graphs()
     assert len(game.main_display.loaded_end_game_summaries) == 1
+
+
+def test_final_answer_survives_empty_resubmission(game_with_players: object) -> None:
+    """An empty resubmission after time runs out keeps the earlier answer.
+
+    When time runs out every phone resubmits its answer box. A phone whose
+    page reloaded after answering sends an empty box, which used to erase the
+    answer the player had already given.
+    """
+    game = game_with_players
+    player = game.players[0]
+
+    game.answer(player, "Thomas")
+    game.answer(player, "")
+    assert player.finalanswer == "Thomas"
+
+    game.answer(player, "Jefferson")
+    assert player.finalanswer == "Jefferson"
+
+
+def test_final_answer_can_stay_blank(game_with_players: object) -> None:
+    """A player who never answers still ends up with a blank answer."""
+    game = game_with_players
+    player = game.players[0]
+
+    game.answer(player, "")
+
+    assert player.finalanswer == ""

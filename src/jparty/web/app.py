@@ -23,6 +23,8 @@ from jparty.web.handlers import (
 if TYPE_CHECKING:
     from jparty.web.controller import BuzzerController
 
+WEBSOCKET_PING_INTERVAL_SECONDS = 0.19
+
 
 class Application(tornado.web.Application):
     """Configure the Tornado app used by the buzzer web server."""
@@ -51,7 +53,12 @@ class Application(tornado.web.Application):
             "template_path": str(web_asset_path("templates")),
             "static_path": str(web_asset_path("static")),
             "xsrf_cookies": False,
-            "websocket_ping_interval": 0.19,
+            # Frequent pings keep phones' Wi-Fi awake so buzzes arrive quickly.
+            "websocket_ping_interval": WEBSOCKET_PING_INTERVAL_SECONDS,
+            # Never drop a phone for a late pong. Tornado 6.5+ defaults the
+            # timeout to the interval (190 ms), which closed phone sockets on
+            # ordinary Wi-Fi lag and made the buzzer page reload in a loop.
+            "websocket_ping_timeout": 0,
         }
         super().__init__(handlers, **settings)
         self.controller = controller
