@@ -899,3 +899,97 @@ def test_cli_summary_matches_in_app_summary_for_round_subset(
     assert player_stats(cli_summary) == player_stats(app_summary)
     assert cli_summary.game_stats == app_summary.game_stats
     assert cli_summary.question_count == app_summary.question_count
+
+
+class _InlineThread:
+    """Stand-in for ``threading.Thread`` that runs its target on ``start``."""
+
+    def __init__(self, target: object, daemon: bool = False) -> None:
+        """Store the target to run."""
+        self._target = target
+
+    def start(self) -> None:
+        """Run the target immediately on the calling thread."""
+        self._target()
+
+
+def _source_selection(game_id: str, round_index: int = 0) -> dict:
+    """Return one advanced-mode board selection drawing from ``game_id``."""
+    return {
+        "game_id": game_id,
+        "source_round_index": round_index,
+        "source_round_label": "Jeopardy!",
+        "board_type": "standard",
+        "row_values": [200, 400, 600, 800, 1000],
+    }
+
+
+def _start_composed_game(
+    game: object, monkeypatch: object, game_ids: list, save_game_html: object
+) -> None:
+    """Start an advanced-mode game built from ``game_ids`` with saving inlined.
+
+    The composed board is cached up front, so nothing is fetched to build it,
+    and ``Thread`` runs inline, so the save step finishes before this returns.
+    """
+    from jparty.domain import game_engine
+    from jparty.services import archive_client
+
+    monkeypatch.setattr(game_engine, "Thread", _InlineThread)
+    monkeypatch.setattr(archive_client, "save_game_html", save_game_html)
+    configs = [
+        _source_selection(game_id, index) for index, game_id in enumerate(game_ids)
+    ]
+    game.set_board_selection_configs(configs)
+    game.set_composed_game_data(configs, deepcopy(game.data))
+    game.set_session_game_id("frankenstein-test")
+    game.start_game()
+
+
+def test_start_game_saves_each_selected_source_game(
+    game: object, monkeypatch: object
+) -> None:
+    """Every J-Archive game used by a composed board should be cached."""
+    saved = []
+    _start_composed_game(game, monkeypatch, ["4453", "5000", "6001"], saved.append)
+    assert sorted(saved) == ["4453", "5000", "6001"]
+
+
+def test_start_game_saves_a_repeated_source_game_once(
+    game: object, monkeypatch: object
+) -> None:
+    """Two boards from the same source game should cache it only once."""
+    saved = []
+    _start_composed_game(game, monkeypatch, ["4453", "4453", "5000"], saved.append)
+    assert sorted(saved) == ["4453", "5000"]
+
+
+def test_start_game_skips_google_sheet_source_games(
+    game: object, monkeypatch: object
+) -> None:
+    """Google Sheets sources have no J-Archive HTML and are not cached."""
+    saved = []
+    _start_composed_game(
+        game, monkeypatch, ["4453", "1AbCdEfGhIjK", "5000"], saved.append
+    )
+    assert sorted(saved) == ["4453", "5000"]
+
+
+def test_start_game_keeps_saving_after_one_source_fails(
+    game: object, monkeypatch: object
+) -> None:
+    """One failed save should not stop the remaining games from being cached."""
+    attempted = []
+    saved = []
+
+    def flaky_save(game_id: str) -> None:
+        """Fail for one game and record the rest."""
+        attempted.append(game_id)
+        if game_id == "5000":
+            raise ConnectionError("offline")
+        saved.append(game_id)
+
+    _start_composed_game(game, monkeypatch, ["4453", "5000", "6001"], flaky_save)
+    assert sorted(attempted) == ["4453", "5000", "6001"]
+    assert sorted(saved) == ["4453", "6001"]
+    assert game.current_round is game.data.rounds[0]

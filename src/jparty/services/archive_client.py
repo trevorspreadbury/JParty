@@ -10,9 +10,13 @@ from bs4 import BeautifulSoup
 from jparty.app.paths import QUESTION_MEDIA, SAVED_GAMES
 
 from .game_cache import GameCache
-from .game_loading import GOOGLE_SHEETS_ID_LENGTH
 from .game_parser import GameParser
 from .game_sources import GameSourceFetcher
+
+# Ids at least this long are Google Sheets file ids, not J-Archive game ids.
+GOOGLE_SHEETS_ID_LENGTH = 7
+# How many trailing characters to search for a closing ``</html>`` tag.
+HTML_TAIL_CHECK_CHARS = 4096
 
 _LOADED_GAME_HTML_CACHE: dict[str, str] = {}
 _FETCHER = GameSourceFetcher()
@@ -29,43 +33,131 @@ def get_Gsheet_game(file_id: object) -> object:
     return _PARSER.list_to_game(_FETCHER.get_google_sheet_rows(file_id))
 
 
-def get_game_html(game_id: object) -> object:
-    """Load archived game HTML from cache or remote fallback sources."""
-    cache = GameCache(SAVED_GAMES)
-    game_html = cache.load_saved_html(game_id)
-    if game_html is not None:
-        _LOADED_GAME_HTML_CACHE[str(game_id)] = game_html
-        return game_html
+def _cached_game_html(game_id: object) -> str | None:
+    """Return cached HTML for ``game_id`` from disk, or ``None`` when absent."""
+    return GameCache(SAVED_GAMES).load_saved_html(game_id)
+
+
+def _fetch_remote_game_html(game_id: object) -> object:
+    """Fetch game HTML from Wayback, falling back to J-Archive directly."""
     try:
-        game_html = get_wayback_game_html(game_id)
+        return get_wayback_game_html(game_id)
     except Exception:
         logging.error("Wayback lookup failed for %s", game_id, exc_info=True)
-        game_html = get_jarchive_game_html(game_id)
+        return get_jarchive_game_html(game_id)
+
+
+def _looks_complete(game_html: object) -> bool:
+    """Return whether HTML ends with a closing ``</html>`` tag.
+
+    A cache file cut off part way through can still parse into a game with
+    missing rounds, so a missing closing tag is treated as a damaged copy.
+    Archive pages may append a trailing comment, so only the tail is checked.
+    """
+    return "</html>" in str(game_html)[-HTML_TAIL_CHECK_CHARS:].lower()
+
+
+def _parse_or_none(game_html: object, game_id: object) -> object:
+    """Parse HTML into ``GameData``, returning ``None`` if parsing raises."""
+    try:
+        return process_game_board_from_html(game_html, game_id)
+    except Exception:
+        logging.warning("Could not parse HTML for game %s", game_id, exc_info=True)
+        return None
+
+
+def get_game_html(game_id: object) -> object:
+    """Load archived game HTML from cache or remote fallback sources."""
+    game_html = _cached_game_html(game_id)
+    if game_html is None:
+        game_html = _fetch_remote_game_html(game_id)
     _LOADED_GAME_HTML_CACHE[str(game_id)] = game_html
     return game_html
 
 
 def save_game_html(game_id: object) -> object:
-    """Persist a numeric J-Archive game HTML payload into the local cache."""
+    """Persist a numeric J-Archive game HTML payload into the local cache.
+
+    The file is written atomically, so a crash or exit mid-write never leaves
+    a cut-off cache file behind.
+    """
     game_id_str = str(game_id)
     if len(game_id_str) >= GOOGLE_SHEETS_ID_LENGTH:
         return None
-    saved_game_path = SAVED_GAMES / f"{game_id_str}.html"
+    cache = GameCache(SAVED_GAMES)
+    saved_game_path = cache.saved_html_path(game_id_str)
     if saved_game_path.exists():
         return saved_game_path
     game_html = _LOADED_GAME_HTML_CACHE.get(game_id_str)
     if game_html is None:
         game_html = get_game_html(game_id_str)
-    saved_game_path.write_text(game_html, encoding="utf-8")
-    return saved_game_path
+    return cache.save_html(game_id_str, game_html)
+
+
+def _get_archive_game(game_id: object) -> object:
+    """Load and parse an archived game, repairing a damaged cache copy.
+
+    A cache file is damaged when it can't be read as UTF-8, doesn't parse, or
+    is missing its closing ``</html>`` tag. A damaged file is fetched again
+    from the network, and the network copy overwrites it if that copy parses.
+    If the fetch fails, or returns a page that isn't a game (for example a
+    rate-limit or error page), the cached parse result is used instead
+    (possibly ``None``) and the file is left alone.
+    """
+    game_id_str = str(game_id)
+    cache_file_exists = GameCache(SAVED_GAMES).saved_html_path(game_id_str).exists()
+    cached_html = _cached_game_html(game_id_str)
+    cached_data = None
+    if cached_html is not None:
+        cached_data = _parse_or_none(cached_html, game_id_str)
+        if cached_data is not None and _looks_complete(cached_html):
+            _LOADED_GAME_HTML_CACHE[game_id_str] = cached_html
+            return cached_data
+    if not cache_file_exists:
+        remote_html = _fetch_remote_game_html(game_id_str)
+        _LOADED_GAME_HTML_CACHE[game_id_str] = remote_html
+        return process_game_board_from_html(remote_html, game_id_str)
+
+    logging.warning(
+        "Cached HTML for game %s looks damaged; fetching it again", game_id_str
+    )
+    try:
+        remote_html = _fetch_remote_game_html(game_id_str)
+    except Exception:
+        logging.error(
+            "Could not refetch game %s; using cached copy",
+            game_id_str,
+            exc_info=True,
+        )
+        if cached_html is not None:
+            _LOADED_GAME_HTML_CACHE[game_id_str] = cached_html
+        return cached_data
+    remote_data = _parse_or_none(remote_html, game_id_str)
+    if remote_data is None:
+        if cached_data is not None:
+            logging.warning(
+                "Refetched page for game %s is not a game; using cached copy",
+                game_id_str,
+            )
+            _LOADED_GAME_HTML_CACHE[game_id_str] = cached_html
+        return cached_data
+    _LOADED_GAME_HTML_CACHE[game_id_str] = remote_html
+    try:
+        GameCache(SAVED_GAMES).save_html(game_id_str, remote_html)
+    except OSError:
+        logging.error(
+            "Could not overwrite damaged cache for game %s",
+            game_id_str,
+            exc_info=True,
+        )
+    return remote_data
 
 
 def get_game(game_id: object) -> object:
     """Load a game from either J-Archive-style HTML or Google Sheets."""
     os.environ["JPARTY_GAME_ID"] = str(game_id)
     if len(str(game_id)) < GOOGLE_SHEETS_ID_LENGTH:
-        game_html = get_game_html(game_id)
-        return process_game_board_from_html(game_html, game_id)
+        return _get_archive_game(game_id)
     return get_Gsheet_game(str(game_id))
 
 
