@@ -4,11 +4,12 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from jparty.domain.models import Player
-from jparty.web.app import Application
 from tornado.testing import AsyncHTTPTestCase as TornadoAsyncHTTPTestCase
 from tornado.testing import gen_test
 from tornado.websocket import websocket_connect
+
+from jparty.domain.models import Player
+from jparty.web.app import Application
 
 pytestmark = pytest.mark.e2e
 TornadoAsyncHTTPTestCase.__test__ = False

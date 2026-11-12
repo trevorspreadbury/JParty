@@ -4,6 +4,7 @@ import random
 
 import pytest
 from bs4 import BeautifulSoup
+
 from jparty.domain.models import Board, FinalBoard, GameData, Question
 from jparty.services.game_loader import (
     build_game_from_board_selection_configs,

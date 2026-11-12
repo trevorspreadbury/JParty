@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from jparty.domain.input import index_to_key
 from jparty.domain.state import read_history_file
 from jparty.web import controller as controller_module

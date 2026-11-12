@@ -4,10 +4,11 @@ import json
 from copy import deepcopy
 
 import pytest
+from PyQt6.QtCore import Qt
+
 from jparty import __version__
 from jparty.domain.models import FinalBoard, Player
 from jparty.domain.state import HISTORY_FORMAT
-from PyQt6.QtCore import Qt
 
 pytestmark = pytest.mark.integration
 

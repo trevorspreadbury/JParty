@@ -5,14 +5,15 @@ from types import SimpleNamespace
 from typing import NoReturn
 
 import pytest
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QPixmap
+from PyQt6.QtWidgets import QFileDialog, QLabel, QMessageBox, QWidget
+
 from jparty.app.paths import GAME_STATES_DIR
 from jparty.domain.models import Board, FinalBoard, GameData, Question
 from jparty.services.game_parser import GameParser
 from jparty.services.question_media import QuestionMediaStatus
 from jparty.ui.widgets.welcome import QuestionMediaPreview, Welcome
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QPixmap
-from PyQt6.QtWidgets import QFileDialog, QLabel, QMessageBox, QWidget
 
 pytestmark = pytest.mark.qt
 

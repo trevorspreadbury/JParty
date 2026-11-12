@@ -1,10 +1,11 @@
 """Tests for Final Jeopardy and end-game summary widgets."""
 
 import pytest
+from PyQt6.QtGui import QColor, QPalette
+
 from jparty.domain.state import EndGamePlayerStats
 from jparty.ui.widgets.final import PlayerSummaryCard
 from jparty.ui.widgets.scoreboard import NameLabel
-from PyQt6.QtGui import QColor, QPalette
 
 pytestmark = pytest.mark.qt
 

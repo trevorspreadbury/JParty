@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from jparty.app import bootstrap
 from jparty.domain.state import (
     HistoryFileError,

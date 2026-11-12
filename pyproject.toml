@@ -7,16 +7,16 @@ name = "jparty"
 version = "3.0.0"
 description = "The Jeopardy party game"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
-    "PyQt6~=6.7.0",
-    "requests==2.32.0",
-    "tornado==6.3.3",
-    "BeautifulSoup4==4.11.1",
-    "pyinstaller==5.13.1",
-    "qrcode==7.3.1",
-    "python-dotenv",
-    "matplotlib",
+    "PyQt6>=6.12.0,<7",
+    "requests>=2.34.2,<3",
+    "tornado>=6.6.1,<7",
+    "BeautifulSoup4>=4.15.0,<5",
+    "pyinstaller>=6.22.3,<7",
+    "qrcode>=8.2,<9",
+    "python-dotenv>=1.2.4",
+    "matplotlib>=3.10.9",
 ]
 
 [project.optional-dependencies]
@@ -50,8 +50,10 @@ jparty = [
 ]
 
 [tool.ruff.lint]
+# Pin Ruff's former defaults so newer Ruff releases don't silently add rules.
+select = ["E4", "E7", "E9", "F"]
 extend-select = [
-  # by default, ruff enables all F and a subset of E rules
+  # select above keeps all F and a subset of E rules
   # for a description of rulesets and examples, see:
   # https://docs.astral.sh/ruff/rules/
   "ANN",    # flake8-annotations - type annotations, some ignored
@@ -75,9 +77,7 @@ ignore = [
   "D415",   # allow first line of doctstrings to end without punctuation
   "ANN002", # missing type on *args
   "ANN003", # missing type on **kwargs
-  "ANN101", # deprecated, but still emitted by the older Ruff version used in pre-commit.
-  "ANN102", # deprecated, but still emitted by the older Ruff version used in pre-commit.
-  "B905",   # won't work on python <3.10
+  "B905",   # zip() without strict=; not enforced yet
   "S608"    # not worried about sql injection for local database
 ]
 

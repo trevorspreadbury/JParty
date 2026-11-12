@@ -4,11 +4,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PyQt6 import sip
+from PyQt6.QtGui import QColor, QPixmap
+
 from jparty.domain.models import Question
 from jparty.services import image_lookup
 from jparty.ui.widgets.question import HostImageQuestionWidget, QuestionWidget
-from PyQt6 import sip
-from PyQt6.QtGui import QColor, QPixmap
 
 pytestmark = pytest.mark.qt
 

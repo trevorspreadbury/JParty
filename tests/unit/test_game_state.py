@@ -3,6 +3,7 @@
 import json
 
 import pytest
+
 from jparty.domain.models import Board, FinalBoard, GameData, Question
 from jparty.domain.state import (
     build_end_game_summary,

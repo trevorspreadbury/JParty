@@ -45,7 +45,7 @@ Other useful top-level directories:
 
 ### Requirements
 
-- Python 3.10 or newer
+- Python 3.11 or newer
 - `uv` for the recommended workflow
 - Two monitors if you want to run the full GUI manually
 
