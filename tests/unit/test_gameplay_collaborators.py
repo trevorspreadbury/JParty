@@ -3,6 +3,7 @@
 import json
 
 import pytest
+
 from jparty.domain.models import FinalBoard
 
 pytestmark = pytest.mark.unit

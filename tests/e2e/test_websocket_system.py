@@ -1,14 +1,16 @@
 """Test websocket system module."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 
 import pytest
-from jparty.domain.models import Player
-from jparty.web.app import Application
 from tornado.testing import AsyncHTTPTestCase as TornadoAsyncHTTPTestCase
 from tornado.testing import gen_test
 from tornado.websocket import websocket_connect
+
+from jparty.domain.models import Player
+from jparty.web.app import Application
 
 pytestmark = pytest.mark.e2e
 TornadoAsyncHTTPTestCase.__test__ = False
@@ -175,6 +177,39 @@ class TestBuzzerSocketSystem(TornadoAsyncHTTPTestCase):
         reconnect_message = json.loads(await ws2.read_message())
         assert reconnect_message["message"] == "EXISTS"
         ws2.close()
+
+    @gen_test(timeout=10)
+    async def test_server_keeps_socket_open_when_pongs_are_late(self) -> None:
+        """A phone that answers pings late must not be disconnected.
+
+        Tornado 6.5+ closes a websocket when a pong is later than the ping
+        timeout, which defaults to the ping interval (190 ms here). On Wi-Fi
+        that closed phone sockets and made the buzzer page reload in a loop.
+        This client never sends pongs, which is the worst case.
+        """
+        ws = await websocket_connect(
+            self.get_url("/buzzersocket").replace("http", "ws")
+        )
+        protocol = ws.protocol
+        original_write_frame = protocol._write_frame
+        pong_opcode = 0xA
+
+        def drop_pongs(fin: bool, opcode: int, data: bytes, flags: int = 0) -> object:
+            if opcode == pong_opcode:
+                skipped = asyncio.get_running_loop().create_future()
+                skipped.set_result(None)
+                return skipped
+            return original_write_frame(fin, opcode, data, flags)
+
+        protocol._write_frame = drop_pongs
+        ping_interval = Application(self.controller).settings["websocket_ping_interval"]
+
+        await asyncio.sleep(ping_interval * 5)
+
+        assert ws.close_code is None
+        ws.write_message(json.dumps({"message": "NAME", "text": "Alice"}))
+        assert json.loads(await ws.read_message())["message"] == "TOKEN"
+        ws.close()
 
     @gen_test
     async def test_lectern_socket_receives_initial_player_state(self) -> None:

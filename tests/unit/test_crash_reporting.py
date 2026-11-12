@@ -5,9 +5,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from PyQt6.QtWidgets import QMessageBox
+
 from jparty.app import bootstrap
 from jparty.app import logging as crash_logging
-from PyQt6.QtWidgets import QMessageBox
 
 pytestmark = pytest.mark.unit
 

@@ -3,13 +3,14 @@
 from types import SimpleNamespace
 
 import pytest
+from PyQt6.QtCore import QBuffer, QByteArray, QIODevice
+from PyQt6.QtGui import QColor, QImage
+from PyQt6.QtWidgets import QLabel, QRadioButton
+
 from jparty.domain.models import Player
 from jparty.domain.state import HistoryFileError
 from jparty.ui.widgets.score_correction import ScoreCorrectionDialog
 from jparty.ui.widgets.scoreboard import HostPlayerWidget, HostScoreBoard
-from PyQt6.QtCore import QBuffer, QByteArray, QIODevice
-from PyQt6.QtGui import QColor, QImage
-from PyQt6.QtWidgets import QLabel, QRadioButton
 
 pytestmark = pytest.mark.qt
 

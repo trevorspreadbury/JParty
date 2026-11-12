@@ -1602,7 +1602,14 @@ class Game(QObject):
 
         Returns:
             ``None``.
+
+        An empty guess never replaces an answer the player already gave. When
+        time runs out, each phone resubmits whatever is in its answer box, and
+        a phone whose page reloaded after answering has an empty box.
         """
+        if not str(guess or "").strip() and player.finalanswer:
+            logging.info(f"{player} sent an empty guess; keeping earlier answer")
+            return
         player.finalanswer = guess
         logging.info(f"{player} guessed {guess}")
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from jparty.app.paths import SAVED_GAMES
 from jparty.domain.models import GameData
@@ -16,7 +16,7 @@ from .game_sources import GameSourceFetcher
 GOOGLE_SHEETS_ID_LENGTH = 7
 
 
-class GameLoadStatus(str, Enum):
+class GameLoadStatus(StrEnum):
     """Describe the outcome of a game-load attempt."""
 
     SUCCESS = "success"

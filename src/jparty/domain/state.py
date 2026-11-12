@@ -1046,11 +1046,11 @@ def build_end_game_summary(game: object) -> EndGameSummary:
     early_buzz_questions = {
         player_number: set() for player_number in all_player_numbers
     }
-    race_wins = {player_number: 0 for player_number in all_player_numbers}
-    race_opportunities = {player_number: 0 for player_number in all_player_numbers}
-    right_count = {player_number: 0 for player_number in all_player_numbers}
-    wrong_count = {player_number: 0 for player_number in all_player_numbers}
-    coryat = {player_number: 0 for player_number in all_player_numbers}
+    race_wins = dict.fromkeys(all_player_numbers, 0)
+    race_opportunities = dict.fromkeys(all_player_numbers, 0)
+    right_count = dict.fromkeys(all_player_numbers, 0)
+    wrong_count = dict.fromkeys(all_player_numbers, 0)
+    coryat = dict.fromkeys(all_player_numbers, 0)
     buzzer_races = 0
     triple_stumpers = 0
 

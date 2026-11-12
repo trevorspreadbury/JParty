@@ -4,6 +4,7 @@ import json
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+
 from jparty.services import image_lookup
 
 pytestmark = pytest.mark.unit

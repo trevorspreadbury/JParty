@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from jparty.domain.state import (
     HistoryFileError,
     corrected_history_entries,

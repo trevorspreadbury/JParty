@@ -3,9 +3,10 @@
 from types import SimpleNamespace
 
 import pytest
+from PyQt6.QtCore import QRect, Qt
+
 from jparty.domain.models import Question
 from jparty.ui.windows.display import DisplayWindow, HostDisplayWindow
-from PyQt6.QtCore import QRect, Qt
 
 pytestmark = pytest.mark.qt
 

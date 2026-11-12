@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from jparty.app import bootstrap
 
 pytestmark = pytest.mark.unit
@@ -95,13 +96,15 @@ def test_main_summary_dispatches_to_generator(monkeypatch: object) -> None:
     monkeypatch.setattr(
         bootstrap,
         "generate_summary_image",
-        lambda game_state_directory, output_file=None: recorded.update(
-            {
-                "game_state_directory": game_state_directory,
-                "output_file": output_file,
-            }
-        )
-        or Path("summary.png"),
+        lambda game_state_directory, output_file=None: (
+            recorded.update(
+                {
+                    "game_state_directory": game_state_directory,
+                    "output_file": output_file,
+                }
+            )
+            or Path("summary.png")
+        ),
     )
     result = bootstrap.main(["summary", "--game-state-directory", "C:/saved-game"])
     assert result == 0

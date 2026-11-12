@@ -4,9 +4,10 @@ import json
 from pathlib import Path
 
 import pytest
-from jparty.services import image_lookup
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QColor, QPixmap
+
+from jparty.services import image_lookup
 
 # Nothing listens on the discard port, so requests fail like an offline machine.
 UNREACHABLE_API_URL = "http://127.0.0.1:9/w/api.php"

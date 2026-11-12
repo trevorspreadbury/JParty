@@ -55,7 +55,7 @@ workflow for importing and approving image clues, see [HOST.md](HOST.md).
 - A device with web access for each player
 
 ### For compiling from source code
-- Python [>=3.10]
+- Python [>=3.11]
 - `uv` is the preferred development workflow
 - `conda` is still supported as a fallback if you run into platform-specific Qt/audio issues
 

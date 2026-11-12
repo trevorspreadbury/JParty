@@ -109,25 +109,25 @@ def _is_playable_game_data(data: object) -> bool:
 
 
 class Image(qrcode.image.base.BaseImage):
-    """Adapter that renders QR codes into Qt image objects."""
+    """Adapter that renders QR codes into Qt image objects.
 
-    def __init__(self, border: object, width: object, box_size: object) -> None:
-        """Initialize the QR image buffer.
+    ``qrcode.image.base.BaseImage.__init__`` stores ``border``, ``width``,
+    ``box_size`` and ``pixel_size`` (all in whole pixels or modules), then calls
+    :meth:`new_image` to build the drawing surface.
+    """
+
+    def new_image(self, **kwargs: object) -> QImage:
+        """Create the blank QR image buffer.
 
         Args:
-            border: QR-code border width in modules.
-            width: QR-code width in modules.
-            box_size: Pixel size of each QR module.
+            **kwargs: Extra image options from ``qrcode``; unused.
 
         Returns:
-            ``None``.
+            A square ``QImage`` filled with the window background color.
         """
-        self.border = border
-        self.width = width
-        self.box_size = box_size
-        size = (width + border * 2) * box_size
-        self._image = QImage(size, size, QImage.Format.Format_RGB16)
-        self._image.fill(WINDOWPAL.color(QPalette.ColorRole.Window))
+        image = QImage(self.pixel_size, self.pixel_size, QImage.Format.Format_RGB16)
+        image.fill(WINDOWPAL.color(QPalette.ColorRole.Window))
+        return image
 
     def pixmap(self) -> object:
         """Return the rendered QR code as a ``QPixmap``.
@@ -135,7 +135,7 @@ class Image(qrcode.image.base.BaseImage):
         Returns:
             ``QPixmap`` representation of the QR code image.
         """
-        return QPixmap.fromImage(self._image)
+        return QPixmap.fromImage(self._img)
 
     def drawrect(self, row: object, col: object) -> None:
         """Fill one QR module rectangle.
@@ -147,7 +147,7 @@ class Image(qrcode.image.base.BaseImage):
         Returns:
             ``None``.
         """
-        painter = QPainter(self._image)
+        painter = QPainter(self._img)
         painter.fillRect(
             (col + self.border) * self.box_size,
             (row + self.border) * self.box_size,
@@ -155,6 +155,7 @@ class Image(qrcode.image.base.BaseImage):
             self.box_size,
             Qt.GlobalColor.black,
         )
+        painter.end()
 
     def save(self, stream: object, kind: object = None) -> None:
         """Satisfy the qrcode image interface without saving to disk.
@@ -2199,7 +2200,7 @@ class QRWidget(StartWidget):
         super().resizeEvent(event)
         self.qrlabel.setPixmap(
             qrcode.make(
-                self.url, image_factory=Image, box_size=max(self.height() / 50, 1)
+                self.url, image_factory=Image, box_size=max(self.height() // 50, 1)
             ).pixmap()
         )
 

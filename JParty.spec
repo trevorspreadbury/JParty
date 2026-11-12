@@ -1,7 +1,7 @@
 import sys, platform
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(SPECPATH).resolve()  # PyInstaller sets SPECPATH; __file__ is undefined in specs
 sys.path.append(str(ROOT / "src"))
 from jparty import __version__ as version
 

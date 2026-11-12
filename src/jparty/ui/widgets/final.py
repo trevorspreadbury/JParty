@@ -209,7 +209,7 @@ class LegendEntry(QWidget):
         swatch = QFrame(self)
         swatch.setFixedSize(18, 18)
         swatch.setStyleSheet(
-            "QFrame { border-radius: 4px; background-color: %s; }" % color.name()
+            f"QFrame {{ border-radius: 4px; background-color: {color.name()}; }}"
         )
         layout.addWidget(swatch, 0, Qt.AlignmentFlag.AlignTop)
         label = NameLabel(name, self)
@@ -233,9 +233,9 @@ class PlayerSummaryCard(QWidget):
         self.setStyleSheet(
             "QWidget#playerSummaryCard { "
             "background-color: white; "
-            "border: 16px solid %s; "
+            f"border: 16px solid {color.name()}; "
             "border-radius: 18px; "
-            "}" % color.name()
+            "}"
         )
         add_shadow(self)
         layout = QHBoxLayout()
@@ -301,10 +301,7 @@ class GameSummaryCard(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAutoFillBackground(True)
         self.setStyleSheet(
-            "QWidget#gameSummaryCard { "
-            "background-color: transparent; "
-            "border: none; "
-            "}"
+            "QWidget#gameSummaryCard { background-color: transparent; border: none; }"
         )
 
         layout = QVBoxLayout()

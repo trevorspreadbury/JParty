@@ -4,9 +4,10 @@ import logging
 from pathlib import Path
 
 import pytest
+from PyQt6.QtMultimedia import QSoundEffect
+
 from jparty.ui.widgets import common
 from jparty.ui.widgets.common import SongPlayer, has_audio_output
-from PyQt6.QtMultimedia import QSoundEffect
 
 pytestmark = pytest.mark.qt
 

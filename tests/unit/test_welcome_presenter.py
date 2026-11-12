@@ -1,6 +1,7 @@
 """Unit tests for the non-Qt welcome presenter."""
 
 import pytest
+
 from jparty.ui.welcome_presenter import WelcomePresenter
 
 pytestmark = pytest.mark.unit

@@ -10,9 +10,10 @@ import pytest
 import tornado.httpserver
 import tornado.ioloop
 import tornado.netutil
+from playwright.sync_api import sync_playwright
+
 from jparty.domain.models import Player
 from jparty.web.app import Application
-from playwright.sync_api import sync_playwright
 
 pytestmark = pytest.mark.e2e
 
