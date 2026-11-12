@@ -262,6 +262,14 @@ def build_parser() -> object:
         "--output-file",
         help="output image path (defaults to <game-state-directory>/summary.png)",
     )
+    self_check_parser = subparsers.add_parser(
+        "self-check",
+        help="check sounds, QR code, charts, and assets without opening windows",
+    )
+    self_check_parser.add_argument(
+        "--report",
+        help="also write the results to this file (the packaged app has no console)",
+    )
     return parser
 
 
@@ -477,4 +485,8 @@ def main(argv: object = None) -> int | None:
             return 1
         print(f"Wrote summary image to {output_path}")
         return 0
+    if args.command == "self-check":
+        from jparty.app.self_check import run_self_check
+
+        return run_self_check(args.report)
     launch_gui()

@@ -13,13 +13,15 @@ dependencies = [
     "requests>=2.34.2,<3",
     "tornado>=6.6.1,<7",
     "BeautifulSoup4>=4.15.0,<5",
-    "pyinstaller>=6.22.3,<7",
     "qrcode>=8.2,<9",
     "python-dotenv>=1.2.4",
     "matplotlib>=3.10.9",
 ]
 
 [project.optional-dependencies]
+build = [
+    "pyinstaller>=6.22.3,<7",
+]
 test = [
     "pre-commit",
     "pytest",
@@ -98,5 +100,6 @@ markers = [
   "integration: integration tests using fakes and monkeypatching",
   "qt: Qt widget tests",
   "e2e: end-to-end and smoke tests",
+  "build: builds the PyInstaller app; opt in with JPARTY_RUN_BUILD_TEST=1",
 ]
 addopts = "-ra -p no:cacheprovider"

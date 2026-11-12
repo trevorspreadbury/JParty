@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(SPECPATH).resolve()  # PyInstaller sets SPECPATH; __file__ is undefined in specs
 sys.path.append(str(ROOT / "src"))
 from jparty import __version__ as version
+from PyInstaller.utils.hooks import copy_metadata
 
 uname = platform.uname()
 arch = uname.machine
@@ -15,7 +16,12 @@ a = Analysis(['src/jparty/__main__.py'],
              datas=[
                  ("src/jparty/assets/data/*", "jparty/assets/data"),
                  ("src/jparty/assets/buzzer", "jparty/assets/buzzer"),
-             ],
+             ]
+             # Bundle jparty's package metadata so importlib.metadata reports the
+             # real version instead of the fallback in jparty/__init__.py.
+             # PyInstaller 6 also collects it on its own because __init__.py calls
+             # version("jparty") with a literal name; this keeps it explicit.
+             + copy_metadata("jparty"),
              hiddenimports=["qrcode"],
              hookspath=[],
              runtime_hooks=[],
