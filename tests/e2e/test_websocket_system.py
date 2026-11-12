@@ -202,7 +202,8 @@ class TestBuzzerSocketSystem(TornadoAsyncHTTPTestCase):
         sockets.append(extra)
         extra.write_message(json.dumps({"message": "NAME", "text": "One too many"}))
         message = json.loads(await extra.read_message())
-        assert message["message"] == "FULL"
+        # #86 renames the server message to GAMEFULL; accept either until both land.
+        assert message["message"] in {"FULL", "GAMEFULL"}
         for ws in sockets:
             ws.close()
 
