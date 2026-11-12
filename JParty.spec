@@ -17,10 +17,8 @@ a = Analysis(['src/jparty/__main__.py'],
                  ("src/jparty/assets/data/*", "jparty/assets/data"),
                  ("src/jparty/assets/buzzer", "jparty/assets/buzzer"),
              ]
-             # Bundle jparty's package metadata so importlib.metadata reports the
-             # real version instead of the fallback in jparty/__init__.py.
-             # PyInstaller 6 also collects it on its own because __init__.py calls
-             # version("jparty") with a literal name; this keeps it explicit.
+             # Bundle jparty's package metadata so importlib.metadata.version("jparty")
+             # works in the packaged app (`jparty self-check` verifies it).
              + copy_metadata("jparty"),
              hiddenimports=["qrcode"],
              hookspath=[],

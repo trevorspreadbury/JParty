@@ -52,6 +52,25 @@ def test_self_check_reports_a_missing_asset(
     assert text.rstrip().endswith("SELF-CHECK FAILED")
 
 
+def test_self_check_fails_when_metadata_version_is_stale(
+    qapp: object, tmp_path: Path, monkeypatch: object
+) -> None:
+    """Metadata that disagrees with ``jparty.__version__`` should fail the check.
+
+    This is what an install looks like after ``_version.py`` is bumped without
+    reinstalling the package.
+    """
+    monkeypatch.setattr(self_check, "version", lambda name: "0.0.1")
+    report = tmp_path / "report.txt"
+
+    assert self_check.run_self_check(str(report)) == 1
+
+    text = report.read_text(encoding="utf-8")
+    assert "FAIL package metadata:" in text
+    assert "0.0.1" in text
+    assert "--reinstall-package jparty" in text
+
+
 def test_cli_returns_self_check_exit_code(
     qapp: object, tmp_path: Path, monkeypatch: object
 ) -> None:

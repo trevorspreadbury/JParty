@@ -47,7 +47,8 @@ Other useful top-level directories:
 
 - Python 3.11 or newer
 - `uv` for the recommended workflow
-- Two monitors if you want to run the full GUI manually
+- Two monitors if you want to run the full GUI manually (or use
+  [single-monitor debug mode](#single-monitor-debug-mode))
 
 ### Recommended setup with `uv`
 
@@ -109,6 +110,20 @@ uv run jparty download games.txt
 
 If you are using conda instead of `uv`, use the same commands without the
 `uv run` prefix.
+
+### Single-monitor debug mode
+
+JParty normally refuses to start unless two displays are attached, so the host
+window (which shows the answers) stays off the audience screen. For development
+on one monitor, turn on debug mode with either:
+
+```bash
+JPARTY_DEBUG=1 uv run jparty
+uv run jparty --debug
+```
+
+`JPARTY_DEBUG` accepts `1`, `true`, `yes` or `on`, and can also go in your
+`.env` file. Debug mode is off by default; don't enable it for real games.
 
 ## Linting and Formatting
 
@@ -178,16 +193,17 @@ Notes:
 
 ## Packaging
 
-PyInstaller is in the `build` extra, so running the app doesn't install it.
-Build the desktop app with:
+PyInstaller is in the optional `build` extra, not the runtime dependencies,
+so running the app doesn't install it. Build the desktop app with:
 
 ```bash
 uv run --extra build pyinstaller -y JParty.spec
 ```
 
-If using conda (`environment.yml` already includes PyInstaller):
+If using conda:
 
 ```bash
+pip install -e .[build]
 pyinstaller -y JParty.spec
 ```
 
@@ -210,6 +226,10 @@ builds into a temporary folder and takes a few minutes:
 ```bash
 JPARTY_RUN_BUILD_TEST=1 uv run --extra build pytest tests/build -q
 ```
+
+The version shown on the welcome screen and in builds comes from
+`src/jparty/_version.py`; `pyproject.toml` reads it from there, so bump it in
+that one place.
 
 ## Contribution Notes
 

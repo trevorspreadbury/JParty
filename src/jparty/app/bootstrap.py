@@ -19,7 +19,7 @@ import requests
 from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from jparty.app.config import DEBUG_MODE, PORT
+from jparty.app.config import PORT, debug_mode_enabled, set_debug_mode
 from jparty.app.logging import install_crash_reporting
 from jparty.app.paths import SAVED_GAMES
 from jparty.domain.game_engine import Game
@@ -160,10 +160,11 @@ def check_second_monitor() -> None:
 
     Raises:
         SystemExit: Exits the process after showing an error dialog when fewer
-            than two screens are available outside debug mode.
+            than two screens are available outside debug mode. Debug mode is
+            enabled with ``JPARTY_DEBUG=1`` or the ``--debug`` CLI flag.
     """
-    if DEBUG_MODE:
-        logging.warning("Single monitor mode enabled (DEBUG_MODE)")
+    if debug_mode_enabled():
+        logging.warning("Single monitor mode enabled (debug mode)")
         return
     if len(QApplication.instance().screens()) < MIN_MONITORS:
         logging.error("No two monitors")
@@ -241,6 +242,14 @@ def build_parser() -> object:
         and arguments.
     """
     parser = argparse.ArgumentParser(prog="jparty")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help=(
+            "developer mode: allow running on a single monitor "
+            "(same as setting JPARTY_DEBUG=1)"
+        ),
+    )
     subparsers = parser.add_subparsers(dest="command")
     download_parser = subparsers.add_parser(
         "download", help="download archived games into the local saved-games cache"
@@ -457,6 +466,8 @@ def main(argv: object = None) -> int | None:
     """
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.debug:
+        set_debug_mode()
     if args.command == "download":
         download_games(args.inputs)
         return 0

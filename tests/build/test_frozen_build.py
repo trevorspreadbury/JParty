@@ -15,10 +15,11 @@ import importlib.util
 import os
 import subprocess
 import sys
-from importlib.metadata import version
 from pathlib import Path
 
 import pytest
+
+import jparty
 
 pytestmark = [
     pytest.mark.build,
@@ -83,5 +84,5 @@ def test_packaged_app_passes_self_check(tmp_path: Path) -> None:
     text = report.read_text(encoding="utf-8") if report.exists() else "(no report)"
     assert result.returncode == 0, text + result.stderr[-2000:]
     assert text.rstrip().endswith("SELF-CHECK PASSED"), text
-    # The packaged app must read its version from bundled package metadata.
-    assert f"PASS package metadata: jparty {version('jparty')}" in text, text
+    # The bundled package metadata must match the version in _version.py.
+    assert f"PASS package metadata: jparty {jparty.__version__}" in text, text

@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# Requires the optional build extra: `uv sync --extra build` or `pip install -e .[build]`.
 
 case $(arch) in
     "arm64")

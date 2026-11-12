@@ -33,14 +33,29 @@ class CheckResult:
 
 
 def _check_package_metadata() -> str:
-    """Confirm the installed package metadata provides the version."""
+    """Confirm the package metadata exists and matches ``jparty.__version__``.
+
+    The app shows ``jparty.__version__`` (from ``_version.py``), while
+    installers and PyInstaller's ``copy_metadata`` use the installed package
+    metadata. A mismatch means the install is stale, for example after a
+    version bump without reinstalling (``uv sync --reinstall-package jparty``).
+    """
+    from jparty import __version__
+
     try:
-        return f"jparty {version('jparty')}"
+        installed_version = version("jparty")
     except PackageNotFoundError as error:
         raise RuntimeError(
-            "jparty package metadata is missing, so the app would show a "
-            "hard-coded fallback version"
+            "jparty package metadata is missing; reinstall the package "
+            "(or, for a packaged build, bundle it with copy_metadata)"
         ) from error
+    if installed_version != __version__:
+        raise RuntimeError(
+            f"package metadata says jparty {installed_version}, but "
+            f"jparty.__version__ is {__version__}; the install is stale, so "
+            "run `uv sync --reinstall-package jparty`"
+        )
+    return f"jparty {installed_version}"
 
 
 def _check_assets() -> str:
