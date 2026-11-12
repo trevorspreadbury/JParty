@@ -112,9 +112,12 @@ def original_board_row_values(game_data: object, round_index: int) -> list[int]:
     """Return the per-row clue values of one round in an original game.
 
     Each row takes the value of the first clue found in that row, so a clue
-    missing from one category does not shift values in the others. Rows with
-    no clues at all fall back to the default ladder for the round's position
-    among the game's standard boards.
+    missing from one category does not shift values in the others. Daily
+    Doubles are skipped: J-Archive shows their wager instead of their board
+    value, so the parser gives them a fallback from the modern value table,
+    which is wrong for games before the 2001 value change. Rows with no other
+    clues fall back to the default ladder for the round's position among the
+    game's standard boards.
 
     Args:
         game_data: Parsed source game containing the round.
@@ -136,6 +139,8 @@ def original_board_row_values(game_data: object, round_index: int) -> list[int]:
     )
     found_rows = set()
     for question in sorted(round_data.questions, key=_question_sort_key):
+        if question.dd:
+            continue
         row_index = question.index[1]
         if 0 <= row_index < STANDARD_CLUE_VALUE_COUNT and row_index not in found_rows:
             row_values[row_index] = question.value

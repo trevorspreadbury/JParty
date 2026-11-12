@@ -280,6 +280,38 @@ def test_original_board_row_values_ignore_gap_in_first_category(
     assert original_board_row_values(game, 2) == []
 
 
+def test_original_board_row_values_ignore_daily_double_value(
+    fixture_dir: object,
+) -> None:
+    """Test a Daily Double in category 0 does not set its row's value.
+
+    J-Archive shows a Daily Double's wager instead of its board value, so the
+    parser gives it a fallback from the modern value table. In a pre-2001 game
+    that fallback is double the real value, and it used to set the whole row.
+    """
+    game = _parsed_4453_without(fixture_dir, 0, set())
+    first_category_clue = next(
+        question for question in game.rounds[0].questions if question.index == (0, 4)
+    )
+    first_category_clue.dd = True
+    first_category_clue.value = 5000
+    assert original_board_row_values(game, 0) == [200, 400, 600, 800, 1000]
+
+
+def test_original_board_row_values_fall_back_when_only_a_daily_double_remains(
+    fixture_dir: object,
+) -> None:
+    """Test a row whose only clue is a Daily Double uses the default ladder."""
+    others_in_row = {(col, 3) for col in range(1, 6)}
+    game = _parsed_4453_without(fixture_dir, 0, others_in_row)
+    remaining = next(
+        question for question in game.rounds[0].questions if question.index == (0, 3)
+    )
+    remaining.dd = True
+    remaining.value = 5000
+    assert original_board_row_values(game, 0) == [200, 400, 600, 800, 1000]
+
+
 def test_original_board_row_values_fall_back_for_an_empty_row(
     fixture_dir: object,
 ) -> None:
