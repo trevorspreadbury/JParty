@@ -55,6 +55,7 @@ def test_clue_flow_triple_stumper_reveal_is_optional(game: object) -> None:
     question = game.current_round.questions[0]
     game.load_question(question)
     game.set_reveal_answers_after_triple_stumper(True)
+    game.open_responses()
 
     game.stumped()
 

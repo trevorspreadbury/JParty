@@ -1,9 +1,11 @@
 """Test game answer handling module."""
 
 import json
+import threading
 
 import pytest
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication
 
 pytestmark = pytest.mark.integration
 
@@ -98,6 +100,75 @@ def test_stumped_can_reveal_answer_before_returning_to_board(
     assert game.active_question is None
 
 
+def _run_in_background_thread(target: object) -> None:
+    """Call ``target`` on a new thread, the way the clue timers do."""
+    thread = threading.Thread(target=target)
+    thread.start()
+    thread.join()
+
+
+def test_stumped_timeout_from_timer_thread_runs_on_main_thread(
+    game_with_players: object, qtbot: object
+) -> None:
+    """Test a stumped timeout from the timer thread is handled on the Qt thread."""
+    game = game_with_players
+    question = game.current_round.get_question(0, 0)
+    game.load_question(question)
+    game.open_responses()
+    stumped_threads = []
+    game.song_player.stumped = lambda: stumped_threads.append(
+        threading.current_thread()
+    )
+
+    _run_in_background_thread(game.stumped)
+
+    qtbot.waitUntil(lambda: bool(stumped_threads))
+    assert stumped_threads == [threading.main_thread()]
+
+
+def test_final_song_end_from_timer_thread_runs_on_main_thread(
+    game_with_players: object, qtbot: object
+) -> None:
+    """Test the Final Jeopardy timeout is handled on the Qt thread."""
+    game = game_with_players
+    game.current_round = game.data.rounds[-1]
+    flash_threads = []
+    game.dc.borders.flash = lambda: flash_threads.append(threading.current_thread())
+
+    _run_in_background_thread(game.final_finished_song)
+
+    qtbot.waitUntil(lambda: bool(flash_threads))
+    assert flash_threads == [threading.main_thread()]
+    assert game.buzzer_controller.toolate_calls == 1
+    assert (
+        game.keystroke_manager._KeystrokeManager__events["FINAL_NEXT_PLAYER"].active
+        is True
+    )
+
+
+def test_buzz_before_queued_stumped_timeout_ignores_timeout(
+    game_with_players: object,
+) -> None:
+    """Test a buzz handled before a queued stumped timeout cancels the timeout."""
+    game = game_with_players
+    question = game.current_round.get_question(0, 0)
+    game.load_question(question)
+    game.open_responses()
+
+    # The timeout fires on the timer thread and waits in the Qt event queue.
+    _run_in_background_thread(game.stumped)
+    game.buzz(0)
+    QApplication.processEvents()
+
+    assert game.answering_player is game.players[0]
+    assert game.song_player.stumped_calls == 0
+    assert game.dc.borders.flash_calls == 0
+    assert (
+        game.keystroke_manager._KeystrokeManager__events["BACK_TO_BOARD"].active
+        is False
+    )
+
+
 def test_set_score_updates_widget_and_lectern_state(game_with_players: object) -> None:
     """Test test set score updates widget and lectern state."""
     game = game_with_players
@@ -172,6 +243,7 @@ def test_apply_question_history_correction_can_add_missing_correct_attempt(
     game = game_with_players
     question = game.current_round.get_question(0, 0)
     game.load_question(question)
+    game.open_responses()
     game.stumped()
     game.back_to_board()
 

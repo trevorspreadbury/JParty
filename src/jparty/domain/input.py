@@ -64,7 +64,8 @@ class QuestionTimer:
             ``None``.
         """
         thread = self._thread
-        time.sleep(interval)
+        # A timer that ran out while paused resumes with no time left.
+        time.sleep(max(interval, 0))
         if thread == self._thread:
             self.callback(*self.args, **self.kwargs)
 

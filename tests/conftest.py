@@ -353,6 +353,14 @@ class FakeBuzzerController:
         self.lectern_connections = {}
         self.saved_player_profiles = {}
 
+    def send_to(self, socket_handler: object, msg: object, text: object = "") -> None:
+        """Test send to: no loop is running, so send right away."""
+        socket_handler.send(msg, text)
+
+    def close_socket(self, socket_handler: object) -> None:
+        """Test close socket: no loop is running, so close right away."""
+        socket_handler.close()
+
     def open_wagers(self, players: object = None) -> None:
         """Test open wagers."""
         self.open_wagers_calls.append(players)
