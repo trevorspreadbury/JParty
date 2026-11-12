@@ -10,6 +10,8 @@ from jparty.services.game_loader import (
     build_game_from_board_selection_configs,
     normalize_standard_board_daily_doubles,
     original_board_row_values,
+    round_matches_board_type,
+    select_advanced_daily_double_indices,
     standard_board_daily_double_indices,
 )
 from jparty.services.game_parser import GameParser
@@ -203,3 +205,94 @@ def test_compose_with_gap_in_first_category_keeps_every_column_value(
     assert composed is not None
     for question in composed.rounds[0].questions:
         assert question.value == (question.index[1] + 1) * 200
+
+
+def _board_with_daily_doubles(daily_double_indices: set) -> Board:
+    """Return a full 6x5 board with Daily Doubles at ``daily_double_indices``."""
+    categories = [f"Cat {index}" for index in range(6)]
+    questions = [
+        Question((col, row), f"Q {col}-{row}", f"A {col}-{row}", categories[col])
+        for col in range(6)
+        for row in range(5)
+    ]
+    for question in questions:
+        question.dd = question.index in daily_double_indices
+    return Board(categories, questions)
+
+
+def test_select_advanced_daily_doubles_matching_count_returns_originals() -> None:
+    """Asking for the original count keeps exactly the original Daily Doubles."""
+    board = _board_with_daily_doubles({(1, 2), (4, 3)})
+
+    assert select_advanced_daily_double_indices(board, 2) == [[1, 2], [4, 3]]
+
+
+def test_select_advanced_daily_doubles_adds_extras_on_top_of_originals() -> None:
+    """Extra Daily Doubles are added after every original one."""
+    board = _board_with_daily_doubles({(1, 2)})
+
+    selected = select_advanced_daily_double_indices(
+        board, 3, existing_daily_double_indices=[(0, 4), [1, 2], (5, 1), (2, 2)]
+    )
+
+    assert selected == [[1, 2], [0, 4], [5, 1]]
+
+
+def test_select_advanced_daily_doubles_without_extras_returns_originals() -> None:
+    """Missing extras are left for ``normalize_standard_board_daily_doubles``."""
+    board = _board_with_daily_doubles({(1, 2)})
+
+    assert select_advanced_daily_double_indices(board, 3) == [[1, 2]]
+
+
+def test_select_advanced_daily_doubles_fewer_keeps_a_subset_of_originals() -> None:
+    """Asking for fewer keeps only original Daily Doubles."""
+    board = _board_with_daily_doubles({(1, 2), (4, 3), (5, 0)})
+
+    selected = select_advanced_daily_double_indices(
+        board,
+        2,
+        rng=random.Random(0),  # noqa: S311
+    )
+
+    assert len(selected) == 2
+    assert {tuple(index) for index in selected} <= {(1, 2), (4, 3), (5, 0)}
+
+
+def test_select_advanced_daily_doubles_fewer_reuses_existing_subset() -> None:
+    """An existing subset of the right size is kept, so the layout is stable."""
+    board = _board_with_daily_doubles({(1, 2), (4, 3), (5, 0)})
+
+    selected = select_advanced_daily_double_indices(
+        board, 1, existing_daily_double_indices=[(0, 0), (4, 3)]
+    )
+
+    assert selected == [[4, 3]]
+
+
+def test_round_matches_board_type() -> None:
+    """Standard slots take boards and final slots take Final Jeopardy."""
+    board = _board_with_daily_doubles(set())
+    final = FinalBoard("Final", Question((0, 0), "Q", "A", "Final"))
+
+    assert round_matches_board_type(board, "standard") is True
+    assert round_matches_board_type(final, "standard") is False
+    assert round_matches_board_type(final, "final") is True
+    assert round_matches_board_type(board, "final") is False
+
+
+def test_has_missing_daily_double_uses_expected_counts() -> None:
+    """Requested counts replace the regular-game rule of i + 1 per board."""
+    game = GameData(
+        [
+            _board_with_daily_doubles({(0, 0)}),
+            _board_with_daily_doubles({(0, 0), (1, 1)}),
+            _board_with_daily_doubles({(0, 0), (1, 1)}),
+        ],
+        "date",
+        "comments",
+    )
+
+    assert game.has_missing_daily_double() is True
+    assert game.has_missing_daily_double([1, 2, 2]) is False
+    assert game.has_missing_daily_double([1, 2, 3]) is True

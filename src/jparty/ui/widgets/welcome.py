@@ -9,7 +9,6 @@ import logging
 import time
 from functools import partial
 from pathlib import Path
-from random import SystemRandom
 
 import qrcode
 from PyQt6.QtCore import QDir, QSize, Qt, QTimer, pyqtSignal
@@ -43,6 +42,8 @@ from jparty.services.game_loader import (
     get_random_game,
     normalize_standard_board_daily_doubles,
     original_board_row_values,
+    round_matches_board_type,
+    select_advanced_daily_double_indices,
     standard_board_daily_double_indices,
 )
 from jparty.services.question_media import (
@@ -98,9 +99,9 @@ ADVANCED_FINAL_BOARD_SLOT_COUNT_MIN = 0
 ADVANCED_DAILY_DOUBLE_COUNT_MIN = 0
 ADVANCED_DAILY_DOUBLE_COUNT_MAX = 6
 ADVANCED_ROW_DEBOUNCE_MS = 2000
+# Random games a row's Random button tries before giving up.
+ADVANCED_RANDOM_MAX_ATTEMPTS = 10
 QUESTION_INDEX_PART_COUNT = 2
-
-_RNG = SystemRandom()
 
 
 def _is_playable_game_data(data: object) -> bool:
@@ -230,7 +231,9 @@ class Welcome(StartWidget):
     """Host-side lobby screen for choosing, previewing, and resuming games."""
 
     summary_trigger = pyqtSignal(str)
+    # (row_index, request_id, game_id, data, media_status)
     advanced_row_load_result_trigger = pyqtSignal(int, int, object, object, object)
+    advanced_row_random_result_trigger = pyqtSignal(int, int, object, object, object)
     # (request_id, game_id, data, error, media_status, from_random)
     summary_load_result_trigger = pyqtSignal(int, str, object, object, object, bool)
 
@@ -259,6 +262,8 @@ class Welcome(StartWidget):
         self._advanced_rows = []
         self._advanced_game_cache = {}
         self._advanced_media_status_cache = {}
+        # Shared by all rows, so a result can never match a rebuilt row.
+        self._advanced_request_counter = 0
         self._advanced_mode_summary_text = ""
         self._resetting_advanced_configuration = False
         main_layout = QVBoxLayout()
@@ -429,6 +434,9 @@ class Welcome(StartWidget):
         self.summary_trigger.connect(self.set_summary)
         self.advanced_row_load_result_trigger.connect(
             self.handle_advanced_row_load_result
+        )
+        self.advanced_row_random_result_trigger.connect(
+            self.handle_advanced_row_random_result
         )
         self.summary_load_result_trigger.connect(self.handle_summary_load_result)
         self.setLayout(main_layout)
@@ -986,30 +994,60 @@ QCheckBox {{
                 daily_double_count = snapshot.get("daily_double_count")
                 if daily_double_count is not None:
                     row["daily_double_spinbox"].setValue(int(daily_double_count))
-                row["daily_double_indices"] = [
-                    tuple(index)
-                    for index in snapshot.get("daily_double_indices", [])
-                    if isinstance(index, list | tuple)
-                    and len(index) == QUESTION_INDEX_PART_COUNT
-                ]
-                row["daily_double_source_round_index"] = snapshot.get(
-                    "daily_double_source_round_index"
-                )
             for value_edit, value in zip(
                 row["value_edits"], snapshot.get("values", [])
             ):
                 value_edit.setText(value)
             if row["gameid_edit"].text().strip():
-                self.refresh_advanced_row(row["index"])
-                selected_round_index = snapshot.get("selected_round_index")
-                if selected_round_index is not None:
-                    for radio in row["board_radios"]:
-                        if (
-                            int(radio.property("source_round_index"))
-                            == selected_round_index
-                        ):
-                            radio.setChecked(True)
-                            break
+                # Loading clears the row, so the round and Daily Doubles are
+                # re-applied once the source game is back.
+                self.reload_advanced_row(row["index"], snapshot)
+
+    def advanced_row_selection(self, row: dict) -> dict:
+        """Return one row's selected round and Daily Double layout.
+
+        Args:
+            row: Advanced row state.
+
+        Returns:
+            A dictionary that ``reload_advanced_row`` can re-apply.
+        """
+        return {
+            "selected_round_index": next(
+                (
+                    int(radio.property("source_round_index"))
+                    for radio in row["board_radios"]
+                    if radio.isChecked()
+                ),
+                None,
+            ),
+            "daily_double_indices": [
+                list(index) for index in row.get("daily_double_indices", [])
+            ],
+            "daily_double_source_round_index": row.get(
+                "daily_double_source_round_index"
+            ),
+        }
+
+    def reload_advanced_row(self, row_index: int, selection: object = None) -> None:
+        """Load one row's source game again on a worker thread.
+
+        Args:
+            row_index: Index of the advanced row.
+            selection: Optional result of ``advanced_row_selection`` (or a row
+                snapshot) to re-apply once the game has loaded, so the row
+                keeps its round and Daily Doubles.
+
+        Returns:
+            ``None``.
+        """
+        if not 0 <= row_index < len(self._advanced_rows):
+            return
+        row = self._advanced_rows[row_index]
+        row["load_timer"].stop()
+        self._clear_advanced_row_loaded_state(row)
+        row["pending_selection"] = selection
+        self.load_advanced_row_async(row_index)
 
     def clear_advanced_configuration(self) -> None:
         """Discard advanced configuration and reset the welcome screen."""
@@ -1126,6 +1164,7 @@ QCheckBox {{
             "loading": False,
             "status_label": status_label,
             "loaded_data": None,
+            "pending_selection": None,
         }
         row_index = row["index"]
         load_timer.timeout.connect(partial(self.load_advanced_row_async, row_index))
@@ -1153,6 +1192,8 @@ QCheckBox {{
         row = self._advanced_rows[row_index]
         row["load_timer"].stop()
         self._clear_advanced_row_loaded_state(row)
+        # Typing drops any load in flight, including a row Random.
+        self._next_advanced_request_id(row)
         if not row["gameid_edit"].text().strip():
             row["status_label"].setText("Enter a source game id.")
             self.sync_active_configuration()
@@ -1167,6 +1208,7 @@ QCheckBox {{
         row["loading"] = False
         row["daily_double_indices"] = []
         row["daily_double_source_round_index"] = None
+        row["pending_selection"] = None
         self._clear_advanced_row_radios(row)
 
     def load_advanced_row_async(self, row_index: int) -> None:
@@ -1179,8 +1221,7 @@ QCheckBox {{
             row["status_label"].setText("Enter a source game id.")
             self.sync_active_configuration()
             return
-        row["load_request_id"] += 1
-        request_id = row["load_request_id"]
+        request_id = self._next_advanced_request_id(row)
         row["loading"] = True
         row["status_label"].setText("Loading...")
         if (
@@ -1197,25 +1238,51 @@ QCheckBox {{
             return
 
         def _load() -> None:
-            if game_id in self._advanced_game_cache:
-                data = self._advanced_game_cache.get(game_id)
-            else:
-                try:
-                    data = get_game(game_id)
-                except Exception as exc:
-                    logging.error(exc)
-                    data = None
-                self._advanced_game_cache[game_id] = data
-            if game_id in self._advanced_media_status_cache:
-                media_status = self._advanced_media_status_cache.get(game_id)
-            else:
-                media_status = detect_question_media(game_id)
-                self._advanced_media_status_cache[game_id] = media_status
+            # The worker only computes; the UI thread caches the result.
+            data = None
+            try:
+                data = get_game(game_id)
+            except Exception as exc:
+                logging.error(exc)
+            media_status = detect_question_media(game_id)
             self.advanced_row_load_result_trigger.emit(
                 row_index, request_id, game_id, data, media_status
             )
 
         self.loader.run_async(_load)
+
+    def _next_advanced_request_id(self, row: dict) -> int:
+        """Invalidate any load in flight for ``row`` and return a new request id.
+
+        Args:
+            row: Advanced row state.
+
+        Returns:
+            The row's new request id.
+        """
+        self._advanced_request_counter += 1
+        row["load_request_id"] = self._advanced_request_counter
+        return row["load_request_id"]
+
+    def _cache_advanced_game(
+        self, game_id: str, data: object, media_status: object
+    ) -> None:
+        """Cache a successful source-game load for reuse by other rows.
+
+        Failed loads are not cached, so the id can be retried.
+
+        Args:
+            game_id: Source game id.
+            data: Loaded game data, or ``None`` when the load failed.
+            media_status: Local question-media status for ``game_id``.
+
+        Returns:
+            ``None``.
+        """
+        if data is None:
+            return
+        self._advanced_game_cache[game_id] = data
+        self._advanced_media_status_cache[game_id] = media_status
 
     def handle_advanced_row_load_result(
         self,
@@ -1234,34 +1301,18 @@ QCheckBox {{
         if str(game_id).strip() != row["gameid_edit"].text().strip():
             return
         row["loading"] = False
+        self._cache_advanced_game(str(game_id).strip(), data, media_status)
         self._apply_advanced_row_loaded_data(
             row_index, str(game_id).strip(), data, media_status
         )
 
     def refresh_advanced_row(self, row_index: int) -> None:
-        """Load one advanced row's source game and rebuild its board radios."""
-        if not 0 <= row_index < len(self._advanced_rows):
-            return
-        row = self._advanced_rows[row_index]
-        row["load_timer"].stop()
-        row["load_request_id"] += 1
-        game_id = row["gameid_edit"].text().strip()
-        self._clear_advanced_row_loaded_state(row)
-        if not game_id:
-            row["status_label"].setText("Enter a source game id.")
-            self.sync_active_configuration()
-            return
-        if game_id not in self._advanced_game_cache:
-            try:
-                self._advanced_game_cache[game_id] = get_game(game_id)
-            except Exception as exc:
-                logging.error(exc)
-                self._advanced_game_cache[game_id] = None
-        if game_id not in self._advanced_media_status_cache:
-            self._advanced_media_status_cache[game_id] = detect_question_media(game_id)
-        data = self._advanced_game_cache.get(game_id)
-        media_status = self._advanced_media_status_cache.get(game_id)
-        self._apply_advanced_row_loaded_data(row_index, game_id, data, media_status)
+        """Load one advanced row's source game now (Enter key).
+
+        Skips the debounce. The load runs on a worker thread unless the game
+        is already cached.
+        """
+        self.reload_advanced_row(row_index)
 
     def _apply_advanced_row_loaded_data(
         self, row_index: int, game_id: str, data: object, media_status: object
@@ -1270,6 +1321,8 @@ QCheckBox {{
         if not 0 <= row_index < len(self._advanced_rows):
             return
         row = self._advanced_rows[row_index]
+        pending_selection = row.get("pending_selection") or {}
+        row["pending_selection"] = None
         if data is None:
             row["status_label"].setText(
                 "\n".join(
@@ -1284,7 +1337,7 @@ QCheckBox {{
         matching_rounds = [
             (round_index, round_data)
             for round_index, round_data in enumerate(data.rounds)
-            if self.round_matches_expected_type(round_data, row["board_type"])
+            if round_matches_board_type(round_data, row["board_type"])
         ]
         if not matching_rounds:
             expected_label = self.expected_board_type_label(row["board_type"])
@@ -1303,6 +1356,20 @@ QCheckBox {{
             return
         row["loaded_data"] = data
         default_selection = min(row_index, len(matching_rounds) - 1)
+        kept_round_index = pending_selection.get("selected_round_index")
+        for radio_index, (round_index, _) in enumerate(matching_rounds):
+            if round_index == kept_round_index:
+                default_selection = radio_index
+        if row.get("daily_double_spinbox") is not None and pending_selection:
+            row["daily_double_indices"] = [
+                tuple(index)
+                for index in pending_selection.get("daily_double_indices") or []
+                if isinstance(index, list | tuple)
+                and len(index) == QUESTION_INDEX_PART_COUNT
+            ]
+            row["daily_double_source_round_index"] = pending_selection.get(
+                "daily_double_source_round_index"
+            )
         for radio_index, (round_index, round_data) in enumerate(matching_rounds):
             radio = QRadioButton(
                 self.describe_round_for_data(data, round_data, round_index),
@@ -1328,30 +1395,88 @@ QCheckBox {{
         self.sync_active_configuration()
 
     def random_advanced_row(self, row_index: int, checked: object = False) -> None:
-        """Load a random source game into one advanced row."""
+        """Load a random source game into one advanced row on a worker thread.
+
+        The worker tries at most ``ADVANCED_RANDOM_MAX_ATTEMPTS`` games and
+        stops early once a newer load for the row has started.
+        """
         if not 0 <= row_index < len(self._advanced_rows):
             return
         row = self._advanced_rows[row_index]
-        while True:
-            game_id = get_random_game()
-            try:
-                data = get_game(game_id)
-            except Exception as exc:
-                logging.error(exc)
-                data = None
-            if data is None:
-                continue
-            has_matching_round = any(
-                self.round_matches_expected_type(round_data, row["board_type"])
-                for round_data in data.rounds
+        row["load_timer"].stop()
+        self._clear_advanced_row_loaded_state(row)
+        request_id = self._next_advanced_request_id(row)
+        row["loading"] = True
+        row["status_label"].setText("Loading...")
+        self.sync_active_configuration()
+        board_type = row["board_type"]
+
+        def _load() -> None:
+            game_id = ""
+            data = None
+            for _ in range(ADVANCED_RANDOM_MAX_ATTEMPTS):
+                if request_id != row["load_request_id"]:
+                    return
+                try:
+                    candidate_id = str(get_random_game())
+                    candidate = get_game(candidate_id)
+                except Exception as exc:
+                    logging.error(exc)
+                    continue
+                if candidate is not None and any(
+                    round_matches_board_type(round_data, board_type)
+                    for round_data in candidate.rounds
+                ):
+                    game_id, data = candidate_id, candidate
+                    break
+            media_status = detect_question_media(game_id) if game_id else None
+            self.advanced_row_random_result_trigger.emit(
+                row_index, request_id, game_id, data, media_status
             )
-            if not has_matching_round:
-                continue
-            self._advanced_game_cache[game_id] = data
-            self._advanced_media_status_cache[game_id] = detect_question_media(game_id)
-            row["gameid_edit"].setText(str(game_id))
-            self.refresh_advanced_row(row_index)
-            break
+
+        self.loader.run_async(_load)
+
+    def handle_advanced_row_random_result(
+        self,
+        row_index: int,
+        request_id: int,
+        game_id: object,
+        data: object,
+        media_status: object,
+    ) -> None:
+        """Apply one row's Random result on the UI thread if it is still current.
+
+        Args:
+            row_index: Index of the advanced row.
+            request_id: Id the load was started with.
+            game_id: Picked game id, or ``""`` when every attempt failed.
+            data: Loaded game data, or ``None``.
+            media_status: Local question-media status for ``game_id``.
+
+        Returns:
+            ``None``.
+        """
+        if not 0 <= row_index < len(self._advanced_rows):
+            return
+        row = self._advanced_rows[row_index]
+        if request_id != row["load_request_id"]:
+            return
+        row["loading"] = False
+        game_id = str(game_id).strip()
+        if not game_id:
+            expected_label = self.expected_board_type_label(row["board_type"])
+            row["status_label"].setText(
+                f"Could not find a random game with a {expected_label} after "
+                f"{ADVANCED_RANDOM_MAX_ATTEMPTS} tries. Try again."
+            )
+            self.sync_active_configuration()
+            return
+        self._cache_advanced_game(game_id, data, media_status)
+        # Block signals so showing the picked id doesn't start a reload.
+        row["gameid_edit"].blockSignals(True)
+        row["gameid_edit"].setText(game_id)
+        row["gameid_edit"].blockSignals(False)
+        self._apply_advanced_row_loaded_data(row_index, game_id, data, media_status)
 
     def load_advanced_question_media(
         self, row_index: int, checked: object = False
@@ -1377,13 +1502,15 @@ QCheckBox {{
             logging.error(exc)
             QMessageBox.warning(self, "Question Media", str(exc))
             return
-        self._advanced_media_status_cache[game_id] = detect_question_media(game_id)
-        self.refresh_advanced_row(row_index)
-
-    def round_matches_expected_type(self, round_data: object, board_type: str) -> bool:
-        """Return whether a round matches the requested advanced slot type."""
-        is_final = isinstance(round_data, FinalBoard)
-        return is_final if board_type == "final" else not is_final
+        # Image paths are set when the game is parsed, so drop the cached copy
+        # and reload every row using this game, keeping their selections.
+        self._advanced_game_cache.pop(game_id, None)
+        self._advanced_media_status_cache.pop(game_id, None)
+        for other_row in self._advanced_rows:
+            if other_row["gameid_edit"].text().strip() == game_id:
+                self.reload_advanced_row(
+                    other_row["index"], self.advanced_row_selection(other_row)
+                )
 
     def expected_board_type_label(self, board_type: str) -> str:
         """Return the user-facing label for an advanced slot type."""
@@ -1442,58 +1569,6 @@ QCheckBox {{
             "daily_double_count": len(daily_double_indices),
             "daily_double_indices": daily_double_indices,
         }
-
-    def select_advanced_daily_double_indices(
-        self,
-        round_data: object,
-        requested_daily_double_count: int,
-        existing_daily_double_indices: object = None,
-    ) -> list[list[int]]:
-        """Return the baseline DD indices to preserve in advanced mode."""
-        original_daily_double_indices = standard_board_daily_double_indices(round_data)
-        requested_count = max(0, int(requested_daily_double_count))
-        original_index_set = {tuple(index) for index in original_daily_double_indices}
-        existing_indices = [
-            list(index)
-            for index in (existing_daily_double_indices or [])
-            if isinstance(index, list | tuple)
-            and len(index) == QUESTION_INDEX_PART_COUNT
-        ]
-        if requested_count <= len(original_daily_double_indices):
-            if requested_count == len(original_daily_double_indices):
-                return original_daily_double_indices
-            existing_original_subset = []
-            seen_indices = set()
-            for index in existing_indices:
-                normalized_index = tuple(index)
-                if (
-                    normalized_index in original_index_set
-                    and normalized_index not in seen_indices
-                ):
-                    existing_original_subset.append(list(index))
-                    seen_indices.add(normalized_index)
-            if len(existing_original_subset) == requested_count:
-                return existing_original_subset
-            return [
-                list(index)
-                for index in _RNG.sample(
-                    original_daily_double_indices,
-                    requested_count,
-                )
-            ]
-
-        extra_slots = requested_count - len(original_daily_double_indices)
-        current_extra_indices = []
-        seen_extra_indices = set()
-        for index in existing_indices:
-            normalized_index = tuple(index)
-            if (
-                normalized_index not in original_index_set
-                and normalized_index not in seen_extra_indices
-            ):
-                current_extra_indices.append(list(index))
-                seen_extra_indices.add(normalized_index)
-        return original_daily_double_indices + current_extra_indices[:extra_slots]
 
     def sync_active_configuration(self) -> None:
         """Push either the regular or advanced startup config into the game."""
@@ -1571,6 +1646,7 @@ QCheckBox {{
         """Build and apply the current advanced Frankenstein-board selection."""
         board_selections = []
         resolved_boards = []
+        requested_daily_double_counts = []
         for row in self._advanced_rows:
             game_id = row["gameid_edit"].text().strip()
             if not game_id or row["loaded_data"] is None:
@@ -1628,7 +1704,7 @@ QCheckBox {{
                 if row.get("daily_double_source_round_index") == selected_round_index
                 else None
             )
-            baseline_daily_double_indices = self.select_advanced_daily_double_indices(
+            baseline_daily_double_indices = select_advanced_daily_double_indices(
                 source_round,
                 row["daily_double_spinbox"].value(),
                 existing_daily_double_indices=existing_daily_double_indices,
@@ -1646,6 +1722,7 @@ QCheckBox {{
                 tuple(index) for index in selection.get("daily_double_indices", [])
             ]
             row["daily_double_source_round_index"] = selected_round_index
+            requested_daily_double_counts.append(row["daily_double_spinbox"].value())
             board_selections.append(selection)
             resolved_boards.append((selection, row["loaded_data"], source_round))
         configuration_complete = len(board_selections) == len(self._advanced_rows)
@@ -1667,7 +1744,7 @@ QCheckBox {{
             )
         if configuration_complete and composed_data is not None:
             self._advanced_mode_summary_text = self.build_advanced_summary_text(
-                board_selections, composed_data
+                board_selections, composed_data, requested_daily_double_counts
             )
             self.summary_label.setText(self._advanced_mode_summary_text)
         elif self.advanced_options_checkbox.isChecked():
@@ -1717,9 +1794,24 @@ QCheckBox {{
         return "\n".join(line for line in summary_lines if line)
 
     def build_advanced_summary_text(
-        self, board_selections: list[dict], composed_data: object
+        self,
+        board_selections: list[dict],
+        composed_data: object,
+        requested_daily_double_counts: object = None,
     ) -> str:
-        """Return the summary text for the current Frankenstein composition."""
+        """Return the summary text for the current Frankenstein composition.
+
+        Args:
+            board_selections: Board selections in play order.
+            composed_data: Game composed from ``board_selections``.
+            requested_daily_double_counts: Daily Double count the host asked
+                for on each standard board, in order. The missing-Daily-Double
+                warning compares against these instead of the regular-game
+                rule.
+
+        Returns:
+            Summary text for the advanced-mode summary label.
+        """
         summary_lines = [composed_data.date, composed_data.comments, ""]
         standard_index = 0
         final_index = 0
@@ -1752,7 +1844,7 @@ QCheckBox {{
                     f"{'' if missing_question_count == 1 else 's'}",
                 ]
             )
-        if getattr(composed_data, "has_missing_daily_double", lambda: False)():
+        if composed_data.has_missing_daily_double(requested_daily_double_counts):
             summary_lines.extend(["", MISSING_DAILY_DOUBLE_WARNING])
         return "\n".join(str(line) for line in summary_lines if line is not None)
 
