@@ -43,6 +43,12 @@ include-package-data = true
 [tool.setuptools.dynamic]
 version = {attr = "jparty._version.__version__"}
 
+# uv reinstalls the project only when a cache key changes. The version lives
+# in _version.py, so list it too; otherwise a version bump leaves the installed
+# package metadata on the old version.
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/jparty/_version.py" }]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
