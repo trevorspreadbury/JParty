@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
-from PyQt6.QtCore import QBuffer, QByteArray, QIODevice
+from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, Qt
 from PyQt6.QtGui import QColor, QImage
 from PyQt6.QtWidgets import QLabel, QRadioButton
 
@@ -155,6 +155,67 @@ def test_host_scoreboard_opens_score_dialog_with_five_recent_entries(
         3,
         2,
     ]
+    assert game.applied_corrections == []
+
+
+def test_host_scoreboard_applies_changes_when_dialog_is_saved(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Test saving the score dialog sends its changes to the game."""
+    game = StubScoreGame()
+    game.can_edit = True
+    changes = [{"question_number": 6, "player_states": {0: "correct"}, "value": 200}]
+
+    class SavedDialog:
+        """Stand-in dialog that the host closes with Save."""
+
+        def __init__(
+            self, entries: list[dict], players: list[object], parent: object
+        ) -> None:
+            """Accept the real constructor arguments."""
+
+        def exec(self) -> int:
+            """Close the modal as if Save was clicked."""
+            return 1
+
+        def collect_changes(self) -> list[dict]:
+            """Return the edits made in the dialog."""
+            return changes
+
+    monkeypatch.setattr(
+        "jparty.ui.widgets.scoreboard.ScoreCorrectionDialog", SavedDialog
+    )
+    scoreboard = HostScoreBoard(game)
+    qtbot.addWidget(scoreboard)
+
+    scoreboard.open_score_editor()
+
+    assert game.applied_corrections == [changes]
+
+
+def test_score_correction_dialog_collects_clicked_ruling(qtbot: object) -> None:
+    """Test clicking "Correct" for one player is the only change collected."""
+    game = StubScoreGame()
+    dialog = ScoreCorrectionDialog(
+        game.get_recent_score_corrections(limit=2), game.players
+    )
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assert dialog.collect_changes() == []
+
+    bob_correct = dialog._entry_widgets[0]["player_controls"][1]["correct"]
+    assert bob_correct.text() == "Correct"
+    qtbot.mouseClick(bob_correct, Qt.MouseButton.LeftButton)
+
+    assert bob_correct.isChecked()
+    assert dialog.collect_changes() == [
+        {
+            "question_number": 6,
+            "player_states": {0: "no answer", 1: "correct"},
+            "value": 200,
+        }
+    ]
 
 
 def test_host_player_click_adjusts_score_only_when_no_question_active(
@@ -208,7 +269,8 @@ def test_score_correction_dialog_renders_signature_images_for_player_names(
     qtbot.addWidget(dialog)
 
     labels = dialog.findChildren(QLabel)
-    signature_labels = [label for label in labels if label.pixmap() is not None]
+    # QLabel.pixmap() returns an empty QPixmap, never None, for text labels.
+    signature_labels = [label for label in labels if not label.pixmap().isNull()]
     raw_data_labels = [
         label for label in labels if label.text().startswith("data:image/png;base64")
     ]
