@@ -252,6 +252,8 @@ class Welcome(StartWidget):
         self._base_summary_text = ""
         self._loading_summary = False
         self._summary_request_id = 0
+        # Id of the game currently in ``game.data`` in regular mode, or "".
+        self._loaded_summary_game_id = ""
         self._question_media_status = None
         self.round_checkboxes = []
         self._advanced_rows = []
@@ -671,6 +673,23 @@ QCheckBox {{
             request_id, game_id, data, error, media_status, False
         )
 
+    def reload_summary_game(self, game_id: str) -> None:
+        """Parse the loaded regular-mode game again on a worker thread.
+
+        Unlike ``show_summary``, the round selector is kept, so the host's
+        round choices survive the reload.
+
+        Args:
+            game_id: Game id to reload. It matches the textbox.
+
+        Returns:
+            ``None``.
+        """
+        self.debounce_timer.stop()
+        request_id = self._begin_summary_request(loading=True)
+        self.check_start()
+        self.loader.run_async(partial(self._load_summary_game, request_id, game_id))
+
     def handle_summary_load_result(
         self,
         request_id: int,
@@ -728,6 +747,7 @@ QCheckBox {{
         """
         playable = error is None and _is_playable_game_data(data)
         self.game.data = data if playable else None
+        self._loaded_summary_game_id = game_id if playable else ""
         if hasattr(self.game, "set_session_game_id"):
             self.game.set_session_game_id(game_id if playable else "")
         self._question_media_status = media_status
@@ -1483,7 +1503,12 @@ QCheckBox {{
         self.sync_regular_configuration()
 
     def sync_regular_configuration(self) -> None:
-        """Persist the standard single-game startup selection as board configs."""
+        """Persist the standard single-game startup selection as board configs.
+
+        The game is composed here from the already-loaded ``game.data`` and
+        cached with ``set_composed_game_data``, so Start never fetches or
+        parses the source game again on the UI thread.
+        """
         if self.resume_path is not None:
             return
         game_id = self.textbox.text().strip()
@@ -1498,27 +1523,26 @@ QCheckBox {{
             if hasattr(self.game, "set_board_selection_configs"):
                 self.game.set_board_selection_configs(None)
             return
+        source_data = self.game.data
         board_selections = []
+        resolved_boards = []
         for round_index in selected_indices:
-            if not 0 <= int(round_index) < len(self.game.data.rounds):
+            if not 0 <= int(round_index) < len(source_data.rounds):
                 continue
-            round_data = self.game.data.rounds[int(round_index)]
-            row_values = original_board_row_values(self.game.data, int(round_index))
+            round_data = source_data.rounds[int(round_index)]
+            row_values = original_board_row_values(source_data, int(round_index))
             if isinstance(round_data, FinalBoard):
-                board_selections.append(
-                    {
-                        "game_id": game_id,
-                        "source_round_index": int(round_index),
-                        "source_round_label": self.describe_round(
-                            round_data, int(round_index)
-                        ),
-                        "board_type": "final",
-                        "row_values": row_values,
-                    }
-                )
-                continue
-            board_selections.append(
-                self.build_standard_board_selection(
+                selection = {
+                    "game_id": game_id,
+                    "source_round_index": int(round_index),
+                    "source_round_label": self.describe_round(
+                        round_data, int(round_index)
+                    ),
+                    "board_type": "final",
+                    "row_values": row_values,
+                }
+            else:
+                selection = self.build_standard_board_selection(
                     game_id=game_id,
                     round_data=round_data,
                     source_round_index=int(round_index),
@@ -1531,9 +1555,15 @@ QCheckBox {{
                         round_data
                     ),
                 )
-            )
+            board_selections.append(selection)
+            resolved_boards.append((selection, source_data, round_data))
         if hasattr(self.game, "set_board_selection_configs"):
             self.game.set_board_selection_configs(board_selections)
+        if hasattr(self.game, "set_composed_game_data"):
+            self.game.set_composed_game_data(
+                board_selections,
+                compose_game_from_resolved_board_selections(resolved_boards),
+            )
         if hasattr(self.game, "set_session_game_id"):
             self.game.set_session_game_id(game_id)
 
@@ -1801,6 +1831,15 @@ QCheckBox {{
             QMessageBox.warning(self, "Question Media", str(e))
             return
         self._question_media_status = detect_question_media(game_id)
+        if (
+            self.resume_path is None
+            and not self.advanced_options_checkbox.isChecked()
+            and game_id == self._loaded_summary_game_id
+        ):
+            # Image paths are set when the game is parsed, and Start reuses the
+            # loaded game, so parse it again to pick up the new media.
+            self.reload_summary_game(game_id)
+            return
         if self.game.valid_game():
             self.set_summary(self.build_summary_text())
         else:
