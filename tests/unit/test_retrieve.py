@@ -349,6 +349,117 @@ def test_get_game_keeps_damaged_cache_when_refetch_fails(
     )
 
 
+def _cache_without_closing_tag(fixture_dir: object, saved_dir: object) -> str:
+    """Write a cached 4453 page that parses but is missing ``</html>``."""
+    full_html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    head, _, tail = full_html.rpartition("</html>")
+    cached_html = head + tail
+    (saved_dir / "4453.html").write_text(cached_html, encoding="utf-8")
+    return cached_html
+
+
+def test_get_game_keeps_cached_game_when_refetch_is_not_a_game(
+    temp_dir: object, monkeypatch: object, fixture_dir: object
+) -> None:
+    """A refetch that returns a non-game page must not lose a cache that parsed.
+
+    J-Archive rate-limit and error pages come back as normal responses, so the
+    fetch succeeds but the page isn't a game.
+    """
+    saved_dir = temp_dir / "saved"
+    saved_dir.mkdir()
+    cached_html = _cache_without_closing_tag(fixture_dir, saved_dir)
+    invalid_html = (fixture_dir / "invalid_game.html").read_text(encoding="utf-8")
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", saved_dir)
+    monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
+    monkeypatch.setattr(retrieve, "get_wayback_game_html", lambda game_id: invalid_html)
+
+    game = retrieve.get_game("4453")
+
+    assert game is not None
+    assert len(game.rounds) == 3
+    assert (saved_dir / "4453.html").read_text(encoding="utf-8") == cached_html
+    assert retrieve._LOADED_GAME_HTML_CACHE["4453"] == cached_html
+
+
+def test_get_game_keeps_cached_game_when_refetch_fails_to_parse(
+    temp_dir: object, monkeypatch: object, fixture_dir: object
+) -> None:
+    """A refetched page that makes the parser raise falls back to the cache."""
+    saved_dir = temp_dir / "saved"
+    saved_dir.mkdir()
+    cached_html = _cache_without_closing_tag(fixture_dir, saved_dir)
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", saved_dir)
+    monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
+    monkeypatch.setattr(retrieve, "get_wayback_game_html", lambda game_id: "BROKEN")
+    real_parse = retrieve.process_game_board_from_html
+
+    def parse(game_html: object, game_id: object) -> object:
+        """Raise for the refetched page only."""
+        if game_html == "BROKEN":
+            raise ValueError("unexpected page layout")
+        return real_parse(game_html, game_id)
+
+    monkeypatch.setattr(retrieve, "process_game_board_from_html", parse)
+
+    game = retrieve.get_game("4453")
+
+    assert game is not None
+    assert (saved_dir / "4453.html").read_text(encoding="utf-8") == cached_html
+
+
+def test_get_game_repairs_cache_that_is_not_valid_utf8(
+    temp_dir: object, monkeypatch: object, fixture_dir: object
+) -> None:
+    """A cache file cut off mid-character is replaced after one good fetch.
+
+    Before, the unreadable file looked like "no cache", so it was never
+    overwritten and every later load needed the network.
+    """
+    saved_dir = temp_dir / "saved"
+    saved_dir.mkdir()
+    full_html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    full_bytes = full_html.encode("utf-8")
+    # The first two bytes of an em dash: a multi-byte character cut in half.
+    (saved_dir / "4453.html").write_bytes(
+        full_bytes[: len(full_bytes) // 2] + b"\xe2\x80"
+    )
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", saved_dir)
+    monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
+    monkeypatch.setattr(retrieve, "get_wayback_game_html", lambda game_id: full_html)
+
+    assert retrieve.get_game("4453") is not None
+    assert (saved_dir / "4453.html").read_text(encoding="utf-8") == full_html
+
+    # The repaired copy now loads offline.
+    monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
+    _block_network(monkeypatch)
+    assert retrieve.get_game("4453") is not None
+
+
+def test_get_game_leaves_unreadable_cache_when_offline(
+    temp_dir: object, monkeypatch: object
+) -> None:
+    """With no network, an unreadable cache file gives ``None`` and is kept."""
+    saved_dir = temp_dir / "saved"
+    saved_dir.mkdir()
+    damaged = b"<html>\xe2\x80"
+    (saved_dir / "4453.html").write_bytes(damaged)
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", saved_dir)
+    monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
+
+    def offline(game_id: object) -> str:
+        """Simulate no network."""
+        raise ConnectionError("offline")
+
+    monkeypatch.setattr(retrieve, "get_wayback_game_html", offline)
+    monkeypatch.setattr(retrieve, "get_jarchive_game_html", offline)
+
+    assert retrieve.get_game("4453") is None
+    assert (saved_dir / "4453.html").read_bytes() == damaged
+    assert "4453" not in retrieve._LOADED_GAME_HTML_CACHE
+
+
 def test_save_game_html_fetches_when_not_loaded(
     temp_dir: object, monkeypatch: object
 ) -> None:

@@ -97,12 +97,15 @@ def save_game_html(game_id: object) -> object:
 def _get_archive_game(game_id: object) -> object:
     """Load and parse an archived game, repairing a damaged cache copy.
 
-    When the cached HTML is missing its closing tag or does not parse, the
-    game is fetched from the network instead. If the network copy parses, it
-    overwrites the damaged cache file so later loads use the good copy. If the
-    network fetch fails, the cached parse result (possibly ``None``) is used.
+    A cache file is damaged when it can't be read as UTF-8, doesn't parse, or
+    is missing its closing ``</html>`` tag. A damaged file is fetched again
+    from the network, and the network copy overwrites it if that copy parses.
+    If the fetch fails, or returns a page that isn't a game (for example a
+    rate-limit or error page), the cached parse result is used instead
+    (possibly ``None``) and the file is left alone.
     """
     game_id_str = str(game_id)
+    cache_file_exists = GameCache(SAVED_GAMES).saved_html_path(game_id_str).exists()
     cached_html = _cached_game_html(game_id_str)
     cached_data = None
     if cached_html is not None:
@@ -110,33 +113,44 @@ def _get_archive_game(game_id: object) -> object:
         if cached_data is not None and _looks_complete(cached_html):
             _LOADED_GAME_HTML_CACHE[game_id_str] = cached_html
             return cached_data
-        logging.warning(
-            "Cached HTML for game %s looks damaged; fetching it again", game_id_str
+    if not cache_file_exists:
+        remote_html = _fetch_remote_game_html(game_id_str)
+        _LOADED_GAME_HTML_CACHE[game_id_str] = remote_html
+        return process_game_board_from_html(remote_html, game_id_str)
+
+    logging.warning(
+        "Cached HTML for game %s looks damaged; fetching it again", game_id_str
+    )
+    try:
+        remote_html = _fetch_remote_game_html(game_id_str)
+    except Exception:
+        logging.error(
+            "Could not refetch game %s; using cached copy",
+            game_id_str,
+            exc_info=True,
         )
-        try:
-            remote_html = _fetch_remote_game_html(game_id_str)
-        except Exception:
-            logging.error(
-                "Could not refetch game %s; using cached copy",
+        if cached_html is not None:
+            _LOADED_GAME_HTML_CACHE[game_id_str] = cached_html
+        return cached_data
+    remote_data = _parse_or_none(remote_html, game_id_str)
+    if remote_data is None:
+        if cached_data is not None:
+            logging.warning(
+                "Refetched page for game %s is not a game; using cached copy",
                 game_id_str,
-                exc_info=True,
             )
             _LOADED_GAME_HTML_CACHE[game_id_str] = cached_html
-            return cached_data
-    else:
-        remote_html = _fetch_remote_game_html(game_id_str)
+        return cached_data
     _LOADED_GAME_HTML_CACHE[game_id_str] = remote_html
-    game_data = process_game_board_from_html(remote_html, game_id_str)
-    if cached_html is not None and game_data is not None:
-        try:
-            GameCache(SAVED_GAMES).save_html(game_id_str, remote_html)
-        except OSError:
-            logging.error(
-                "Could not overwrite damaged cache for game %s",
-                game_id_str,
-                exc_info=True,
-            )
-    return game_data
+    try:
+        GameCache(SAVED_GAMES).save_html(game_id_str, remote_html)
+    except OSError:
+        logging.error(
+            "Could not overwrite damaged cache for game %s",
+            game_id_str,
+            exc_info=True,
+        )
+    return remote_data
 
 
 def get_game(game_id: object) -> object:
