@@ -1105,8 +1105,12 @@ def reconstruct_original_score_history(game: object) -> dict[str, list[int]]:
 def _score_event_indices(score_history: dict[int, list[int]]) -> range:
     """Return every point in a score history after the starting zero.
 
-    Score histories have one point per history event, and manual score
-    adjustments are events with no question number. Walking the whole series,
+    Score histories have one point per history event. Host corrections to a
+    ruling or a Daily Double wager are not events: they are applied to the
+    clue they fix, as if it had been scored right from the start (see
+    :func:`corrected_history_entries`). Manual score adjustments are events
+    with no question number, because their reason isn't recorded and they
+    can't be moved to an earlier clue. Walking the whole series,
     rather than counting up to the last question number, keeps every event in
     view, including the last ones (often Final Jeopardy).
 

@@ -932,3 +932,162 @@ def test_build_end_game_summary_lead_changes_with_manual_adjustment_and_final(
     assert summary.question_count == 2
     assert summary.game_stats.lead_changes == 1
     assert summary.game_stats.victory_summary == "$200 come-from-behind victory"
+
+
+def _three_clue_board() -> GameData:
+    """Return a one-category board with three clues and no Final."""
+    return GameData(
+        rounds=[
+            Board(
+                categories=["Cat"],
+                questions=[
+                    Question((0, row), f"Q{row}", f"A{row}", "Cat", value=200)
+                    for row in range(3)
+                ],
+            )
+        ],
+        date="today",
+        comments="",
+    )
+
+
+def _clue(question_number: int, value: int, attempts: list[dict], **extra) -> dict:
+    """Return one clue history line for the three-clue board."""
+    return {
+        "question_index": [0, [0, question_number - 1]],
+        "question_number": question_number,
+        "round_index": 0,
+        "is_daily_double": False,
+        "value": value,
+        "answer_attempts": attempts,
+        **extra,
+    }
+
+
+def _attempt(player_index: int, correct: bool, before: int, after: int) -> dict:
+    """Return one recorded answer attempt with its score change."""
+    return {
+        "player_index": player_index,
+        "answer_correct": correct,
+        "score_before": before,
+        "score_after": after,
+    }
+
+
+def _series_by_player(summary: object) -> dict[int, list[int]]:
+    """Return each current player's graph series keyed by player number."""
+    return {series.player_number: series.scores for series in summary.current_series}
+
+
+def test_build_end_game_summary_applies_ruling_corrections_from_the_start(
+    game: object, players: object, temp_dir: object
+) -> None:
+    """A corrected ruling counts as if the clue had been judged right at the time.
+
+    Player 0 was wrongly marked incorrect on clue 2, which (as recorded) handed
+    the lead to the others and then tied it. The host later changed it to no
+    answer. As it should have been, player 0 led the whole game, so there are
+    no lead changes and the correction adds no point to the graph.
+    """
+    game._game_state_dir = temp_dir / "saved-ruling-correction"
+    game._game_state_dir.mkdir()
+    players[0].score = 400
+    players[1].score = 0
+    players[2].score = 0
+    game.data = _three_clue_board()
+    _write_history(
+        game._game_state_dir,
+        [
+            _clue(1, 200, [_attempt(0, True, 0, 200)]),
+            _clue(2, 400, [_attempt(0, False, 200, -200)]),
+            _clue(3, 200, [_attempt(0, True, -200, 0)]),
+            {
+                "type": "score_correction",
+                "question_number": 2,
+                "timestamp": 10.0,
+                "player_states": {"0": "no answer", "1": "no answer", "2": "no answer"},
+                "adjustments": [
+                    {"player_index": 0, "score_before": 0, "score_after": 400}
+                ],
+            },
+        ],
+    )
+
+    summary = build_end_game_summary(game)
+
+    assert summary.game_stats.lead_changes == 0
+    assert _series_by_player(summary)[0] == [0, 200, 200, 400]
+
+
+def test_build_end_game_summary_applies_wager_corrections_from_the_start(
+    game: object, players: object, temp_dir: object
+) -> None:
+    """A corrected Daily Double wager changes the score at the Daily Double.
+
+    The lead change happens at the Daily Double itself, not at the later
+    correction, so the graph has no extra point for the correction.
+    """
+    game._game_state_dir = temp_dir / "saved-wager-correction"
+    game._game_state_dir.mkdir()
+    players[0].score = 1000
+    players[1].score = 200
+    players[2].score = 0
+    game.data = _three_clue_board()
+    _write_history(
+        game._game_state_dir,
+        [
+            _clue(1, 200, [_attempt(1, True, 0, 200)]),
+            _clue(2, 100, [_attempt(0, True, 0, 100)], is_daily_double=True),
+            {
+                "type": "score_correction",
+                "question_number": 2,
+                "timestamp": 10.0,
+                "value": 1000,
+                "player_states": {"0": "correct", "1": "no answer", "2": "no answer"},
+                "adjustments": [
+                    {"player_index": 0, "score_before": 100, "score_after": 1000}
+                ],
+            },
+        ],
+    )
+
+    summary = build_end_game_summary(game)
+
+    assert summary.game_stats.lead_changes == 1
+    assert _series_by_player(summary)[0] == [0, 0, 1000]
+    assert _series_by_player(summary)[1] == [0, 200, 200]
+
+
+def test_build_end_game_summary_counts_manual_adjustment_as_its_own_event(
+    game: object, players: object, temp_dir: object
+) -> None:
+    """A manual score change is a separate event where it happened.
+
+    The host's reason for a manual change isn't recorded, so it can't be
+    moved to an earlier clue. If it changes the leader, that is a lead change.
+    """
+    game._game_state_dir = temp_dir / "saved-manual-lead"
+    game._game_state_dir.mkdir()
+    players[0].score = 200
+    players[1].score = 500
+    players[2].score = 0
+    game.data = _three_clue_board()
+    _write_history(
+        game._game_state_dir,
+        [
+            _clue(1, 200, [_attempt(0, True, 0, 200)]),
+            {
+                "type": "manual_score_adjustment",
+                "player_index": 1,
+                "timestamp": 5.0,
+                "score_before": 0,
+                "score_after": 500,
+                "new_score": 500,
+            },
+        ],
+    )
+
+    summary = build_end_game_summary(game)
+
+    assert summary.game_stats.lead_changes == 1
+    assert _series_by_player(summary)[1] == [0, 0, 500]
