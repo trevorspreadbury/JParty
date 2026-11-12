@@ -730,3 +730,96 @@ def test_next_round_ends_game_when_no_later_round_is_selected(
     game.next_round()
     assert game.dc.loaded_final_judgement == 1
     assert game.dc.final_window.winner is not None or game.dc.final_window.tie_shown
+
+
+SUBSET_BOARD_SELECTIONS = [
+    {
+        "game_id": "4453",
+        "source_round_index": 1,
+        "source_round_label": "Double Jeopardy!",
+        "board_type": "standard",
+        "row_values": [400, 800, 1200, 1600, 2000],
+    },
+    {
+        "game_id": "4453",
+        "source_round_index": 2,
+        "source_round_label": "Final Jeopardy!",
+        "board_type": "final",
+        "row_values": [],
+    },
+]
+
+
+@pytest.mark.parametrize(
+    "board_selections",
+    [None, SUBSET_BOARD_SELECTIONS],
+    ids=["regular-mode", "advanced-same-game-subset"],
+)
+def test_cli_summary_matches_in_app_summary_for_round_subset(
+    game: object, monkeypatch: object, temp_dir: object, board_selections: object
+) -> None:
+    """``jparty summary`` and the app agree on stats for a round-subset save."""
+    from jparty.app import bootstrap
+    from jparty.domain.state import build_end_game_summary
+    from jparty.services import game_loader
+
+    restored_data = deepcopy(game.data)
+    monkeypatch.setattr(
+        game_loader, "get_game", lambda game_id: deepcopy(restored_data)
+    )
+    saved_dir = temp_dir / "saved-summary-subset"
+    saved_dir.mkdir()
+    general_state = {
+        "game_id": "4453",
+        "players": [
+            {"name": "Alice", "player_number": 0},
+            {"name": "Bob", "player_number": 1},
+        ],
+        "selected_round_indices": [1, 2],
+    }
+    if board_selections is not None:
+        general_state["board_selections"] = board_selections
+    (saved_dir / "general.json").write_text(json.dumps(general_state))
+    (saved_dir / "question_history.jsonl").write_text(
+        json.dumps(
+            {
+                "question_index": [1, [0, 0]],
+                "question_number": 1,
+                "round_index": 1,
+                "category": restored_data.rounds[1].questions[0].category,
+                "value": 400,
+                "is_daily_double": False,
+                "buzz_phases": [],
+                "answer_attempts": [
+                    {
+                        "player_index": 0,
+                        "answer_correct": True,
+                        "score_before": 0,
+                        "score_after": 400,
+                    }
+                ],
+                "completed_at": 2.0,
+            }
+        )
+        + "\n"
+    )
+
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(saved_dir)
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+    game.start_game()
+    app_summary = build_end_game_summary(game)
+    cli_summary = bootstrap.load_summary_from_game_state_directory(saved_dir)
+
+    def player_stats(summary: object) -> dict:
+        return {
+            player.name: (player.final_score, player.coryat, player.right_count)
+            for player in summary.current_players
+        }
+
+    assert player_stats(app_summary) == {"Alice": (400, 400, 1), "Bob": (0, 0, 0)}
+    assert player_stats(cli_summary) == player_stats(app_summary)
+    assert cli_summary.game_stats == app_summary.game_stats
+    assert cli_summary.question_count == app_summary.question_count
