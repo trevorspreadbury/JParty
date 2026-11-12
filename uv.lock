@@ -709,7 +709,6 @@ source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "matplotlib" },
-    { name = "pyinstaller" },
     { name = "pyqt6" },
     { name = "python-dotenv" },
     { name = "qrcode" },
@@ -718,6 +717,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+build = [
+    { name = "pyinstaller" },
+]
 test = [
     { name = "playwright" },
     { name = "pre-commit" },
@@ -735,7 +737,7 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "playwright", marker = "extra == 'test'" },
     { name = "pre-commit", marker = "extra == 'test'" },
-    { name = "pyinstaller", specifier = ">=6.22.3,<7" },
+    { name = "pyinstaller", marker = "extra == 'build'", specifier = ">=6.22.3,<7" },
     { name = "pyqt6", specifier = ">=6.12.0,<7" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "pytest-cov", marker = "extra == 'test'" },
@@ -748,7 +750,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'test'" },
     { name = "tornado", specifier = ">=6.6.1,<7" },
 ]
-provides-extras = ["test"]
+provides-extras = ["build", "test"]
 
 [[package]]
 name = "kiwisolver"

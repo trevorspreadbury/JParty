@@ -138,6 +138,14 @@ When changing welcome or advanced options behavior, at minimum run:
 uv run pytest tests/qt/test_welcome_widget.py -q
 ```
 
+When changing packaging (`JParty.spec`, bundled assets, or dependencies that
+PyInstaller has to bundle), run the opt-in build smoke test. It takes a few
+minutes:
+
+```bash
+JPARTY_RUN_BUILD_TEST=1 uv run --extra build pytest tests/build -q
+```
+
 When changing board composition or persistence, also run:
 
 ```bash

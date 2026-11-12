@@ -178,16 +178,37 @@ Notes:
 
 ## Packaging
 
-Build the desktop app with PyInstaller:
+PyInstaller is in the `build` extra, so running the app doesn't install it.
+Build the desktop app with:
 
 ```bash
-uv run pyinstaller -y JParty.spec
+uv run --extra build pyinstaller -y JParty.spec
 ```
 
-If using conda:
+If using conda (`environment.yml` already includes PyInstaller):
 
 ```bash
 pyinstaller -y JParty.spec
+```
+
+Then check the packaged app without opening any windows. It has no console,
+so it writes its results to a file and returns a non-zero exit code on failure:
+
+```bash
+dist/JParty.exe self-check --report self-check.txt
+```
+
+On macOS the app is `dist/JParty.app/Contents/MacOS/JParty`.
+
+`self-check` checks the package version, bundled assets, the game sounds
+(through Qt Multimedia), the buzzer QR code, and chart rendering. It also
+works on a source install: `uv run jparty self-check`.
+
+To build and check the app in one step, run the opt-in build smoke test. It
+builds into a temporary folder and takes a few minutes:
+
+```bash
+JPARTY_RUN_BUILD_TEST=1 uv run --extra build pytest tests/build -q
 ```
 
 ## Contribution Notes

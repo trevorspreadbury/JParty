@@ -143,7 +143,7 @@ those corrections are stored in `question_history.jsonl`, see
 To build from source, run:
 
 ```
-uv run pyinstaller -y JParty.spec
+uv run --extra build pyinstaller -y JParty.spec
 ```
 
 If you are using conda, run:
@@ -151,6 +151,10 @@ If you are using conda, run:
 ```
 pyinstaller -y JParty.spec
 ```
+
+To check a build without opening any windows, run
+`dist/JParty.exe self-check --report self-check.txt`. See
+[CONTRIBUTING.md](CONTRIBUTING.md#packaging) for details.
 
 ## Game State Tracking
 
