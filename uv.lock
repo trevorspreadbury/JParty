@@ -633,7 +633,6 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "qrcode" },
     { name = "requests" },
-    { name = "simpleaudio" },
     { name = "tornado" },
 ]
 
@@ -666,7 +665,6 @@ requires-dist = [
     { name = "requests", specifier = "==2.32.0" },
     { name = "requests-mock", marker = "extra == 'test'" },
     { name = "ruff", marker = "extra == 'test'" },
-    { name = "simpleaudio", specifier = "==1.0.4" },
     { name = "tornado", specifier = "==6.3.3" },
 ]
 provides-extras = ["test"]
@@ -1573,12 +1571,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/4f/db/cfac1baf10650ab4d
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9d/76/f789f7a86709c6b087c5a2f52f911838cad707cc613162401badc665acfe/setuptools-82.0.1-py3-none-any.whl", hash = "sha256:a59e362652f08dcd477c78bb6e7bd9d80a7995bc73ce773050228a348ce2e5bb", size = 1006223, upload-time = "2026-03-09T12:47:15.026Z" },
 ]
-
-[[package]]
-name = "simpleaudio"
-version = "1.0.4"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/94/1b/4dc29653733202b68c09d9c6ca085cf67ac54859ee860647ef21ac1ff3dc/simpleaudio-1.0.4.tar.gz", hash = "sha256:691c88649243544db717e7edf6a9831df112104e1aefb5f6038a5d071e8cf41d", size = 2042564, upload-time = "2019-11-29T03:56:28.965Z" }
 
 [[package]]
 name = "six"

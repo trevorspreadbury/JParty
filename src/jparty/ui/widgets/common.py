@@ -5,12 +5,12 @@ player, a compound proxy for mirrored host/audience calls, drop-shadow styling,
 and auto-sizing label and button mixins used throughout the widget layer.
 """
 
+import logging
 import re
-from threading import Thread
 
-import simpleaudio as sa
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QSize, Qt, QUrl
 from PyQt6.QtGui import QColor, QFontMetrics
+from PyQt6.QtMultimedia import QMediaDevices, QSoundEffect
 from PyQt6.QtWidgets import QGraphicsDropShadowEffect, QLabel, QPushButton, QSizePolicy
 
 from jparty.app.paths import data_asset_path
@@ -32,8 +32,22 @@ def resource_path(relative_path: object) -> object:
     return str(data_asset_path(relative_path))
 
 
+def has_audio_output() -> bool:
+    """Return whether the system reports at least one audio output device.
+
+    Returns:
+        ``True`` when Qt Multimedia can see an audio output device.
+    """
+    return bool(QMediaDevices.audioOutputs())
+
+
 class SongPlayer:
-    """Play looping intro or Final Jeopardy music clips."""
+    """Play the game's music and sound cues through Qt Multimedia.
+
+    Every clip is a preloaded ``QSoundEffect``. Qt plays and loops them on its
+    own audio backend, so no Python threads are involved. Create and use this
+    object on the Qt GUI thread.
+    """
 
     def __init__(self) -> None:
         """Load the audio clips used by the application.
@@ -41,13 +55,46 @@ class SongPlayer:
         Returns:
             ``None``.
         """
-        super().__init__()
-        self.__wave_obj = sa.WaveObject.from_wave_file(resource_path("intro.wav"))
-        self.__final = sa.WaveObject.from_wave_file(resource_path("final.wav"))
-        self.__stumped = sa.WaveObject.from_wave_file(resource_path("stumped.wav"))
-        self.__play_obj = None
-        self.__repeating = False
-        self.__repeat_thread = None
+        self.__intro = self.__load("intro.wav")
+        self.__final = self.__load("final.wav")
+        self.__stumped = self.__load("stumped.wav")
+        self.__daily_double = self.__load("dd.wav")
+        self.__music = None
+
+    @staticmethod
+    def __load(file_name: str) -> QSoundEffect:
+        """Create a sound effect for one packaged audio asset.
+
+        Args:
+            file_name: Asset file name in the packaged data directory.
+
+        Returns:
+            The sound effect, which Qt loads in the background.
+        """
+        effect = QSoundEffect()
+        effect.setSource(QUrl.fromLocalFile(resource_path(file_name)))
+
+        def log_load_error() -> None:
+            if effect.status() == QSoundEffect.Status.Error:
+                logging.error("Could not load audio asset %s", file_name)
+
+        effect.statusChanged.connect(log_load_error)
+        return effect
+
+    def __play_music(self, effect: QSoundEffect, repeat: object) -> None:
+        """Start a music clip, replacing any music that is already playing.
+
+        Args:
+            effect: Music clip to play.
+            repeat: Whether playback should loop until stopped.
+
+        Returns:
+            ``None``.
+        """
+        self.stop()
+        effect.setLoopCount(QSoundEffect.Loop.Infinite.value if repeat else 1)
+        effect.play()
+        self.__music = effect
 
     def play(self, repeat: object = False) -> None:
         """Play the intro music clip.
@@ -58,11 +105,7 @@ class SongPlayer:
         Returns:
             ``None``.
         """
-        self.__repeating = repeat
-        self.__play_obj = self.__wave_obj.play()
-        if repeat:
-            self.__repeat_thread = Thread(target=self.__repeat)
-            self.__repeat_thread.start()
+        self.__play_music(self.__intro, repeat)
 
     def final(self, repeat: object = False) -> None:
         """Play the Final Jeopardy music clip.
@@ -73,20 +116,19 @@ class SongPlayer:
         Returns:
             ``None``.
         """
-        self.__repeating = repeat
-        self.__play_obj = self.__final.play()
-        if repeat:
-            self.__repeat_thread = Thread(target=self.__repeat)
-            self.__repeat_thread.start()
+        self.__play_music(self.__final, repeat)
 
     def stop(self) -> None:
-        """Stop playback and prevent further looping.
+        """Stop the current music clip, if any.
+
+        Short cues such as the Daily Double sound are left to finish.
 
         Returns:
             ``None``.
         """
-        self.__repeating = False
-        self.__play_obj.stop()
+        if self.__music is not None:
+            self.__music.stop()
+            self.__music = None
 
     def stumped(self) -> None:
         """Play the stumped cue using the preloaded audio asset.
@@ -96,17 +138,13 @@ class SongPlayer:
         """
         self.__stumped.play()
 
-    def __repeat(self) -> None:
-        """Loop playback while repeating is enabled.
+    def daily_double(self) -> None:
+        """Play the Daily Double cue using the preloaded audio asset.
 
         Returns:
             ``None``.
         """
-        while True:
-            self.__play_obj.wait_done()
-            if not self.__repeating:
-                break
-            self.__play_obj = self.__wave_obj.play()
+        self.__daily_double.play()
 
 
 class CompoundObject:

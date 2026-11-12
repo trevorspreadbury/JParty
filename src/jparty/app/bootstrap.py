@@ -18,7 +18,6 @@ from types import SimpleNamespace
 import requests
 from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication, QMessageBox
-from simpleaudio._simpleaudio import SimpleaudioError
 
 from jparty.app.config import DEBUG_MODE, PORT
 from jparty.app.logging import install_crash_reporting
@@ -34,7 +33,7 @@ from jparty.domain.state import (
 )
 from jparty.services.archive_client import get_game_html, process_game_board_from_html
 from jparty.ui.styles import JPartyStyle
-from jparty.ui.widgets.common import resource_path
+from jparty.ui.widgets.common import has_audio_output, resource_path
 from jparty.ui.widgets.final import EndGameSummaryDisplay
 from jparty.ui.windows.display import DisplayWindow, HostDisplayWindow
 from jparty.web.controller import BuzzerController
@@ -145,7 +144,7 @@ def audio_error() -> None:
     logging.error("Cannot access audio device")
     QMessageBox.critical(
         None,
-        "Audio error Error",
+        "Audio Error",
         "JParty cannot access an audio device.",
         buttons=QMessageBox.StandardButton.Abort,
         defaultButton=QMessageBox.StandardButton.Abort,
@@ -436,11 +435,10 @@ def launch_gui() -> None:
     main_window = DisplayWindow(game)
     host_window = HostDisplayWindow(game)
     game.setDisplays(host_window, main_window)
-    try:
-        game.begin()
-    except SimpleaudioError:
+    if not has_audio_output():
         audio_error()
         exit(1)
+    game.begin()
     song_player = game.song_player
     r = 1
     try:
