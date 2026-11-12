@@ -431,6 +431,37 @@ class FakeBuzzerController:
         return bool(self.saved_player_profiles)
 
 
+class FakeTimeModule(SimpleNamespace):
+    """Stand-in ``time`` module whose ``time()`` reads a ``TimeController``.
+
+    Everything else (``sleep``, ``monotonic``, ...) is the real ``time``
+    module, so only the wall clock the game reads is faked.
+    """
+
+    def __init__(self, controller: object) -> None:
+        """Wrap ``controller`` as this module's ``time()``."""
+        super().__init__(time=controller.time)
+
+    def __getattr__(self, name: str) -> object:
+        """Fall back to the real ``time`` module."""
+        return getattr(time, name)
+
+
+def patch_jparty_clock(monkeypatch: object, controller: object) -> None:
+    """Point every loaded ``jparty`` module's ``time`` at ``controller``.
+
+    Only JParty's own references are replaced. Patching ``time.time`` on the
+    shared ``time`` module would also fake the clock pytest-qt uses for its
+    timeouts, so a failing ``qtbot.waitUntil`` would hang instead of failing.
+    """
+    fake_time = FakeTimeModule(controller)
+    for name, module in list(sys.modules.items()):
+        if (name == "jparty" or name.startswith("jparty.")) and getattr(
+            module, "time", None
+        ) is time:
+            monkeypatch.setattr(module, "time", fake_time)
+
+
 class TimeController:
     """Test helper for timecontroller."""
 
@@ -546,7 +577,7 @@ def game(
     # real audio on the machine running them.
     monkeypatch.setattr(game_module, "SongPlayer", FakeSongPlayer)
     monkeypatch.setattr(game_module, "QuestionTimer", FakeTimer)
-    monkeypatch.setattr(game_module.time, "time", time_controller.time)
+    patch_jparty_clock(monkeypatch, time_controller)
     game = Game()
     game._game_state_dir = temp_dir / "game_state"
     game._game_state_dir.mkdir()
