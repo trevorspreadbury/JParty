@@ -1,6 +1,7 @@
 """Test game state module."""
 
 import json
+import os
 
 import pytest
 
@@ -84,7 +85,7 @@ def test_save_general_state_writes_general_json(
     game: object, players: object, monkeypatch: object
 ) -> None:
     """Test test save general state writes general json."""
-    monkeypatch.setenv("JPARTY_GAME_ID", "7777")
+    game.set_session_game_id("7777")
     game.set_selected_round_indices([0, 2])
     game.set_board_selection_configs(
         [
@@ -112,7 +113,7 @@ def test_get_current_game_state_uses_started_at_and_players(
     game: object, players: object, monkeypatch: object, time_controller: object
 ) -> None:
     """Test test get current game state uses started at and players."""
-    monkeypatch.setenv("JPARTY_GAME_ID", "8888")
+    game.set_session_game_id("8888")
     time_controller.set(2000.0)
     game._game_started_at = 1234.0
     state = game._get_current_game_state()
@@ -141,7 +142,7 @@ def test_initialize_game_state_dir_uses_game_id_and_local_timestamp(
     game: object, monkeypatch: object
 ) -> None:
     """Test test initialize game state dir uses game id and local timestamp."""
-    monkeypatch.setenv("JPARTY_GAME_ID", "9999")
+    game.set_session_game_id("9999")
 
     class FakeNow:
         """Test helper for fakenow."""
@@ -1091,3 +1092,58 @@ def test_build_end_game_summary_counts_manual_adjustment_as_its_own_event(
 
     assert summary.game_stats.lead_changes == 1
     assert _series_by_player(summary)[1] == [0, 0, 500]
+
+
+def test_score_graph_uses_composed_session_game_id(
+    game: object,
+    players: object,
+    monkeypatch: object,
+    sample_saved_game_dir: object,
+    temp_dir: object,
+) -> None:
+    """A Frankenstein game's graph is titled and named with its session id.
+
+    Loading source games used to leave the last one's id in the process
+    environment, and the graph read it from there.
+    """
+    import matplotlib.axes
+
+    import jparty.domain.game_engine as game_module
+
+    monkeypatch.setenv("JPARTY_GAME_ID", "5000")
+    monkeypatch.setattr(game_module, "GAME_SCORES_DIR", temp_dir / "scores")
+    titles = []
+    original_set_title = matplotlib.axes.Axes.set_title
+
+    def record_title(
+        self: object, label: str, *args: object, **kwargs: object
+    ) -> object:
+        titles.append(label)
+        return original_set_title(self, label, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "set_title", record_title)
+    game._game_state_dir = sample_saved_game_dir
+    game.set_session_game_id("frankenstein-4453-5000")
+
+    game.generate_final_score_graph("original")
+
+    assert titles == ["Game frankenstein-4453-5000: Player Scores"]
+    assert (temp_dir / "scores" / "frankenstein-4453-5000-original.jpg").exists()
+
+
+def test_get_game_does_not_write_the_game_id_to_the_environment(
+    monkeypatch: object,
+) -> None:
+    """Loading a game must not change process-wide state.
+
+    Source games load on worker threads, so a shared variable would hold
+    whichever game finished last.
+    """
+    from jparty.services import archive_client
+
+    monkeypatch.delenv("JPARTY_GAME_ID", raising=False)
+    monkeypatch.setattr(archive_client, "_get_archive_game", lambda game_id: None)
+
+    archive_client.get_game("4453")
+
+    assert "JPARTY_GAME_ID" not in os.environ

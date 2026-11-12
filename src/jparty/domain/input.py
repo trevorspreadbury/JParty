@@ -14,7 +14,6 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import Qt
 
-MAX_PLAYERS = 6
 index_to_key = {
     0: Qt.Key.Key_Q,
     1: Qt.Key.Key_W,
@@ -23,6 +22,9 @@ index_to_key = {
     4: Qt.Key.Key_T,
     5: Qt.Key.Key_Y,
 }
+# Each seat needs its own host buzzer key, and the scoreboard and end-of-game
+# summary are laid out for six players, so the key map sets the player limit.
+MAX_PLAYERS = len(index_to_key)
 
 
 class QuestionTimer:

@@ -31,7 +31,7 @@ The host sees the answer on the laptop screen and can adjudicate with the arrow 
 
 ## Features:
 - WebSocket buzzer for use on mobile devices 
-- Up to 8 players
+- Up to 6 players
 - Complete access to all games on J-Archive
 - Load custom games via a <a href="https://docs.google.com/spreadsheets/d/1JqfJ_OgTstaXTyH5nV3_eN6YXqvZ1RviPmN7OwLhG0U/edit?usp=sharing">simple Google Sheets template</a>
 - Scrape games from https://jeopardylabs.com using this <a href="https://chrome.google.com/webstore/detail/jeopardy-labs-to-csv/biijijhfghhckhlkjbonjedmgnkmenlk?hl=en&authuser=0">Google Chrome extension</a>

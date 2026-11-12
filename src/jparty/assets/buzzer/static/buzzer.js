@@ -216,6 +216,7 @@ var updater = {
         updater.socket.onmessage = function(event) {
             jsondata = JSON.parse(event.data);
             switch (jsondata.message) {
+                case "FULL":
                 case "GAMEFULL":
                     alert("Game has too many players!")
                     window.location.reload()

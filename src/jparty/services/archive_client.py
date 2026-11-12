@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 
 from bs4 import BeautifulSoup
 
@@ -155,7 +154,6 @@ def _get_archive_game(game_id: object) -> object:
 
 def get_game(game_id: object) -> object:
     """Load a game from either J-Archive-style HTML or Google Sheets."""
-    os.environ["JPARTY_GAME_ID"] = str(game_id)
     if len(str(game_id)) < GOOGLE_SHEETS_ID_LENGTH:
         return _get_archive_game(game_id)
     return get_Gsheet_game(str(game_id))

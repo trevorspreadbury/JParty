@@ -114,7 +114,7 @@ def _game_with_real_windows(qtbot: object, game: object, monkeypatch: object) ->
     for module in (borders, scoreboard, welcome_loader):
         monkeypatch.setattr(module, "Thread", _InertThread)
     monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
-    monkeypatch.setenv("JPARTY_GAME_ID", "4453")
+    game.set_session_game_id("4453")
     game.buzzer_controller.host = lambda: "localhost"
     game.buzzer_controller.restart = lambda: None
     game.buzzer_controller.lectern_connections = {}

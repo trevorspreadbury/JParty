@@ -9,6 +9,8 @@ across the app, domain, and UI layers.
 import os
 from pathlib import Path
 
+from jparty.domain.input import MAX_PLAYERS
+
 DEBUG_ENV_VAR = "JPARTY_DEBUG"
 _TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
 
@@ -32,7 +34,7 @@ APP_NAME = "JParty"
 FJTIME = 31
 QUESTIONTIME = 4
 MONIES = [[200, 400, 600, 800, 1000], [400, 800, 1200, 1600, 2000]]
-MAXPLAYERS = 8
+MAXPLAYERS = MAX_PLAYERS
 PORT = 8080
 EARLY_BUZZ_PENALTY = 0.25
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
