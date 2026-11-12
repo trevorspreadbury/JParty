@@ -63,8 +63,12 @@ var updater = {
             logoElement.style.display = "none";
             nameElement.style.display = "block";
             if (state.name.substring(0, 21) === "data:image/png;base64") {
-                // It's a signature image
-                nameElement.innerHTML = '<img src="' + state.name + '" alt="Player Signature">';
+                // It's a signature image. Build the element directly so the
+                // name is never parsed as HTML.
+                var image = document.createElement("img");
+                image.src = state.name;
+                image.alt = "Player Signature";
+                nameElement.replaceChildren(image);
             } else {
                 nameElement.textContent = state.name;
             }

@@ -91,6 +91,7 @@ class BuzzerController:
     saved_player_profiles: dict[int, SavedPlayerProfile]
     seat_order: list[int]
     resume_mode_active: bool
+    late_answer_players: set[Player]
 
     def __init__(self, game: Game) -> None:
         """Initialize the buzzer controller and its Tornado application.
@@ -116,6 +117,10 @@ class BuzzerController:
         self.saved_player_profiles = {}
         self.seat_order = []
         self.resume_mode_active = False
+        # Players whose phone still had the answer box open when time ran
+        # out. Each may send one last answer (the phone resubmits its box on
+        # ``TOOLATE``); see ``toolate`` and ``answer``.
+        self.late_answer_players = set()
 
     def start(self, threaded: bool = True, tries: int = 0) -> None:
         """Start the Tornado server, retrying with higher ports if needed.
@@ -212,6 +217,7 @@ class BuzzerController:
                 self.close_socket(p.waiter)
         self.connected_players = []
         self.accepting_players = True
+        self.late_answer_players = set()
         self.clear_saved_player_reclaim()
 
     def register_socket(self, socket_handler: BuzzerSocketHandler) -> None:
@@ -586,32 +592,51 @@ class BuzzerController:
             i_player = self.connected_players.index(player)
             self.game.buzz_hint_trigger.emit(i_player)
 
-    def wager(self, player: Player, amount: int) -> None:
+    def wager(self, player: Player | None, amount: int) -> None:
         """Forward a player's Final Jeopardy wager into the game engine.
 
+        The wager is ignored unless the player's wager prompt is open, so a
+        phone can wager only once. The amount is clamped to what the player
+        may bet (``Player.clamp_final_wager``) before it reaches the game.
+
         Args:
-            player: Player object submitting the wager.
+            player: Player object submitting the wager, or ``None`` for a
+                socket that never joined.
             amount: Numeric wager amount from the client.
 
         Returns:
             ``None``.
         """
+        if player is None or player.page != "wager":
+            logging.warning("Ignoring wager from %s outside the wager phase", player)
+            return
+        player.page = "null"
         i_player = self.game.players.index(player)
-        self.game.wager_trigger.emit(i_player, amount)
+        self.game.wager_trigger.emit(i_player, player.clamp_final_wager(amount))
 
-    def answer(self, player: Player, guess: str) -> None:
+    def answer(self, player: Player | None, guess: str) -> None:
         """Forward a player's Final Jeopardy response into the game engine.
 
+        The answer is ignored unless the player's answer box is open, or time
+        has just run out and this is the phone resubmitting its box after
+        ``TOOLATE``. Either way each player answers at most once.
+
         Args:
-            player: Player object submitting the response.
+            player: Player object submitting the response, or ``None`` for a
+                socket that never joined.
             guess: Final response text from the client.
 
         Returns:
             ``None``.
         """
-        if self.game:
-            self.game.answer(player, guess)
-            player.page = "null"
+        if player is None or not self.game:
+            return
+        if player.page != "answer" and player not in self.late_answer_players:
+            logging.warning("Ignoring answer from %s outside the answer phase", player)
+            return
+        self.late_answer_players.discard(player)
+        player.page = "null"
+        self.game.answer(player, guess)
 
     def new_player(self, player: Player) -> None:
         """Register a newly connected player and notify the game.
@@ -689,6 +714,7 @@ class BuzzerController:
         Returns:
             ``None``.
         """
+        self.late_answer_players = set()
         for p in self.connected_players:
             self.send_to(p.waiter, "PROMPTANSWER")
             p.page = "answer"
@@ -696,10 +722,18 @@ class BuzzerController:
     def toolate(self) -> None:
         """Notify all connected players that the response window has closed.
 
+        Each phone replies to ``TOOLATE`` by submitting whatever is in its
+        answer box, so players who had not answered yet may send one last
+        answer. Their page is set to ``"null"`` so a phone that reconnects
+        does not show the answer box again.
+
         Returns:
             ``None``.
         """
         for p in self.connected_players:
+            if p.page == "answer":
+                self.late_answer_players.add(p)
+                p.page = "null"
             self.send_to(p.waiter, "TOOLATE")
 
     def get_player_by_number(self, player_number: int) -> Player | None:
@@ -715,11 +749,18 @@ class BuzzerController:
             return self.game.players[player_number]
         return None
 
-    def get_player_state_dict(self, player: Player) -> PlayerStateDict:
+    def get_player_state_dict(
+        self, player: Player, show_final_answer: bool = False
+    ) -> PlayerStateDict:
         """Build the serialized lectern state for a player.
+
+        Lecterns are not authenticated, so the Final Jeopardy answer is left
+        out unless the host is revealing it.
 
         Args:
             player: Player object whose state should be exposed.
+            show_final_answer: Whether to include the player's Final Jeopardy
+                answer.
 
         Returns:
             Dictionary containing the player's lectern-facing state fields.
@@ -730,7 +771,9 @@ class BuzzerController:
             "player_number": player.player_number,
             "active": False,
             "buzzed": False,
-            "finalanswer": getattr(player, "finalanswer", None),
+            "finalanswer": (
+                getattr(player, "finalanswer", None) if show_final_answer else None
+            ),
         }
 
     def broadcast_to_lecterns(

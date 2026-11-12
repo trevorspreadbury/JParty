@@ -35,8 +35,10 @@ class PlayerStateBroadcaster:
                 if self.game.answering_player
                 else False
             )
-            if not show_final_answer:
-                state_dict["finalanswer"] = None
+            # Only send the Final answer when the host reveals it.
+            state_dict["finalanswer"] = (
+                getattr(player, "finalanswer", None) if show_final_answer else None
+            )
             self.game.lectern_update_trigger.emit(player.player_number, state_dict)
 
     def update_all(self) -> None:
