@@ -156,6 +156,7 @@ class HostImageQuestionWidget(QWidget):
         self.current_pixmap = None
         self.image_url = self.question.image_url
         self._request_generation = 0
+        self._current_reply = None
         self.network_manager = QNetworkAccessManager(self)
         self.setup_ui()
         if self.image_url:
@@ -231,6 +232,7 @@ class HostImageQuestionWidget(QWidget):
         """Add buttons to accept or reject the image."""
         self.buttons_layout = QHBoxLayout()
         self.start_button = QPushButton("Accept Image", self)
+        self.start_button.setEnabled(False)
         self.start_button.clicked.connect(self.on_accept_image_clicked)
         self.buttons_layout.addWidget(self.start_button)
         self.reject_button = QPushButton("No Image Necessary", self)
@@ -239,7 +241,10 @@ class HostImageQuestionWidget(QWidget):
         self.right_layout.addLayout(self.buttons_layout)
 
     def _begin_request(self, status_text: object) -> int:
-        """Invalidate in-flight requests and clear the current image.
+        """Cancel in-flight requests and clear the current image.
+
+        Accept stays disabled until the new request loads a valid image, so
+        the host can never accept a picture other than the one shown.
 
         Args:
             status_text: Placeholder text shown while the request runs.
@@ -248,8 +253,11 @@ class HostImageQuestionWidget(QWidget):
             The generation number identifying the new request.
         """
         self._request_generation += 1
-        self.current_pixmap = None
-        self.image_label.clear()
+        previous_reply = self._current_reply
+        self._current_reply = None
+        if previous_reply is not None and not sip.isdeleted(previous_reply):
+            previous_reply.abort()
+        self._clear_current_image()
         self.image_label.setText(status_text)
         return self._request_generation
 
@@ -272,11 +280,17 @@ class HostImageQuestionWidget(QWidget):
         )
         request.setTransferTimeout(REQUEST_TIMEOUT_SECONDS * 1000)
         reply = self.network_manager.get(request)
+        self._current_reply = reply
 
         def on_finished() -> None:
             reply.deleteLater()
-            if sip.isdeleted(self) or generation != self._request_generation:
+            if sip.isdeleted(self):
                 return
+            if generation != self._request_generation or (
+                reply is not self._current_reply
+            ):
+                return
+            self._current_reply = None
             handler(reply)
 
         reply.finished.connect(on_finished)
@@ -307,7 +321,7 @@ class HostImageQuestionWidget(QWidget):
         if reply.error() == QNetworkReply.NetworkError.NoError:
             image_url = parse_wikimedia_image_response(bytes(reply.readAll()))
         if image_url == NO_IMAGE_FOUND:
-            self.image_label.setText("Failed to load image.")
+            self._show_load_failure()
         else:
             self.image_url = image_url
             self.fetch_image(image_url)
@@ -337,15 +351,31 @@ class HostImageQuestionWidget(QWidget):
             pixmap.loadFromData(reply.readAll())
             self.handle_pixmap_load(pixmap)
         else:
-            self.image_label.setText("Failed to load image.")
+            self._show_load_failure()
 
     def handle_pixmap_load(self, pixmap: object) -> None:
-        """Update the image display with the given pixmap."""
+        """Update the image display with the given pixmap.
+
+        A valid pixmap becomes the current image and enables Accept; a null
+        pixmap is treated as a failed load.
+        """
         if not pixmap.isNull():
             self.current_pixmap = pixmap
+            self.start_button.setEnabled(True)
             self.update_image_display()
         else:
-            self.image_label.setText("Failed to load image.")
+            self._show_load_failure()
+
+    def _clear_current_image(self) -> None:
+        """Drop the current image and disable Accept until a new one loads."""
+        self.current_pixmap = None
+        self.start_button.setEnabled(False)
+        self.image_label.clear()
+
+    def _show_load_failure(self) -> None:
+        """Clear the current image and tell the host the load failed."""
+        self._clear_current_image()
+        self.image_label.setText("Failed to load image.")
 
     def start_debounce_timer(self, _: object) -> None:
         """Restart the debounce timer for text input."""
@@ -359,11 +389,6 @@ class HostImageQuestionWidget(QWidget):
             self.fetch_image(self.image_url)
         else:
             self.search_image(input_text)
-        self.update_accept_button(input_text)
-
-    def update_accept_button(self, input_text: object) -> None:
-        """Enable or disable the accept button based on input."""
-        self.start_button.setEnabled(bool(input_text.strip()))
 
     def resizeEvent(self, event: object) -> None:
         """Handle resize events to update the image display."""
@@ -382,7 +407,9 @@ class HostImageQuestionWidget(QWidget):
             self.image_label.setPixmap(scaled_pixmap)
 
     def on_accept_image_clicked(self) -> None:
-        """Handle accept image button click."""
+        """Accept the image currently shown; do nothing if none has loaded."""
+        if self.current_pixmap is None or self.current_pixmap.isNull():
+            return
         self.question.image = True
         self.question.image_url = self._store_accepted_image()
         self.game.accept_image()
