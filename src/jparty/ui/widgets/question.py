@@ -166,6 +166,10 @@ class HostQuestionWidget(QuestionWidget):
         return True
 
 
+# The host display has a black background, so the review text must be light.
+IMAGE_REVIEW_TEXT_STYLE = "color: white;"
+
+
 class HostImageQuestionWidget(QWidget):
     """Widget to display and manage an image-based question for a game.
 
@@ -222,6 +226,7 @@ class HostImageQuestionWidget(QWidget):
         self.question_label.setFont(QFont("ITC Korinna", 16))
         self.question_label.setWordWrap(True)
         self.question_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.question_label.setStyleSheet(IMAGE_REVIEW_TEXT_STYLE)
         self.left_layout.addWidget(self.question_label)
 
     def setup_answer_label(self) -> None:
@@ -230,6 +235,7 @@ class HostImageQuestionWidget(QWidget):
         self.answer_label.setFont(QFont("ITC Korinna", 14))
         self.answer_label.setWordWrap(True)
         self.answer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.answer_label.setStyleSheet(IMAGE_REVIEW_TEXT_STYLE)
         self.left_layout.addWidget(self.answer_label)
 
     def setup_right_layout(self) -> None:
@@ -245,7 +251,9 @@ class HostImageQuestionWidget(QWidget):
         """Create and configure the image display label."""
         self.image_label = QLabel("Loading image...", self)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.image_label.setStyleSheet("border: 1px solid black;")
+        self.image_label.setStyleSheet(
+            f"{IMAGE_REVIEW_TEXT_STYLE} border: 1px solid white;"
+        )
         self.image_label.setSizePolicy(
             QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.MinimumExpanding
         )
@@ -598,7 +606,9 @@ class HostFinalJeopardyWidget(FinalJeopardyWidget, HostQuestionWidget):
         self.answer_label.setVisible(False)
         self.main_layout.setStretchFactor(self.question_label, 6)
         self.hint_label = MyLabel(
-            "Waiting for all players to wager...", self.startFontSize, self
+            "Waiting for all players to wager... (Enter: open now, missing wagers = $0)",
+            self.startFontSize,
+            self,
         )
         self.main_layout.replaceWidget(self.answer_label, self.hint_label)
         self.main_layout.setStretchFactor(self.hint_label, 1)

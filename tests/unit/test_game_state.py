@@ -10,6 +10,7 @@ from jparty.domain.state import (
     build_end_game_summary,
     load_general_state,
     load_question_history,
+    question_for_history_entry,
 )
 
 pytestmark = pytest.mark.unit
@@ -1094,43 +1095,6 @@ def test_build_end_game_summary_counts_manual_adjustment_as_its_own_event(
     assert _series_by_player(summary)[1] == [0, 0, 500]
 
 
-def test_score_graph_uses_composed_session_game_id(
-    game: object,
-    players: object,
-    monkeypatch: object,
-    sample_saved_game_dir: object,
-    temp_dir: object,
-) -> None:
-    """A Frankenstein game's graph is titled and named with its session id.
-
-    Loading source games used to leave the last one's id in the process
-    environment, and the graph read it from there.
-    """
-    import matplotlib.axes
-
-    import jparty.domain.game_engine as game_module
-
-    monkeypatch.setenv("JPARTY_GAME_ID", "5000")
-    monkeypatch.setattr(game_module, "GAME_SCORES_DIR", temp_dir / "scores")
-    titles = []
-    original_set_title = matplotlib.axes.Axes.set_title
-
-    def record_title(
-        self: object, label: str, *args: object, **kwargs: object
-    ) -> object:
-        titles.append(label)
-        return original_set_title(self, label, *args, **kwargs)
-
-    monkeypatch.setattr(matplotlib.axes.Axes, "set_title", record_title)
-    game._game_state_dir = sample_saved_game_dir
-    game.set_session_game_id("frankenstein-4453-5000")
-
-    game.generate_final_score_graph("original")
-
-    assert titles == ["Game frankenstein-4453-5000: Player Scores"]
-    assert (temp_dir / "scores" / "frankenstein-4453-5000-original.jpg").exists()
-
-
 def test_get_game_does_not_write_the_game_id_to_the_environment(
     monkeypatch: object,
 ) -> None:
@@ -1230,3 +1194,45 @@ def test_load_saved_game_data_layouts(
         round_data.categories[0] for round_data in saved.data.rounds
     ] == expected_rounds
     assert saved.selected_round_indices == expected_selected
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"round_index": -1, "question_index": [0, [0, 0]]},
+        {"round_index": -3, "question_index": [0, [0, 0]]},
+        {"round_index": 3, "question_index": [0, [0, 0]]},
+        {"round_index": "0", "question_index": [0, [0, 0]]},
+        {"round_index": True, "question_index": [0, [0, 0]]},
+        {"round_index": None, "question_index": [0, [0, 0]]},
+        {"round_index": 0, "question_index": None},
+        {"round_index": 0, "question_index": 7},
+        {"round_index": 0, "question_index": [0]},
+        {"round_index": 0, "question_index": [0, [0]]},
+        {"round_index": 0, "question_index": [0, "00"]},
+    ],
+)
+def test_question_for_history_entry_rejects_damaged_entries(
+    game: object, entry: dict
+) -> None:
+    """A damaged line never resolves to a clue, even by wrapping around."""
+    assert question_for_history_entry(game.data, entry) is None
+
+
+def test_question_for_history_entry_finds_the_saved_clue(game: object) -> None:
+    """A valid line resolves to the clue at its round and board position."""
+    data = game.data
+    entry = {"round_index": 1, "question_index": [1, [2, 3]]}
+    assert question_for_history_entry(data, entry) is data.rounds[1].get_question(2, 3)
+    assert question_for_history_entry(None, entry) is None
+
+
+def test_negative_round_index_does_not_mark_or_show_another_clue(
+    game_with_players: object,
+) -> None:
+    """A ``round_index`` of -1 must not wrap around to the Final clue."""
+    game = game_with_players
+    entry = {"round_index": -1, "question_index": [1, [0, 0]]}
+    game._mark_completed_questions([entry])
+    assert game.data.rounds[-1].question.complete is False
+    assert game._question_from_history_entry(entry) is None

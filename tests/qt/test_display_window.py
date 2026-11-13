@@ -3,8 +3,10 @@
 from types import SimpleNamespace
 
 import pytest
-from PyQt6.QtCore import QRect, Qt
+from PyQt6.QtCore import QEvent, QRect, Qt
+from PyQt6.QtGui import QKeyEvent
 
+from jparty.domain.input import KeystrokeManager
 from jparty.domain.models import Question
 from jparty.ui.windows.display import DisplayWindow, HostDisplayWindow
 
@@ -331,3 +333,29 @@ def test_failed_image_review_screen_leaves_board_usable(
     for window in (board_window, host_window):
         window.load_question(text_question)
         _assert_showing_clue(window, text_question)
+
+
+@pytest.mark.parametrize(("auto_repeat", "expected_calls"), [(False, 1), (True, 0)])
+def test_host_key_auto_repeat_is_ignored(
+    qtbot: object, auto_repeat: bool, expected_calls: int
+) -> None:
+    """Holding a key fires its host action once, not again for each repeat."""
+    calls = []
+    game = _stub_game()
+    game.keystroke_manager = KeystrokeManager()
+    game.keystroke_manager.addEvent(
+        "STEP", Qt.Key.Key_Space, lambda: calls.append(1), active=True, persistent=True
+    )
+    host_window = StubHostDisplayWindow(game)
+    qtbot.addWidget(host_window)
+    event = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_Space,
+        Qt.KeyboardModifier.NoModifier,
+        " ",
+        auto_repeat,
+    )
+
+    host_window.keyPressEvent(event)
+
+    assert len(calls) == expected_calls

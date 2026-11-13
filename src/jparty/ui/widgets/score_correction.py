@@ -146,7 +146,9 @@ class ScoreCorrectionDialog(QDialog):
         summary_layout.addWidget(QLabel(f"Value: {entry['value']}", group))
         if entry["is_daily_double"]:
             value_input = QSpinBox(group)
-            value_input.setRange(5, 50000)
+            # A Daily Double can be worth more than 50,000 (the cap is the
+            # player's score), so never clamp the recorded wager on open.
+            value_input.setRange(5, max(50000, int(entry["value"])))
             value_input.setValue(int(entry["value"]))
             summary_layout.addWidget(QLabel("Daily Double value:", group))
             summary_layout.addWidget(value_input)

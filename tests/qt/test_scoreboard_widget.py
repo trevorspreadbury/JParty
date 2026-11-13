@@ -218,6 +218,20 @@ def test_score_correction_dialog_collects_clicked_ruling(qtbot: object) -> None:
     ]
 
 
+def test_score_correction_dialog_keeps_daily_double_wager_above_50000(
+    qtbot: object,
+) -> None:
+    """Saving without edits must not clamp a large Daily Double wager."""
+    game = StubScoreGame()
+    entry = game.get_recent_score_corrections(limit=1)[0]
+    entry.update({"value": 60000, "is_daily_double": True})
+    dialog = ScoreCorrectionDialog([entry], game.players)
+    qtbot.addWidget(dialog)
+
+    assert dialog._entry_widgets[0]["value_input"].value() == 60000
+    assert dialog.collect_changes() == []
+
+
 def test_host_player_click_adjusts_score_only_when_no_question_active(
     qtbot: object,
 ) -> None:

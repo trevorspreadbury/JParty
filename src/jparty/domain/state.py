@@ -15,6 +15,7 @@ from itertools import zip_longest
 from pathlib import Path
 
 from jparty.domain.models import FinalBoard
+from jparty.services.game_cache import write_text_atomic
 
 QUESTION_HISTORY_FILE_NAME = "question_history.jsonl"
 # Version of the question_history.jsonl format, recorded in general.json
@@ -679,6 +680,10 @@ def corrected_history_entries(entries: list[dict]) -> list[dict]:
 def save_general_state(game: object) -> None:
     """Write the current high-level game session metadata to disk.
 
+    The file is replaced atomically, so a full disk or a killed process
+    leaves the previous ``general.json`` in place instead of an empty or
+    partial one. If the write fails, the host is warned.
+
     Args:
         game: Active ``Game`` instance whose metadata should be persisted.
 
@@ -692,10 +697,18 @@ def save_general_state(game: object) -> None:
     state = get_current_game_state(game)
     general_file = game._game_state_dir / "general.json"
     try:
-        with Path(general_file).open("w") as file_obj:
-            json.dump(state, file_obj, indent=JSON_INDENT_SPACES)
+        write_text_atomic(
+            Path(general_file), json.dumps(state, indent=JSON_INDENT_SPACES)
+        )
     except Exception as exc:
-        logging.error("Error saving general state: %s", exc)
+        logging.error("Error saving general state: %s", exc, exc_info=True)
+        reason = getattr(exc, "strerror", None) or exc
+        game.show_host_warning(
+            "Game Not Saved",
+            f"Could not save the game details to {general_file}: {reason}.\n\n"
+            "You can keep playing, but Load Saved may not be able to resume "
+            "this game. Check that the saved game folder can be written to.",
+        )
 
 
 def classify_buzz_phases(game: object) -> object:
@@ -930,25 +943,31 @@ def load_saved_game_data(general_state: dict) -> SavedGameData:
     )
 
 
-def _question_for_history_entry(game: object, entry: object) -> object:
-    """Resolve the archived clue referenced by a saved question-history entry.
+def question_for_history_entry(game_data: object, entry: object) -> object:
+    """Resolve the clue a saved history entry points at.
+
+    Every reader of ``round_index``/``question_index`` goes through this, so
+    a damaged line is rejected the same way everywhere. A negative or
+    non-integer round index is rejected rather than wrapping around to a
+    different round.
 
     Args:
-        game: Active or completed ``Game`` instance with loaded rounds.
+        game_data: Loaded ``GameData`` (or ``None``).
         entry: Persisted per-question history dictionary.
 
     Returns:
-        The matching ``Question`` object, or ``None`` when the clue cannot be
-        located in the currently loaded game data.
+        The matching ``Question`` object, or ``None`` when the entry does not
+        point at a clue in ``game_data``.
     """
+    rounds = getattr(game_data, "rounds", None) or []
     round_index = entry.get("round_index")
     question_index = entry.get("question_index")
     if (
-        round_index is None
-        or question_index is None
+        not isinstance(round_index, int)
+        or isinstance(round_index, bool)
+        or not 0 <= round_index < len(rounds)
+        or not isinstance(question_index, list | tuple)
         or len(question_index) < QUESTION_INDEX_TOP_LEVEL_PART_COUNT
-        or round_index < 0
-        or round_index >= len(getattr(game.data, "rounds", []))
     ):
         return None
     question_coords = question_index[1]
@@ -957,9 +976,8 @@ def _question_for_history_entry(game: object, entry: object) -> object:
         or len(question_coords) != QUESTION_COORD_PART_COUNT
     ):
         return None
-    round_data = game.data.rounds[round_index]
     try:
-        return round_data.get_question(*question_coords)
+        return rounds[round_index].get_question(*question_coords)
     except AttributeError:
         return None
 
@@ -989,7 +1007,7 @@ def reconstruct_original_score_history(game: object) -> dict[str, list[int]]:
         )
         if question_number <= INITIAL_SCORE:
             continue
-        clue = _question_for_history_entry(game, entry)
+        clue = question_for_history_entry(game.data, entry)
         actual_results = (
             getattr(clue, "actual_results", None) if clue is not None else None
         )
