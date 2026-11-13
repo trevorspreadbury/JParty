@@ -573,7 +573,9 @@ class HostFinalJeopardyWidget(FinalJeopardyWidget, HostQuestionWidget):
         self.answer_label.setVisible(False)
         self.main_layout.setStretchFactor(self.question_label, 6)
         self.hint_label = MyLabel(
-            "Waiting for all players to wager...", self.startFontSize, self
+            "Waiting for all players to wager... (Enter: open now, missing wagers = $0)",
+            self.startFontSize,
+            self,
         )
         self.main_layout.replaceWidget(self.answer_label, self.hint_label)
         self.main_layout.setStretchFactor(self.hint_label, 1)

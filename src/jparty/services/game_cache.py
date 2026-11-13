@@ -5,7 +5,35 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
+
+# Pauses, in seconds, between attempts to move a finished temporary file over
+# its destination. On Windows, antivirus, the search indexer, or a reader that
+# has the old file open can briefly hold a handle on it, which makes
+# ``os.replace`` fail with ``PermissionError``. The worst case adds 0.5 s
+# before giving up.
+_REPLACE_RETRY_DELAYS = (0.05, 0.1, 0.15, 0.2)
+
+
+def _sleep(seconds: float) -> None:
+    """Pause between replace attempts. Tests patch this to avoid waiting."""
+    time.sleep(seconds)
+
+
+def _replace_with_retry(source: Path, destination: Path) -> None:
+    """Move ``source`` over ``destination``, retrying on ``PermissionError``.
+
+    The last ``PermissionError`` is re-raised if every attempt fails. Other
+    errors are raised at once.
+    """
+    for delay in _REPLACE_RETRY_DELAYS:
+        try:
+            source.replace(destination)
+            return
+        except PermissionError:
+            _sleep(delay)
+    source.replace(destination)
 
 
 def write_text_atomic(path: Path, text: str) -> Path:
@@ -14,6 +42,7 @@ def write_text_atomic(path: Path, text: str) -> Path:
     The text goes to a temporary file in the same directory first, which is
     then moved over ``path`` with ``os.replace``. If the process dies part way
     through, ``path`` is either missing or still holds its previous contents.
+    The move is retried briefly if Windows reports the file as locked.
 
     Args:
         path: Destination file.
@@ -32,7 +61,7 @@ def write_text_atomic(path: Path, text: str) -> Path:
             temp_file.write(text)
             temp_file.flush()
             os.fsync(temp_file.fileno())
-        Path(temp_name).replace(path)
+        _replace_with_retry(Path(temp_name), path)
     except BaseException:
         try:
             Path(temp_name).unlink()

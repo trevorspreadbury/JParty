@@ -156,6 +156,30 @@ class GameData:
             if isinstance(round_data, Board) and not isinstance(round_data, FinalBoard)
         )
 
+    def source_daily_double_counts(self, round_indices: object) -> list[int]:
+        """Return the regular Daily Double counts for some of this game's rounds.
+
+        Standard round *i* of the source game is expected to have at least
+        *i* + 1 Daily Doubles, so the count depends on where a round sits in
+        this game, not on which other rounds the host picked.
+
+        Args:
+            round_indices: Indices into ``rounds``, in play order.
+
+        Returns:
+            One expected count per selected standard round, in order. Final
+            rounds and out-of-range indices are skipped.
+        """
+        standard_positions = {}
+        for index, round_data in enumerate(self.rounds):
+            if isinstance(round_data, Board) and not isinstance(round_data, FinalBoard):
+                standard_positions[index] = len(standard_positions)
+        return [
+            standard_positions[index] + 1
+            for index in round_indices
+            if index in standard_positions
+        ]
+
     def has_missing_daily_double(self, expected_counts: object = None) -> bool:
         """Return whether any standard round is missing a Daily Double.
 

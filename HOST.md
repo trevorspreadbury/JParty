@@ -181,6 +181,11 @@ The main host keys are:
 - `Space`: advance the current game state
 - `Left Arrow`: rule an answer correct
 - `Right Arrow`: rule an answer incorrect
+- `Enter`: during Final Jeopardy wagering, open the clue without waiting for
+  the remaining wagers (see [Final Jeopardy](#final-jeopardy))
+
+Holding a key down counts as one press, so a long press of `Space` only
+advances one step.
 
 In practice, `Space` is reused throughout the game for things like:
 
@@ -231,6 +236,11 @@ The general flow is:
 6. Use `Left Arrow` or `Right Arrow` to judge each response.
 
 JParty judges Final Jeopardy responses in score order, starting from the lowest score.
+
+If a player can't wager (their phone died, they left, or they are not really
+playing), press `Enter` while JParty is waiting for wagers. The clue opens
+right away and every missing wager counts as $0. Wagers already sent are kept,
+and a wager that arrives after you press `Enter` is ignored.
 
 ## Editing Scores
 
@@ -332,6 +342,7 @@ Back to [Table of Contents](#table-of-contents).
 - `Space`: open buzz / advance state
 - `Left Arrow`: correct
 - `Right Arrow`: incorrect
+- `Enter` while waiting for Final wagers: open Final, missing wagers count as $0
 - `Edit Score`: fix recent clue rulings
 - Click podium with no active clue: manual score override
 - `Load Question Media`: import clue images for a game id
