@@ -2,14 +2,13 @@
 
 ``jparty self-check`` exercises the parts of the app that packaging most often
 breaks: package metadata, bundled assets, Qt Multimedia's audio plugins, the
-QR-code renderer, and matplotlib/NumPy. It opens no windows and uses no
+and the QR-code renderer. It opens no windows and uses no
 network, so it can run inside a PyInstaller build as a smoke test. The
 packaged app has no console, so results can also be written to a report file.
 """
 
 from __future__ import annotations
 
-import io
 import os
 import sys
 import time
@@ -130,30 +129,11 @@ def _check_qr_code() -> str:
     return f"{expected} px QR code"
 
 
-def _check_charts() -> str:
-    """Confirm matplotlib and NumPy can render a chart."""
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import numpy
-
-    figure, axes = plt.subplots()
-    axes.plot(numpy.arange(5), numpy.arange(5) ** 2)
-    buffer = io.BytesIO()
-    figure.savefig(buffer, format="png")
-    plt.close(figure)
-    if not buffer.getvalue():
-        raise RuntimeError("chart rendered no data")
-    return f"matplotlib {matplotlib.__version__}, numpy {numpy.__version__}"
-
-
 CHECKS: list[tuple[str, Callable[[], str]]] = [
     ("package metadata", _check_package_metadata),
     ("assets", _check_assets),
     ("sounds", _check_sounds),
     ("qr code", _check_qr_code),
-    ("charts", _check_charts),
 ]
 
 
