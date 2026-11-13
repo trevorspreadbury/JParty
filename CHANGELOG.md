@@ -44,6 +44,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `environment.yml` installs from `pyproject.toml` (#75, #83).
 
 ### Fixed
+- A player name or Final answer containing "BUZZ" (such as "What is a
+  BUZZARD?") is no longer read as a buzz. Such names now join, such answers
+  are recorded, and a buzz from a phone that has not joined is ignored
+  instead of crashing the socket.
 - The app reports its real version (3.0.0) instead of 2.0.2, including
   packaged builds (#75, #83).
 - Moving or removing players in the resume lobby keeps each player's score
