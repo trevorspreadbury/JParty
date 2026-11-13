@@ -97,6 +97,9 @@ def save_game_html(game_id: object) -> object:
 def _get_archive_game(game_id: object) -> object:
     """Load and parse an archived game, repairing a damaged cache copy.
 
+    With no cache file, HTML already fetched this session is reparsed from
+    memory before falling back to the network.
+
     A cache file is damaged when it can't be read as UTF-8, doesn't parse, or
     is missing its closing ``</html>`` tag. A damaged file is fetched again
     from the network, and the network copy overwrites it if that copy parses.
@@ -114,6 +117,14 @@ def _get_archive_game(game_id: object) -> object:
             _LOADED_GAME_HTML_CACHE[game_id_str] = cached_html
             return cached_data
     if not cache_file_exists:
+        # A game fetched this session isn't written to disk until it starts.
+        # Reparse the copy held in memory so a reload (for example after a
+        # media import) doesn't need the network.
+        memory_html = _LOADED_GAME_HTML_CACHE.get(game_id_str)
+        if memory_html is not None:
+            memory_data = _parse_or_none(memory_html, game_id_str)
+            if memory_data is not None:
+                return memory_data
         remote_html = _fetch_remote_game_html(game_id_str)
         _LOADED_GAME_HTML_CACHE[game_id_str] = remote_html
         return process_game_board_from_html(remote_html, game_id_str)

@@ -1665,6 +1665,59 @@ def test_media_import_reloads_the_loaded_regular_game(
     assert widget.start_button.isEnabled() is True
 
 
+def test_failed_media_reload_keeps_the_loaded_regular_game(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> None:
+    """A failed reload after a media import keeps the game startable (#66)."""
+    first = _fixture_source_game("Game abcdefg")
+    games = {"abcdefg": first}
+    widget, game = _loading_widget(qtbot, monkeypatch, ImmediateLoader(), games)
+    source_dir = temp_dir / "source"
+    source_dir.mkdir()
+    (source_dir / "0-0-0.png").write_bytes(b"png")
+    monkeypatch.setattr(
+        "jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media"
+    )
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: str(source_dir))
+    _type_game_id(widget, "abcdefg")
+    widget.round_checkboxes[0].setChecked(False)
+    games["abcdefg"] = RuntimeError("sheets failed")
+
+    widget.load_question_media()
+
+    assert game.data is first
+    assert game.selected_round_indices() == [1, 2]
+    assert widget.start_button.isEnabled() is True
+    assert "could not be reloaded" in widget.summary_label.text()
+    assert not widget.summary_label.text().startswith("Cannot get game")
+
+    # Rebuilding the summary on a round toggle keeps the warning.
+    widget.round_checkboxes[0].setChecked(True)
+    assert "could not be reloaded" in widget.summary_label.text()
+
+
+def test_failed_typed_load_after_media_reload_still_clears_the_game(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> None:
+    """Only the media reload keeps the old game; a normal failed load clears it."""
+    games = {"111": _fixture_source_game("Game 111"), "222": RuntimeError("down")}
+    widget, game = _loading_widget(qtbot, monkeypatch, ImmediateLoader(), games)
+    source_dir = temp_dir / "source"
+    source_dir.mkdir()
+    monkeypatch.setattr(
+        "jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media"
+    )
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: str(source_dir))
+    _type_game_id(widget, "111")
+    widget.load_question_media()
+
+    _type_game_id(widget, "222")
+
+    assert game.data is None
+    assert widget.summary_label.text().startswith("Cannot get game")
+    assert widget.start_button.isEnabled() is False
+
+
 def test_load_saved_drops_a_load_in_flight(qtbot: object, monkeypatch: object) -> None:
     """A load that finishes after Load Saved must not clear the prepared resume."""
     loader = DeferredLoader()

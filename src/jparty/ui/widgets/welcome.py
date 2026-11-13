@@ -252,6 +252,10 @@ class Welcome(StartWidget):
         self._base_summary_text = ""
         self._loading_summary = False
         self._summary_request_id = 0
+        # Request id of a reload started by a media import, or ``None``.
+        self._media_reload_request_id = None
+        # Shown in the summary after a failed media reload kept the old game.
+        self._media_reload_warning = ""
         # Id of the game currently in ``game.data`` in regular mode, or "".
         self._loaded_summary_game_id = ""
         self._question_media_status = None
@@ -590,6 +594,7 @@ QCheckBox {{
             The new request id.
         """
         self._summary_request_id += 1
+        self._media_reload_warning = ""
         self._loading_summary = loading
         self.presenter.set_loading(loading)
         return self._summary_request_id
@@ -677,7 +682,8 @@ QCheckBox {{
         """Parse the loaded regular-mode game again on a worker thread.
 
         Unlike ``show_summary``, the round selector is kept, so the host's
-        round choices survive the reload.
+        round choices survive the reload. If the reload fails, the game that
+        was already loaded is kept (see ``handle_summary_load_result``).
 
         Args:
             game_id: Game id to reload. It matches the textbox.
@@ -687,6 +693,7 @@ QCheckBox {{
         """
         self.debounce_timer.stop()
         request_id = self._begin_summary_request(loading=True)
+        self._media_reload_request_id = request_id
         self.check_start()
         self.loader.run_async(partial(self._load_summary_game, request_id, game_id))
 
@@ -726,7 +733,56 @@ QCheckBox {{
                 self.textbox.blockSignals(False)
         elif game_id != self.textbox.text().strip():
             return
+        if self._keep_game_after_failed_media_reload(
+            request_id, game_id, data, error, media_status
+        ):
+            return
         self._apply_summary_game(game_id, data, error, media_status)
+
+    def _keep_game_after_failed_media_reload(
+        self,
+        request_id: int,
+        game_id: str,
+        data: object,
+        error: object,
+        media_status: object,
+    ) -> bool:
+        """Keep the loaded game when the reload after a media import fails.
+
+        A media import reparses the loaded game to pick up the new image
+        paths. For a Google Sheets game that means fetching the sheet again,
+        and a network blip there must not throw away a game that already
+        loaded (#66). The old game stays startable; it just won't show the
+        new media until the host reloads it.
+
+        Args:
+            request_id: Id the load was started with.
+            game_id: Game id that was loaded.
+            data: Loaded game data, or ``None`` when the load failed.
+            error: Exception raised by the load, or ``None``.
+            media_status: Local question-media status for ``game_id``.
+
+        Returns:
+            ``True`` if the failed reload was handled by keeping the old game.
+        """
+        if request_id != self._media_reload_request_id:
+            return False
+        self._media_reload_request_id = None
+        if error is None and _is_playable_game_data(data):
+            return False
+        if game_id != self._loaded_summary_game_id or not self.game.valid_game():
+            return False
+        self._question_media_status = media_status
+        # Kept until the next load or action, so round toggles (which rebuild
+        # the summary) don't drop it.
+        self._media_reload_warning = (
+            "WARNING: Imported question media, but the game could not be "
+            "reloaded to show it. Import the media again or re-enter the game "
+            "id to retry."
+        )
+        self.set_summary(self.build_summary_text())
+        self.check_start()
+        return True
 
     def _apply_summary_game(
         self, game_id: str, data: object, error: object, media_status: object
@@ -805,6 +861,8 @@ QCheckBox {{
         media_status = self.question_media_summary_text()
         if media_status:
             summary_lines.extend(["", media_status])
+        if self._media_reload_warning:
+            summary_lines.extend(["", self._media_reload_warning])
         return "\n".join(str(line) for line in summary_lines if line is not None)
 
     def summary_game_data(self) -> object:
