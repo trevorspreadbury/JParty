@@ -84,8 +84,22 @@ function answerForm() {
     return false;
 }
 
+// True from sending a name until the server answers, so a double-tap on
+// "Play!" sends only one name.
+var joining = false;
+
+function setJoining(value) {
+    joining = value;
+    $("#submit-button").prop("disabled", value);
+    $("#prompt-button").prop("disabled", value);
+}
+
 function nameForm(name) {
+    if (joining) {
+        return;
+    }
     console.log(name);
+    setJoining(true);
     send("NAME",name);
 }
 
@@ -223,6 +237,7 @@ var updater = {
                     break;
                 case "GAMESTARTED":
                     alert("Game has started!")
+                    setJoining(false);
                     break;
                 case "TOKEN":
                     load_page("buzz");
@@ -235,10 +250,12 @@ var updater = {
                     load_page(claimData.state.page);
                     break;
                 case "NEW":
+                    setJoining(false);
                     load_page("name");
                     resizeCanvas();
                     break;
                 case "SHOW_CHOOSER":
+                    setJoining(false);
                     clearToken();
                     renderSavedPlayerChoices(JSON.parse(jsondata.text));
                     load_page("chooser");
@@ -253,11 +270,13 @@ var updater = {
                     alert("That saved player has already been claimed.");
                     break;
                 case "ALL_CLAIMED":
+                    setJoining(false);
                     clearToken();
                     alert("All saved players have already been claimed.");
                     load_page(null);
                     break;
                 case "LOGOUT":
+                    setJoining(false);
                     clearToken();
                     load_page(null);
                     break;

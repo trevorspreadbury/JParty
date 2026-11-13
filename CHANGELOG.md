@@ -21,9 +21,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 - `jparty self-check [--report FILE]` checks an installed or packaged app's
-  metadata, assets, sound, QR codes and graphs without opening a window (#83).
+  metadata, assets, sound and QR codes without opening a window (#83).
 - New saves record `history_format` and `jparty_version` in `general.json`
   (#60).
+- While JParty waits for Final Jeopardy wagers, the host can press Enter to
+  open the clue right away. Anyone who hasn't wagered is counted as wagering
+  $0, so a dead phone or a player who left no longer stalls the game (#108).
 
 ### Changed
 - JParty now supports up to 6 players (was 8). A 7th phone is told the game
@@ -44,6 +47,17 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `environment.yml` installs from `pyproject.toml` (#75, #83).
 
 ### Fixed
+- The welcome screen now warns about a missing Daily Double in Double
+  Jeopardy! even when Jeopardy! is unticked, or when an advanced board uses
+  the Double Jeopardy! round on its own (#107).
+- Going to 4 or more advanced boards now gives every board the new point
+  values in order. Only values the host typed are kept (#107).
+- The buzzer server checks what phones send. A name or Final answer that the
+  host can't show is rejected instead of stalling the lobby or judging. A
+  double-tap on "Play!" no longer adds a ghost player. A wager typed as `1e3`
+  is accepted, and an unreadable wager asks the phone again instead of
+  stalling Final. An old connection closing after a phone reconnects no
+  longer marks that player as disconnected (#110).
 - Saving `general.json` no longer empties it first, so a full disk or a
   crash mid-save keeps the previous save loadable. A save briefly locked by
   Windows is retried, and if saving still fails the host is warned instead of
@@ -67,6 +81,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   every Final in order, with fresh wagers and answers for each. Before, the
   game ended after the first Final. Load Saved resumes at the first Final not
   yet judged (#98).
+- Each launch keeps the previous log as `latest.log.1` instead of wiping it,
+  so a crash still leaves a log behind. Errors in background threads are now
+  logged and show the crash dialog too (#109).
 - The app reports its real version (3.0.0) instead of 2.0.2, including
   packaged builds (#75, #83).
 - Moving or removing players in the resume lobby keeps each player's score
@@ -106,6 +123,17 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Crash reporting is installed at startup again, so unhandled errors show a
   dialog and reach the log (#50).
 - Tests stay offline and catch more real bugs (#84, #89).
+- A player who buzzed too early is no longer locked out again when the clue
+  reopens after a wrong answer. The early-buzz penalty now only applies to
+  the window they buzzed early on (#108).
+- Holding a host key down no longer repeats it, so a long press of Space
+  can't skip a step, such as jumping past a Final answer reveal (#108).
+
+### Removed
+- The crash dialog no longer offers to email a report. It shows the error and
+  where the log file is instead (#109).
+- The unused matplotlib score graph, the `game_scores` folder and the
+  matplotlib dependency. The end-of-game summary is unchanged (#109).
 
 ## [3.0.0-rc.1] - 2026-05-02
 

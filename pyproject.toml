@@ -15,7 +15,6 @@ dependencies = [
     "BeautifulSoup4>=4.15.0,<5",
     "qrcode>=8.2,<9",
     "python-dotenv>=1.2.4",
-    "matplotlib>=3.10.9",
 ]
 
 [project.optional-dependencies]

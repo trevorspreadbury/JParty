@@ -73,3 +73,22 @@ def test_invalid_player_index_buzz_is_ignored(game_with_players: object) -> None
     assert game.answering_player is None
     assert game.accepting_responses is True
     assert game._all_buzz_attempts == []
+
+
+def test_early_buzz_penalty_does_not_carry_into_rebound(
+    game_with_players: object, time_controller: object
+) -> None:
+    """A player who buzzed early can buzz at once when a rebound opens."""
+    game = game_with_players
+    question = game.current_round.get_question(0, 0)
+    game.load_question(question)
+    game.buzz(0)
+    game.open_responses()
+    time_controller.advance(1.0)
+    game.buzz(1)
+    game.incorrect_answer()
+
+    game.buzz(0)
+
+    assert game.answering_player is game.players[0]
+    assert game._all_buzz_attempts[-1].in_timeout is False
