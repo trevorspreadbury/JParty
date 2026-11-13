@@ -69,3 +69,34 @@ def test_full_game_shows_full_message(
             break
         browser_page.wait_for_timeout(100)
     assert alerts[0] == "Game has too many players!"
+
+
+def test_double_tap_on_play_sends_one_name(
+    live_browser_server: object,  # noqa: F811
+    browser_page: object,  # noqa: F811
+) -> None:
+    """A second tap before the server answers sends nothing (#99)."""
+    browser_page.goto(f"{live_browser_server.url}/")
+    browser_page.wait_for_function(
+        "window.updater && window.updater.socket && window.updater.socket.readyState === 1"
+    )
+    sent = browser_page.evaluate(
+        """() => {
+            const names = [];
+            const realSend = updater.socket.send.bind(updater.socket);
+            updater.socket.send = (data) => {
+                if (JSON.parse(data).message === "NAME") {
+                    names.push(data);
+                }
+                realSend(data);
+            };
+            nameForm("Alice");
+            nameForm("Alice");
+            return {
+                names: names.length,
+                disabled: document.getElementById("submit-button").disabled,
+            };
+        }"""
+    )
+
+    assert sent == {"names": 1, "disabled": True}
