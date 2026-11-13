@@ -35,6 +35,9 @@ SUMMARY_CURRENT_COLORS = [
 ]
 SUMMARY_ORIGINAL_COLOR = QColor(210, 210, 210, 120)
 SUMMARY_GRID_COLOR = QColor(255, 255, 255, 45)
+# Above this many players the summary uses compact cards in two columns so the
+# whole screen still fits on a 1080p display.
+MAX_SINGLE_COLUMN_PLAYERS = 3
 
 
 def _set_name_label_dark_text(label: NameLabel) -> None:
@@ -73,6 +76,44 @@ class SummaryGraphWidget(QWidget):
             scores.extend(series.scores)
         return scores or [0]
 
+    def _score_range(self) -> tuple[float, float]:
+        """Return the padded ``(min, max)`` score range shown on the y-axis."""
+        all_scores = self._all_scores()
+        min_score = min(all_scores)
+        max_score = max(all_scores)
+        if min_score == max_score:
+            min_score -= 200
+            max_score += 200
+        score_padding = max((max_score - min_score) * 0.08, 100)
+        return min_score - score_padding, max_score + score_padding
+
+    def _max_points(self) -> int:
+        """Return the point count of the longest series, which sets the x-axis."""
+        return max(
+            [
+                len(series.scores)
+                for series in self.current_series + self.original_series
+            ]
+            or [1]
+        )
+
+    def series_points(self, rect: object, series: EndGameSeries) -> list[QPointF]:
+        """Return where each score in ``series`` is plotted inside ``rect``.
+
+        Every series shares the x-axis of the longest one, so clue ``n`` sits
+        on the same gridline for current and original contestants.
+        """
+        min_score, max_score = self._score_range()
+        span = max_score - min_score or 1
+        last_index = max(self._max_points() - 1, 1)
+        return [
+            QPointF(
+                rect.left() + (rect.width() * index / last_index),
+                rect.bottom() - ((score - min_score) / span) * rect.height(),
+            )
+            for index, score in enumerate(series.scores)
+        ]
+
     def paintEvent(self, event: object) -> None:
         """Render axes, gridlines, and player score traces."""
         painter = QPainter(self)
@@ -81,32 +122,14 @@ class SummaryGraphWidget(QWidget):
         rect = self.rect().adjusted(86, 18, -18, -36)
         painter.fillRect(self.rect(), CARDPAL.color(QPalette.ColorRole.Window))
 
-        min_score = min(self._all_scores())
-        max_score = max(self._all_scores())
-        if min_score == max_score:
-            min_score -= 200
-            max_score += 200
-        score_padding = max((max_score - min_score) * 0.08, 100)
-        min_score -= score_padding
-        max_score += score_padding
-
-        max_points = max(
-            [
-                len(series.scores)
-                for series in self.current_series + self.original_series
-            ]
-            or [1]
-        )
+        min_score, max_score = self._score_range()
+        max_points = self._max_points()
         y_ticks = 5
 
         def x_pos(index: int) -> float:
             if max_points <= 1:
                 return rect.left()
             return rect.left() + (rect.width() * index / (max_points - 1))
-
-        def y_pos(score: int) -> float:
-            span = max_score - min_score or 1
-            return rect.bottom() - ((score - min_score) / span) * rect.height()
 
         painter.setPen(QPen(SUMMARY_GRID_COLOR, 1))
         for tick_index in range(y_ticks + 1):
@@ -161,40 +184,19 @@ class SummaryGraphWidget(QWidget):
         marker_size: int,
     ) -> None:
         """Draw one score-history series."""
-        if not series.scores:
+        points = self.series_points(rect, series)
+        if not points:
             return
-        max_points = max(len(series.scores) - 1, 1)
-        all_scores = self._all_scores()
-        min_score = min(all_scores)
-        max_score = max(all_scores)
-        if min_score == max_score:
-            min_score -= 200
-            max_score += 200
-        score_padding = max((max_score - min_score) * 0.08, 100)
-        min_score -= score_padding
-        max_score += score_padding
-
-        def x_pos(index: int) -> float:
-            return rect.left() + (rect.width() * index / max_points)
-
-        def y_pos(score: int) -> float:
-            span = max_score - min_score or 1
-            return rect.bottom() - ((score - min_score) / span) * rect.height()
-
-        pen = QPen(color, width)
-        painter.setPen(pen)
+        painter.setPen(QPen(color, width))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         path = QPainterPath()
-        first_point = QPointF(x_pos(0), y_pos(series.scores[0]))
-        path.moveTo(first_point)
-        for index, score in enumerate(series.scores[1:], start=1):
-            path.lineTo(QPointF(x_pos(index), y_pos(score)))
+        path.moveTo(points[0])
+        for point in points[1:]:
+            path.lineTo(point)
         painter.drawPath(path)
         painter.setBrush(color)
-        for index, score in enumerate(series.scores):
-            painter.drawEllipse(
-                QPointF(x_pos(index), y_pos(score)), marker_size, marker_size
-            )
+        for point in points:
+            painter.drawEllipse(point, marker_size, marker_size)
 
 
 class LegendEntry(QWidget):
@@ -222,10 +224,24 @@ class PlayerSummaryCard(QWidget):
     """Render one player's end-of-game stat card."""
 
     def __init__(
-        self, player_stats: object, color: QColor, parent: object = None
+        self,
+        player_stats: object,
+        color: QColor,
+        parent: object = None,
+        compact: bool = False,
     ) -> None:
-        """Initialize the player stats card."""
+        """Initialize the player stats card.
+
+        Args:
+            player_stats: The player's end-of-game stats.
+            color: The player's graph color, used for the card border.
+            parent: Optional parent widget.
+            compact: Use a smaller border, name and font so that six cards
+                fit on a 1080p screen in two columns.
+        """
         super().__init__(parent)
+        border, name_height, name_width = (10, 80, 150) if compact else (16, 110, 260)
+        score_font, stat_font = (24, 18) if compact else (28, 18)
         self.setObjectName("playerSummaryCard")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAutoFillBackground(True)
@@ -233,29 +249,33 @@ class PlayerSummaryCard(QWidget):
         self.setStyleSheet(
             "QWidget#playerSummaryCard { "
             "background-color: white; "
-            f"border: 16px solid {color.name()}; "
+            f"border: {border}px solid {color.name()}; "
             "border-radius: 18px; "
             "}"
         )
         add_shadow(self)
         layout = QHBoxLayout()
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(18)
+        if compact:
+            layout.setContentsMargins(12, 10, 12, 10)
+            layout.setSpacing(12)
+        else:
+            layout.setContentsMargins(18, 16, 18, 16)
+            layout.setSpacing(18)
 
         name_label = NameLabel(player_stats.name, self)
         _set_name_label_dark_text(name_label)
-        name_label.setMinimumHeight(110)
-        name_label.setMinimumWidth(260)
+        name_label.setMinimumHeight(name_height)
+        name_label.setMinimumWidth(name_width)
         name_label.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
         )
         layout.addWidget(name_label, 2, Qt.AlignmentFlag.AlignVCenter)
 
         stats_layout = QVBoxLayout()
-        stats_layout.setSpacing(8)
+        stats_layout.setSpacing(6 if compact else 8)
         final_score = QLabel(f"Final Score: ${player_stats.final_score:,}", self)
         final_score.setStyleSheet(
-            "QLabel { color: #1010a1; font-size: 28px; font-weight: 800; "
+            f"QLabel {{ color: #1010a1; font-size: {score_font}px; font-weight: 800; "
             "background: transparent; border: none; }"
         )
         stats_layout.addWidget(final_score)
@@ -269,7 +289,7 @@ class PlayerSummaryCard(QWidget):
         ]:
             label = QLabel(stat_line, self)
             label.setStyleSheet(
-                "QLabel { color: black; font-size: 18px; font-weight: 600; "
+                f"QLabel {{ color: black; font-size: {stat_font}px; font-weight: 600; "
                 "background: transparent; border: none; }"
             )
             label.setWordWrap(True)
@@ -385,19 +405,29 @@ class EndGameSummaryDisplay(QWidget):
         left_panel.addWidget(self.graph_widget, 5)
         left_panel.addWidget(GameSummaryCard(self.summary.game_stats, self), 2)
 
-        right_panel = QVBoxLayout()
-        right_panel.setSpacing(14)
-        right_panel.addStretch(1)
-        for player in self.summary.current_players:
-            card = PlayerSummaryCard(player, self.color_map[player.player_number], self)
+        # Full-size cards stack in one column. With more players they would
+        # overflow a 1080p screen, so use compact cards in two columns and give
+        # the cards as much width as the graph.
+        compact = len(self.summary.current_players) > MAX_SINGLE_COLUMN_PLAYERS
+        columns = 2 if compact else 1
+        cards_grid = QGridLayout()
+        cards_grid.setHorizontalSpacing(14)
+        cards_grid.setVerticalSpacing(14)
+        for index, player in enumerate(self.summary.current_players):
+            card = PlayerSummaryCard(
+                player, self.color_map[player.player_number], self, compact=compact
+            )
             card.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
             )
-            right_panel.addWidget(card, 1)
+            cards_grid.addWidget(card, index // columns, index % columns)
+        right_panel = QVBoxLayout()
+        right_panel.addStretch(1)
+        right_panel.addLayout(cards_grid, len(self.summary.current_players))
         right_panel.addStretch(1)
 
-        content_layout.addLayout(left_panel, 3)
-        content_layout.addLayout(right_panel, 2)
+        content_layout.addLayout(left_panel, 1 if compact else 3)
+        content_layout.addLayout(right_panel, 1 if compact else 2)
 
         main_layout.addWidget(title)
         main_layout.addLayout(content_layout, 1)

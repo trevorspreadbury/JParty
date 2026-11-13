@@ -134,6 +134,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
   where the log file is instead (#109).
 - The unused matplotlib score graph, the `game_scores` folder and the
   matplotlib dependency. The end-of-game summary is unchanged (#109).
+- The end-of-game summary fits a 1080p screen with up to 6 players (more
+  than 3 players get smaller cards in two columns), and the original
+  contestants' line on the score graph lines up with the clue numbers again.
+  The image review text is readable on the black host screen, and editing
+  scores no longer cuts a Daily Double wager above 50,000 down to 50,000
+  (#112).
 
 ## [3.0.0-rc.1] - 2026-05-02
 
