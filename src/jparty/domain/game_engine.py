@@ -43,7 +43,6 @@ from jparty.domain.state import (
     QUESTION_HISTORY_FILE_NAME,
     SCORE_CORRECTION_TYPE,
     HistoryFileError,
-    board_selections_match_original_game_subset,
     classify_buzz_phases,
     clue_player_results,
     clue_score_effects,
@@ -217,8 +216,6 @@ class Game(QObject):
         self._starting_roster = None
         self._resume_state = None
         self._selected_round_indices = None
-        # Set when resuming an older save; see SavedGameData.
-        self._legacy_history_rounds = None
         self._board_selection_configs = None
         self._composed_board_selection_configs = None
         self._composed_game_data = None
@@ -266,7 +263,6 @@ class Game(QObject):
         """
         self._resume_state = None
         self._selected_round_indices = None
-        self._legacy_history_rounds = None
         self._board_selection_configs = None
         self._composed_board_selection_configs = None
         self._composed_game_data = None
@@ -439,7 +435,6 @@ class Game(QObject):
         self.data = saved_game.data
         self.set_board_selection_configs(saved_game.board_selection_configs)
         self.set_selected_round_indices(saved_game.selected_round_indices)
-        self._legacy_history_rounds = saved_game.legacy_history_rounds
         self.set_reveal_answers_after_triple_stumper(
             general_state.get("reveal_answers_after_triple_stumper", False)
         )
@@ -455,21 +450,6 @@ class Game(QObject):
         if self.buzzer_controller:
             self.buzzer_controller.begin_saved_player_reclaim(current_players)
         return self._resume_state
-
-    def _board_selections_match_original_game_subset(
-        self,
-        game_id: str,
-        game_data: object,
-        board_selection_configs: list[dict],
-        selected_round_indices: object,
-    ) -> bool:
-        """Return whether saved board selections describe a simple original-game subset.
-
-        See :func:`board_selections_match_original_game_subset`.
-        """
-        return board_selections_match_original_game_subset(
-            game_id, game_data, board_selection_configs, selected_round_indices
-        )
 
     def begin(self) -> None:
         """Begin the pre-game lobby state by starting the intro music.
@@ -502,8 +482,6 @@ class Game(QObject):
         if self._resume_state:
             self._start_resumed_game()
             return
-        # A fresh game writes history that matches its own rounds.
-        self._legacy_history_rounds = None
         if self._board_selection_configs:
             self.data = self.matching_composed_game_data(self._board_selection_configs)
             if self.data is None:
@@ -722,7 +700,7 @@ class Game(QObject):
         self._game_started_at = (
             resume_state["general_state"].get("started_at") or time.time()
         )
-        # Keep what the save recorded, so a resumed legacy save stays unmarked.
+        # Keep the format and version the save was started with.
         self._history_format = resume_state["general_state"].get("history_format")
         self._started_by_version = resume_state["general_state"].get("jparty_version")
         # general.json keeps the numbers the save started with. Seat changes

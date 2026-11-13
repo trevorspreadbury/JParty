@@ -2072,8 +2072,7 @@ QCheckBox {{
                 )
             )
         )
-        # Use the indices the game loaded, which point into its rounds. An
-        # older save rebuilt from board selections recorded source numbers.
+        # Use the indices the game loaded, which point into its rounds.
         self.configure_round_selector(
             selected_indices=self.game.selected_round_indices(), enabled=True
         )

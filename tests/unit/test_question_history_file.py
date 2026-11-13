@@ -36,7 +36,7 @@ def _read_error(path: Path) -> HistoryFileError:
     return excinfo.value
 
 
-def test_read_history_file_returns_entries_and_leaves_legacy_saves_unchanged(
+def test_read_history_file_without_corrections_reads_exactly_as_stored(
     temp_dir: Path, fixture_lines: list[str]
 ) -> None:
     """Test a valid file without correction lines reads exactly as stored."""

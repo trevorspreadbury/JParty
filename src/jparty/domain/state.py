@@ -18,7 +18,7 @@ from jparty.domain.models import FinalBoard
 
 QUESTION_HISTORY_FILE_NAME = "question_history.jsonl"
 # Version of the question_history.jsonl format, recorded in general.json
-# as ``history_format``. Saves without it predate the append-only ledger.
+# as ``history_format``.
 HISTORY_FORMAT = 2
 QUESTION_HISTORY_ENTRY_TYPE = "question"
 MANUAL_SCORE_ADJUSTMENT_TYPE = "manual_score_adjustment"
@@ -177,7 +177,8 @@ def get_history_entry_type(entry: dict) -> str:
         entry: Persisted JSONL history entry.
 
     Returns:
-        The entry type, defaulting legacy clue records to ``"question"``.
+        The entry type. Clue lines have no ``type`` field and read as
+        ``"question"``.
     """
     if entry.get("type"):
         return entry["type"]
@@ -336,14 +337,14 @@ def history_score_events(entry: dict) -> list[tuple]:
 
     Returns:
         ``(player_index, score_before, score_after)`` tuples. Either score may
-        be ``None`` for legacy lines that did not record it.
+        be ``None`` if the line did not record it.
     """
     if is_manual_score_adjustment(entry):
         return [
             (
                 entry.get("player_index"),
                 entry.get("score_before"),
-                entry.get("score_after", entry.get("new_score")),
+                entry.get("score_after"),
             )
         ]
     if is_score_correction(entry):
@@ -616,9 +617,7 @@ def corrected_history_entries(entries: list[dict]) -> list[dict]:
             if player_index is None:
                 continue
             score_before = scores.get(player_index, INITIAL_SCORE)
-            recorded_after = corrected_entry.get(
-                "score_after", corrected_entry.get("new_score", score_before)
-            )
+            recorded_after = corrected_entry.get("score_after", score_before)
             recorded_before = corrected_entry.get("score_before", score_before)
             score_after = score_before + recorded_after - recorded_before
             corrected_entry["score_before"] = score_before
@@ -761,10 +760,7 @@ def load_question_history(game: object) -> object:
         A list of decoded JSON history entries ordered as stored on disk,
         including any ``score_correction`` lines, followed by any lines the
         game has queued but could not write yet. Returns ``[]`` only when
-        there is no state directory or no history yet. For an older save
-        (``game._legacy_history_rounds`` is set), clue lines' round indices
-        are translated to point into ``game.data.rounds``; see
-        :func:`translate_legacy_history_rounds`.
+        there is no state directory or no history yet.
 
     Raises:
         HistoryFileError: If the history file cannot be read; see
@@ -775,13 +771,7 @@ def load_question_history(game: object) -> object:
     saved_entries = read_history_file(
         Path(game._game_state_dir) / QUESTION_HISTORY_FILE_NAME
     )
-    entries = saved_entries + list(getattr(game, "_pending_history_lines", []))
-    legacy_history_rounds = getattr(game, "_legacy_history_rounds", None)
-    if legacy_history_rounds and getattr(game, "data", None):
-        entries = translate_legacy_history_rounds(
-            entries, game.data, legacy_history_rounds
-        )
-    return entries
+    return saved_entries + list(getattr(game, "_pending_history_lines", []))
 
 
 def load_corrected_question_history(game: object) -> list[dict]:
@@ -842,8 +832,7 @@ def reconstruct_score_history(game: object) -> object:
             player_index = entry.get("player_index")
             if player_index is not None:
                 scores[player_index] = entry.get(
-                    "score_after",
-                    entry.get("new_score", scores.get(player_index, INITIAL_SCORE)),
+                    "score_after", scores.get(player_index, INITIAL_SCORE)
                 )
         else:
             for attempt in entry.get("answer_attempts", []):
@@ -886,8 +875,7 @@ def load_general_state(game: object) -> object:
 class SavedGameData:
     """Game data rebuilt from a save's ``general.json``.
 
-    The saved history's ``round_index`` values index into ``data.rounds``
-    (after :func:`translate_legacy_history_rounds` for older saves), so
+    The saved history's ``round_index`` values index into ``data.rounds``, so
     resume and the ``jparty summary`` CLI must both use this exact layout.
 
     Attributes:
@@ -897,207 +885,11 @@ class SavedGameData:
             or ``None`` to play every round.
         board_selection_configs: Saved board selections, or ``None`` for a
             save without them.
-        legacy_history_rounds: For an older save whose ``data`` is the full
-            source game but whose history may count rounds by position among
-            the played ones, the source round numbers that were played (the
-            saved ``selected_round_indices``). ``None`` when every history
-            ``round_index`` already indexes ``data.rounds``.
     """
 
     data: object
     selected_round_indices: list[int] | None
     board_selection_configs: list[dict] | None
-    legacy_history_rounds: list[int] | None = None
-
-
-def _history_clue_fit(data: object, round_index: int, entry: dict) -> int | None:
-    """Return how well a clue line fits round ``round_index`` of ``data``.
-
-    Args:
-        data: ``GameData`` to look the clue up in.
-        round_index: Candidate index into ``data.rounds``.
-        entry: Clue history line.
-
-    Returns:
-        ``None`` when the round has no clue at the line's board coordinates;
-        otherwise 2 if the category matches plus 1 if the value matches.
-    """
-    if not 0 <= round_index < len(data.rounds):
-        return None
-    question_index = entry.get("question_index")
-    if (
-        not isinstance(question_index, list | tuple)
-        or len(question_index) < QUESTION_INDEX_TOP_LEVEL_PART_COUNT
-    ):
-        return None
-    coords = question_index[1]
-    if not isinstance(coords, list | tuple) or len(coords) != QUESTION_COORD_PART_COUNT:
-        return None
-    question = data.rounds[round_index].get_question(*coords)
-    if question is None:
-        return None
-    return 2 * (entry.get("category") == question.category) + (
-        entry.get("value") == question.value
-    )
-
-
-def translate_legacy_history_rounds(
-    entries: list[dict], data: object, played_rounds: list[int]
-) -> list[dict]:
-    """Point an older save's clue lines at the right rounds of the full game.
-
-    Before #93, a regular-mode game with some rounds unticked was played on a
-    game built from only the ticked rounds, so its history counts rounds by
-    position among them (Double Jeopardy is 0 when Jeopardy is skipped).
-    Resuming such a save on an older version loaded the full source game, so
-    lines written after that resume use source round numbers. One save can
-    hold both, positions first.
-
-    Each line is matched against both readings by its board coordinates,
-    category and value. If both fit equally well (the same category and
-    value on both boards), the line is read like the closest earlier line
-    that could be told apart, or by position if there is none. Lines whose
-    two readings point at the same round are left alone, as are lines that
-    fit neither.
-
-    Args:
-        entries: History lines in file order. They are not modified.
-        data: The full source game.
-        played_rounds: Source round numbers that were played, in order.
-
-    Returns:
-        The lines, with translated clue lines replaced by copies whose
-        ``round_index`` and ``question_index`` point into ``data.rounds``.
-    """
-    played = [int(index) for index in played_rounds]
-    reading_by_position = True
-    translated = []
-    for entry in entries:
-        round_index = entry.get("round_index")
-        if not is_question_history_entry(entry) or not isinstance(round_index, int):
-            translated.append(entry)
-            continue
-        as_position = played[round_index] if 0 <= round_index < len(played) else None
-        as_source = round_index if round_index in played else None
-        if as_position == as_source:
-            translated.append(entry)
-            continue
-        position_fit = (
-            _history_clue_fit(data, as_position, entry)
-            if as_position is not None
-            else None
-        )
-        source_fit = (
-            _history_clue_fit(data, as_source, entry) if as_source is not None else None
-        )
-        if position_fit is None and source_fit is None:
-            translated.append(entry)
-            continue
-        if source_fit is None or (
-            position_fit is not None and position_fit > source_fit
-        ):
-            reading_by_position = True
-        elif position_fit is None or source_fit > position_fit:
-            reading_by_position = False
-        target = as_position if reading_by_position else as_source
-        if target == round_index:
-            translated.append(entry)
-            continue
-        entry = dict(entry)
-        entry["round_index"] = target
-        question_index = list(entry.get("question_index") or [])
-        if question_index:
-            question_index[0] = target
-            entry["question_index"] = question_index
-        translated.append(entry)
-    return translated
-
-
-def _source_numbered_rounds(selected_round_indices: object) -> list[int] | None:
-    """Return saved round numbers that are not plain positions, if any.
-
-    Saves since #93 number selected rounds by position in the game that was
-    played (``[0, 1, ...]``). Older regular-mode saves used the source game's
-    round numbers, which differ from positions once a round is skipped.
-
-    Args:
-        selected_round_indices: Saved ``selected_round_indices`` value.
-
-    Returns:
-        The sorted round numbers when they are not ``0..n-1``, else ``None``.
-    """
-    if selected_round_indices is None:
-        return None
-    indices = sorted({int(index) for index in selected_round_indices})
-    if indices == list(range(len(indices))):
-        return None
-    return indices
-
-
-def board_selections_match_original_game_subset(
-    game_id: str,
-    game_data: object,
-    board_selection_configs: list[dict],
-    selected_round_indices: object,
-) -> bool:
-    """Return whether saved board selections describe a plain original-game subset.
-
-    Such saves were started in regular mode from one archived game with
-    unchanged boards. Before #93 they saved source round numbers as
-    ``selected_round_indices``; see :func:`load_saved_game_data`.
-
-    Args:
-        game_id: Saved game id.
-        game_data: The original game's ``GameData``.
-        board_selection_configs: Saved ``board_selections`` list.
-        selected_round_indices: Saved ``selected_round_indices`` list.
-
-    Returns:
-        ``True`` when every selection is an unchanged board from ``game_id``
-        at the matching selected round index.
-    """
-    from jparty.services.game_loader import (
-        original_board_row_values,
-        standard_board_daily_double_indices,
-    )
-
-    if not game_data or selected_round_indices is None:
-        return False
-    normalized_indices = [int(index) for index in selected_round_indices]
-    if len(board_selection_configs) != len(normalized_indices):
-        return False
-    for selection, round_index in zip(
-        board_selection_configs, normalized_indices, strict=False
-    ):
-        if str(selection.get("game_id", "")).strip() != game_id:
-            return False
-        if int(selection.get("source_round_index", -1)) != round_index:
-            return False
-        if not 0 <= round_index < len(game_data.rounds):
-            return False
-        round_data = game_data.rounds[round_index]
-        expected_board_type = (
-            "final" if isinstance(round_data, FinalBoard) else "standard"
-        )
-        if selection.get("board_type") != expected_board_type:
-            return False
-        expected_row_values = original_board_row_values(game_data, round_index)
-        if list(selection.get("row_values", [])) != expected_row_values:
-            return False
-        expected_daily_double_indices = (
-            []
-            if isinstance(round_data, FinalBoard)
-            else standard_board_daily_double_indices(round_data)
-        )
-        if selection.get(
-            "daily_double_count", len(expected_daily_double_indices)
-        ) != len(expected_daily_double_indices):
-            return False
-        if list(
-            selection.get("daily_double_indices", expected_daily_double_indices)
-        ) != (expected_daily_double_indices):
-            return False
-    return True
 
 
 def load_saved_game_data(general_state: dict) -> SavedGameData:
@@ -1109,18 +901,9 @@ def load_saved_game_data(general_state: dict) -> SavedGameData:
 
     - With ``board_selections`` (regular and advanced mode): the game built
       from ``board_selections``, with every built round selected. This is
-      the game that was played, so history positions line up. Since #93,
-      ``selected_round_indices`` in these saves is always ``0..n-1``.
-    - Older regular-mode saves whose ``selected_round_indices`` are source
-      game round numbers with a skipped round (for example ``[1, 2]``) and
-      whose boards are the unchanged source boards: the full source game
-      with those indices, and ``legacy_history_rounds`` set so readers
-      translate history lines that count rounds by position. Resuming keeps
-      ``general.json`` in this shape, so later reads translate too.
+      the game that was played, so history positions line up.
     - Without ``board_selections``: the full game ``game_id`` with
       ``selected_round_indices`` as saved (``None`` means every round).
-      Older versions played only the selected rounds, so these saves are
-      translated the same way when a round was skipped.
 
     Args:
         general_state: Decoded ``general.json`` contents.
@@ -1133,30 +916,12 @@ def load_saved_game_data(general_state: dict) -> SavedGameData:
 
     game_id = str(general_state.get("game_id", "")).strip()
     board_selection_configs = general_state.get("board_selections")
-    selected_round_indices = general_state.get("selected_round_indices")
-    source_numbered_rounds = _source_numbered_rounds(selected_round_indices)
     if not board_selection_configs:
         return SavedGameData(
             data=game_loader.get_game(game_id),
-            selected_round_indices=selected_round_indices,
+            selected_round_indices=general_state.get("selected_round_indices"),
             board_selection_configs=None,
-            legacy_history_rounds=source_numbered_rounds,
         )
-    source_game_ids = {
-        str(selection.get("game_id", "")).strip()
-        for selection in board_selection_configs
-    }
-    if source_numbered_rounds is not None and source_game_ids == {game_id}:
-        original_data = game_loader.get_game(game_id)
-        if board_selections_match_original_game_subset(
-            game_id, original_data, board_selection_configs, source_numbered_rounds
-        ):
-            return SavedGameData(
-                data=original_data,
-                selected_round_indices=source_numbered_rounds,
-                board_selection_configs=board_selection_configs,
-                legacy_history_rounds=source_numbered_rounds,
-            )
     data = game_loader.build_game_from_board_selection_configs(board_selection_configs)
     return SavedGameData(
         data=data,

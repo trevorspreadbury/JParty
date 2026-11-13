@@ -1,6 +1,5 @@
 """Test welcome widget module."""
 
-import json
 from copy import deepcopy
 from types import SimpleNamespace
 from typing import NoReturn
@@ -12,6 +11,7 @@ from PyQt6.QtWidgets import QFileDialog, QLabel, QMessageBox, QWidget
 
 from jparty.app.paths import GAME_STATES_DIR
 from jparty.domain.models import Board, FinalBoard, GameData, Question
+from jparty.services.game_loader import original_board_row_values
 from jparty.services.game_parser import GameParser
 from jparty.services.question_media import QuestionMediaStatus
 from jparty.ui.widgets.welcome import (
@@ -1375,9 +1375,8 @@ def test_regular_start_with_gap_in_first_category_keeps_row_values(
         assert question.value == (question.index[1] + 1) * 200
     for question in double_jeopardy.questions:
         assert question.value == (question.index[1] + 1) * 400
-    assert game._board_selections_match_original_game_subset(
-        "4453", source, game.board_selection_configs(), [0, 1, 2]
-    )
+    for round_index, selection in enumerate(game.board_selection_configs()):
+        assert selection["row_values"] == original_board_row_values(source, round_index)
 
 
 class LoadingStubGame(StubGame):
@@ -1660,21 +1659,18 @@ def test_regular_start_reuses_the_loaded_game(
     assert isinstance(game.data.rounds[1], FinalBoard)
 
 
-@pytest.mark.parametrize("older_save", [False, True], ids=["current", "older"])
 def test_resumed_regular_subset_shows_the_played_rounds(
     qtbot: object,
     game_with_players: object,
     fixture_dir: object,
     temp_dir: object,
     monkeypatch: object,
-    older_save: bool,
 ) -> None:
     """Load Saved lists the rounds the save resumes on, with source labels (#93).
 
     Before Start the checkboxes use the source game's round numbers; once the
     game starts, they become positions in the game built from the ticked
-    rounds. An older save, which recorded source numbers, still resumes on
-    the full source game.
+    rounds.
     """
     from jparty.domain import game_engine
 
@@ -1703,11 +1699,6 @@ def test_resumed_regular_subset_shows_the_played_rounds(
     widget.on_start_clicked()
     assert game.selected_round_indices() == [0, 1]
     saved_dir = game._game_state_dir
-    if older_save:
-        general_file = saved_dir / "general.json"
-        general_state = json.loads(general_file.read_text())
-        general_state["selected_round_indices"] = [1, 2]
-        general_file.write_text(json.dumps(general_state))
     players = list(game.players)
     game.close_game()
     monkeypatch.setattr(
@@ -1721,19 +1712,11 @@ def test_resumed_regular_subset_shows_the_played_rounds(
     game.players = players
     resume_widget.on_start_clicked()
 
-    if older_save:
-        assert [checkbox.text() for checkbox in resume_widget.round_checkboxes] == [
-            "[ ] Jeopardy!",
-            "[x] Double Jeopardy!",
-            "[x] Final Jeopardy!",
-        ]
-        assert game.selected_round_indices() == [1, 2]
-    else:
-        assert [checkbox.text() for checkbox in resume_widget.round_checkboxes] == [
-            "[x] Double Jeopardy!",
-            "[x] Final Jeopardy!",
-        ]
-        assert game.selected_round_indices() == [0, 1]
+    assert [checkbox.text() for checkbox in resume_widget.round_checkboxes] == [
+        "[x] Double Jeopardy!",
+        "[x] Final Jeopardy!",
+    ]
+    assert game.selected_round_indices() == [0, 1]
     assert game.current_round.categories == source.rounds[1].categories
 
 

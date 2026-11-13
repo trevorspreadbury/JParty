@@ -93,8 +93,6 @@ Field notes:
   so this is `0, 1, 2, ...`, one per board. The example above is a regular
   game with Jeopardy unticked: Double Jeopardy is round `0`. (The welcome
   screen's checkboxes use the source game's round numbers until Start.)
-  Older saves recorded the source game's numbers here instead; see
-  [Older Saves](#older-saves).
 - `board_selections`: one entry per board being played, in play order. Both
   regular and advanced mode write it; it is `[]` only when no board was set
   up. Each entry has:
@@ -110,17 +108,14 @@ Field notes:
     how many Daily Doubles the board has and where they are, as
     `[category_index, row_index]` pairs
 - `reveal_answers_after_triple_stumper`: whether the host chose to show the
-  correct response after a clue nobody gets right. Resume restores it, and a
-  save without it resumes with the option off.
+  correct response after a clue nobody gets right. Resume restores it.
 - `started_at`: Unix timestamp for when the game session started. Resume
   keeps it.
 - `last_updated`: Unix timestamp for when `general.json` was last written,
   which is the last start or resume
 - `history_format`: version of the `question_history.jsonl` format the session
   was started with. `2` is the append-only ledger described below, with
-  `score_correction` lines and the score-chain rule. Saves without this field
-  were started by an older JParty. Resuming such a save doesn't add the field,
-  so a missing value always means "started before format 2".
+  `score_correction` lines and the score-chain rule.
 - `jparty_version`: the JParty version that started the session, kept as-is
   when the game is resumed. This is for diagnosing saves only; between
   releases, dev builds all report the same number.
@@ -135,23 +130,13 @@ Resume (`Load Saved`) and the `jparty summary` command rebuild the game from
 `game_id`, `board_selections` and `selected_round_indices` in the same way, so
 the `round_index` values in the history point at the same boards in both:
 
-- `board_selections` present (every regular or advanced game started by this
-  version): build the game from `board_selections` and play every board.
-  This is the same game that was played, so history `round_index` values are
-  positions in `board_selections`.
+- `board_selections` present (every regular or advanced game): build the
+  game from `board_selections` and play every board. This is the same game
+  that was played, so history `round_index` values are positions in
+  `board_selections`.
 - No `board_selections` (or `[]`): load the full game `game_id` and play
   `selected_round_indices`. A missing `selected_round_indices` means every
   round. History `round_index` values are the full game's round indices.
-- An older regular-mode save, whose `selected_round_indices` are source round
-  numbers that skip a round (such as `[1, 2]`), with every board an unchanged
-  round of `game_id` (same round, board type, row values and Daily Doubles):
-  load the full game `game_id` and play `selected_round_indices`, and
-  translate history lines as described in [Older Saves](#older-saves).
-  Resuming keeps `general.json` in this older shape, so the history can
-  always be read the same way.
-
-The second case also translates history lines when `selected_round_indices`
-skips a round, because older versions played only the selected rounds.
 
 Resume reads the history before it fetches the game, so a damaged
 `question_history.jsonl` fails before anything is downloaded.
@@ -355,8 +340,7 @@ Field notes:
 - `player_index`: the player whose podium was clicked
 - `score_before`: the player's total before the override
 - `score_after`: the total the host entered
-- `new_score`: the same number as `score_after`. Lines from older versions
-  may have only `new_score`; it is then used as `score_after`.
+- `new_score`: the same number as `score_after`
 
 An override that doesn't change the total writes no line.
 
@@ -495,63 +479,6 @@ score-chain check. While lines are waiting, the score editor and end-of-game
 summary include them. If they still can't be written when the host closes the
 game, the host is told how many are missing. The save still loads, and resumes
 from before those clues. JParty never rewrites or reorders existing lines.
-
-## Older Saves
-
-The reader still accepts saves written by earlier versions:
-
-- `general.json` without `history_format` or `jparty_version` (started
-  before these were added). Resume leaves them missing.
-- `general.json` without `board_selections`: the full game `game_id` is
-  loaded and `selected_round_indices` is played (every round if that is
-  missing too). Older versions played only those rounds, so when they skip
-  one, history lines are translated as described below.
-- `general.json` without `reveal_answers_after_triple_stumper`: the option
-  is off.
-- `general.json` with `history_round_indices_original`: this field is
-  ignored. It belonged to a one-time round-index rewrite that has been
-  removed, so the history file is never rewritten.
-- Clue lines with no `type` field (all clue lines are written this way).
-- `manual_score_adjustment` lines with only `new_score`, used as
-  `score_after`.
-- Score changes without `score_before` or `score_after`: the score chain
-  check skips the missing value instead of failing.
-
-### Regular-mode saves with a skipped round
-
-Before this was fixed (issue #93), a regular-mode game with a round unticked
-(for example Jeopardy + Final, or Double Jeopardy + Final) saved
-`selected_round_indices` as the source game's round numbers (`[0, 2]`,
-`[1, 2]`), but was played on a game built from the ticked rounds only. Such
-saves come from v3.0.0-rc.1 (which also writes
-`history_round_indices_original`) and from later builds before the fix
-(which write `history_format` 2). Their history can hold two numberings:
-
-- Lines from the session that started the save count rounds by position in
-  the built game: with Jeopardy unticked, Double Jeopardy is `0` and Final is
-  `1`.
-- Lines written after the save was resumed on one of those versions use the
-  source game's numbers (Double Jeopardy is `1`), because those versions
-  resumed onto the full source game. v3.0.0-rc.1 also rewrote the earlier
-  lines to source numbers when it resumed a save.
-
-`general.json` doesn't say which lines are which, so JParty checks each clue
-line: it looks the clue up on both candidate boards and keeps the board whose
-clue has the same category (and, as a tie-break, the same value). Lines
-whose two readings point at the same board need no check. If both boards fit
-equally well, the line is read like the closest earlier line that could be
-told apart, or by position if there is none; position lines always come
-first, so this only goes wrong when the first line written after an older
-resume lands on two boards with the same category and value at the same
-spot. J-Archive games almost never repeat a category between rounds. The
-history file is never changed; the translation happens each time it is read
-(resume, the score editor, the end-of-game summary and `jparty summary`).
-
-These saves resume onto the full source game, as older versions did, and
-keep their older `general.json` shape, so new lines use source numbers and
-every later read can tell them apart the same way. When the ticked rounds
-didn't skip one (all rounds, or Jeopardy + Double Jeopardy), both numberings
-agree and nothing needs translating.
 
 For the host-side gameplay flow and score correction UI, see
 [HOST.md](../HOST.md).

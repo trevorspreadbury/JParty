@@ -337,7 +337,6 @@ def load_summary_from_game_state_directory(game_state_directory: object) -> obje
         _game_state_dir=game_state_path,
         data=saved_game.data,
         players=[],
-        _legacy_history_rounds=saved_game.legacy_history_rounds,
     )
     score_history = reconstruct_score_history(summary_game)
     saved_players = current_saved_players(
