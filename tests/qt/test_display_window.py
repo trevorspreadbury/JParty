@@ -94,10 +94,10 @@ def _board_slot_widget(window: object) -> object:
 class _InertThread:
     """Thread stand-in that never runs its target.
 
-    Real windows start background threads for hint flashing, scoreboard
-    lights, and welcome-screen game loading. Those threads touch Qt widgets
-    (and the network) after a test tears the windows down, which crashes the
-    test process, so these tests keep them from running.
+    Real windows start a background thread for welcome-screen game loading.
+    It touches Qt widgets (and the network) after a test tears the windows
+    down, which crashes the test process, so these tests keep it from
+    running.
     """
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -111,10 +111,8 @@ def _game_with_real_windows(qtbot: object, game: object, monkeypatch: object) ->
     """Attach real audience and host windows to a test game."""
     from jparty.services import archive_client
     from jparty.ui import welcome_loader
-    from jparty.ui.widgets import borders, scoreboard
 
-    for module in (borders, scoreboard, welcome_loader):
-        monkeypatch.setattr(module, "Thread", _InertThread)
+    monkeypatch.setattr(welcome_loader, "Thread", _InertThread)
     monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
     game.set_session_game_id("4453")
     game.buzzer_controller.host = lambda: "localhost"

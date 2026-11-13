@@ -67,6 +67,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   running clue or Final Jeopardy timer (#111).
 - A damaged clue history line with a negative round number no longer marks
   or shows a clue from a different round (#111).
+- Quitting in the middle of a clue no longer hangs or crashes the app. The
+  border flash, key hints and podium lights now run on the GUI thread (#113).
+- Clicking No Image Necessary after a failed image lookup no longer crashes
+  the app on conda-based Python on Windows. Image lookups now use Windows'
+  own TLS instead of OpenSSL (#113).
 - A player name or Final answer containing "BUZZ" (such as "What is a
   BUZZARD?") is no longer read as a buzz. Such names now join, such answers
   are recorded, and a buzz from a phone that has not joined is ignored
