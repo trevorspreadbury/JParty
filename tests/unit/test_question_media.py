@@ -1,6 +1,7 @@
 """Tests for local question-media detection and import helpers."""
 
 import threading
+import zlib
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
@@ -227,7 +228,29 @@ def _media_root_with_zip(temp_dir: Path, monkeypatch: object) -> Path:
         archive.writestr("0-1-2.png", b"png")
     monkeypatch.setattr(question_media, "QUESTION_MEDIA", media_root)
     monkeypatch.setattr(question_media, "_EXTRACT_FAILURES", {})
+    monkeypatch.setattr(question_media, "_EXTRACT_RETRY_AFTER", {})
     return media_root
+
+
+def _fake_clock(monkeypatch: object) -> dict[str, float]:
+    """Replace the module clock with one the test moves by hand."""
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(question_media, "_monotonic", lambda: clock["now"])
+    return clock
+
+
+def _counting_extract(monkeypatch: object) -> list[Path]:
+    """Record each zip extraction attempt while still extracting for real."""
+    opened: list[Path] = []
+    real_extract = question_media._extract_media_zip
+
+    def counting_extract(source: Path, destination: Path) -> None:
+        """Count extraction attempts."""
+        opened.append(source)
+        real_extract(source, destination)
+
+    monkeypatch.setattr(question_media, "_extract_media_zip", counting_extract)
+    return opened
 
 
 def _lock_path_method(
@@ -275,6 +298,7 @@ def test_locked_rename_is_not_remembered_as_a_failure(
 ) -> None:
     """A rename that stays locked should fail this load only."""
     media_root = _media_root_with_zip(temp_dir, monkeypatch)
+    clock = _fake_clock(monkeypatch)
     sleeps = _lock_path_method(monkeypatch, "rename", failures=None)
 
     assert question_media.find_question_media_file("4453", 0, (1, 2)) is False
@@ -288,9 +312,72 @@ def test_locked_rename_is_not_remembered_as_a_failure(
     assert sorted(path.name for path in media_root.iterdir()) == ["4453.zip"]
 
     monkeypatch.setattr(Path, "rename", _REAL_RENAME)
+    clock["now"] += question_media._EXTRACT_RETRY_WINDOW
     resolved = question_media.find_question_media_file("4453", 0, (1, 2))
 
     assert resolved == str(media_root / "4453" / "0-1-2.png")
+    assert question_media._EXTRACT_RETRY_AFTER == {}
+
+
+def test_lasting_lock_is_tried_once_per_parse(
+    temp_dir: object, monkeypatch: object
+) -> None:
+    """A lock that does not clear should not be retried for every clue."""
+    media_root = _media_root_with_zip(temp_dir, monkeypatch)
+    clock = _fake_clock(monkeypatch)
+    sleeps = _lock_path_method(monkeypatch, "rename", failures=None)
+    opened = _counting_extract(monkeypatch)
+
+    for column in range(6):
+        for row in range(5):
+            question_media.find_question_media_file("4453", 0, (column, row))
+        clock["now"] += 0.5
+
+    assert len(opened) == 1
+    assert sleeps == list(question_media._MOVE_RETRY_DELAYS)
+    assert question_media.detect_question_media("4453").error is None
+
+    clock["now"] += question_media._EXTRACT_RETRY_WINDOW
+    monkeypatch.setattr(Path, "rename", _REAL_RENAME)
+    resolved = question_media.find_question_media_file("4453", 0, (1, 2))
+
+    assert len(opened) == 2
+    assert resolved == str(media_root / "4453" / "0-1-2.png")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("File is encrypted, password required for extraction"),
+        NotImplementedError("That compression method is not supported"),
+        EOFError(),
+        zlib.error("Error -3 while decompressing data: invalid block type"),
+    ],
+    ids=["encrypted", "unsupported-compression", "truncated", "bad-deflate-data"],
+)
+def test_damaged_zip_contents_are_reported_and_not_retried(
+    temp_dir: object, monkeypatch: object, error: Exception
+) -> None:
+    """Errors from the zip's contents should be shown and cached like BadZipFile."""
+    media_root = _media_root_with_zip(temp_dir, monkeypatch)
+    opened: list[Path] = []
+
+    def failing_extract(source: Path, destination: Path) -> None:
+        """Fail the way ``zipfile`` does for this kind of damaged archive."""
+        opened.append(source)
+        raise error
+
+    monkeypatch.setattr(question_media, "_extract_media_zip", failing_extract)
+
+    for column in range(3):
+        assert question_media.find_question_media_file("4453", 0, (column, 0)) is False
+
+    assert len(opened) == 1
+    status = question_media.detect_question_media("4453")
+    assert status.error == (str(error) or type(error).__name__)
+    assert "could not be extracted" in status.summary_text()
+    assert question_media._EXTRACT_RETRY_AFTER == {}
+    assert sorted(path.name for path in media_root.iterdir()) == ["4453.zip"]
 
 
 def test_import_retries_a_briefly_locked_move(

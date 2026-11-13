@@ -44,6 +44,15 @@ _ZIP_CONTENT_ERRORS = (
 # files, which makes a rename fail with ``PermissionError``. The worst case
 # adds 0.5 s before giving up.
 _MOVE_RETRY_DELAYS = (0.05, 0.1, 0.15, 0.2)
+# Zip path -> ``_monotonic()`` time before which extraction is not tried
+# again, for zips that hit a file-system error. The parser looks up media once
+# per clue, so without this a lasting error would make every clue extract the
+# whole zip and wait through the move retries. These failures are not shown to
+# the host, because they may clear up by the next load.
+_EXTRACT_RETRY_AFTER: dict[str, float] = {}
+# How long, in seconds, to skip a zip after a file-system error. This covers
+# one game parse but not a later load the host starts.
+_EXTRACT_RETRY_WINDOW = 5.0
 
 
 @dataclass(frozen=True)
@@ -158,6 +167,7 @@ def import_question_media(source_path: object, game_id: object) -> Path:
         finally:
             shutil.rmtree(staging, ignore_errors=True)
         _EXTRACT_FAILURES.pop(str(question_media_zip(game_id)), None)
+        _EXTRACT_RETRY_AFTER.pop(str(question_media_zip(game_id)), None)
     return destination
 
 
@@ -171,17 +181,22 @@ def ensure_question_media_dir(game_id: object) -> Path | None:
     damaged, the error is logged and recorded for ``detect_question_media``
     so the host is told, and ``None`` is returned so parsing continues. A
     file-system error, such as a file briefly locked by antivirus, also
-    returns ``None`` but is not recorded, so the next load tries again.
+    returns ``None`` and is not shown to the host. Lookups in the next
+    ``_EXTRACT_RETRY_WINDOW`` seconds skip the zip, so one parse does not try
+    again for every clue, and a later load tries again.
     """
     status = detect_question_media(game_id)
     if status.has_directory:
         return status.directory
     if not status.has_zip or status.error:
         return None
+    zip_key = str(status.zip_file)
     with _EXTRACT_LOCK:
         destination = question_media_dir(game_id)
         if destination.is_dir():
             return destination
+        if _monotonic() < _EXTRACT_RETRY_AFTER.get(zip_key, float("-inf")):
+            return None
         try:
             _extract_zip_into_place(status.zip_file, destination, game_id)
         except _ZIP_CONTENT_ERRORS as exc:
@@ -193,8 +208,10 @@ def ensure_question_media_dir(game_id: object) -> Path | None:
                 status.zip_file,
                 exc_info=True,
             )
+            _EXTRACT_RETRY_AFTER[zip_key] = _monotonic() + _EXTRACT_RETRY_WINDOW
             return None
-        _EXTRACT_FAILURES.pop(str(status.zip_file), None)
+        _EXTRACT_FAILURES.pop(zip_key, None)
+        _EXTRACT_RETRY_AFTER.pop(zip_key, None)
     return destination
 
 
@@ -225,6 +242,11 @@ def _extract_zip_into_place(source: Path, destination: Path, game_id: object) ->
 def _sleep(seconds: float) -> None:
     """Pause between move attempts. Tests patch this to avoid waiting."""
     time.sleep(seconds)
+
+
+def _monotonic() -> float:
+    """Return the current monotonic time. Tests patch this to move the clock."""
+    return time.monotonic()
 
 
 def _retry_on_permission_error(action: Callable[[], object]) -> None:
