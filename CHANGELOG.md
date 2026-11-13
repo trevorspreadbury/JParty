@@ -24,6 +24,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   metadata, assets, sound and QR codes without opening a window (#83).
 - New saves record `history_format` and `jparty_version` in `general.json`
   (#60).
+- While JParty waits for Final Jeopardy wagers, the host can press Enter to
+  open the clue right away. Anyone who hasn't wagered is counted as wagering
+  $0, so a dead phone or a player who left no longer stalls the game (#108).
 
 ### Changed
 - JParty now supports up to 6 players (was 8). A 7th phone is told the game
@@ -44,6 +47,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `environment.yml` installs from `pyproject.toml` (#75, #83).
 
 ### Fixed
+- The welcome screen now warns about a missing Daily Double in Double
+  Jeopardy! even when Jeopardy! is unticked, or when an advanced board uses
+  the Double Jeopardy! round on its own (#107).
+- Going to 4 or more advanced boards now gives every board the new point
+  values in order. Only values the host typed are kept (#107).
 - A player name or Final answer containing "BUZZ" (such as "What is a
   BUZZARD?") is no longer read as a buzz. Such names now join, such answers
   are recorded, and a buzz from a phone that has not joined is ignored
@@ -100,6 +108,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Crash reporting is installed at startup again, so unhandled errors show a
   dialog and reach the log (#50).
 - Tests stay offline and catch more real bugs (#84, #89).
+- A player who buzzed too early is no longer locked out again when the clue
+  reopens after a wrong answer. The early-buzz penalty now only applies to
+  the window they buzzed early on (#108).
+- Holding a host key down no longer repeats it, so a long press of Space
+  can't skip a step, such as jumping past a Final answer reveal (#108).
 
 ### Removed
 - The crash dialog no longer offers to email a report. It shows the error and

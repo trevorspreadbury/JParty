@@ -862,8 +862,8 @@ QCheckBox {{
                 ]
             )
         has_missing_daily_double = getattr(
-            summary_data, "has_missing_daily_double", lambda: False
-        )()
+            summary_data, "has_missing_daily_double", lambda *_: False
+        )(self._summary_daily_double_counts())
         if has_missing_daily_double:
             summary_lines.extend(["", MISSING_DAILY_DOUBLE_WARNING])
         media_status = self.question_media_summary_text()
@@ -872,6 +872,24 @@ QCheckBox {{
         if self._media_reload_warning:
             summary_lines.extend(["", self._media_reload_warning])
         return "\n".join(str(line) for line in summary_lines if line is not None)
+
+    def _summary_daily_double_counts(self) -> list[int] | None:
+        """Return the Daily Double counts the regular-mode summary expects.
+
+        Each selected round is held to the count for its place in the source
+        game, so unticking Jeopardy! still expects two in Double Jeopardy!.
+
+        Returns:
+            Expected counts for the selected standard rounds, or ``None`` in
+            advanced mode or when the source game can't say.
+        """
+        data = getattr(self.game, "data", None)
+        if not data or self.advanced_options_checkbox.isChecked():
+            return None
+        source_counts = getattr(data, "source_daily_double_counts", None)
+        if source_counts is None:
+            return None
+        return source_counts(self.current_round_selection_indices())
 
     def summary_game_data(self) -> object:
         """Return the current game data shaped for welcome-screen summaries."""
@@ -1019,7 +1037,14 @@ QCheckBox {{
             snapshots.setdefault(board_type, []).append(
                 {
                     "game_id": row["gameid_edit"].text(),
-                    "values": [edit.text() for edit in row["value_edits"]],
+                    # Untouched defaults are left out so the new board count's
+                    # ladder applies to them.
+                    "values": [
+                        None if edit.text() == str(default) else edit.text()
+                        for edit, default in zip(
+                            row["value_edits"], row["default_values"], strict=False
+                        )
+                    ],
                     "selected_round_index": selected_round_index,
                     "daily_double_count": (
                         row["daily_double_spinbox"].value()
@@ -1055,7 +1080,8 @@ QCheckBox {{
             for value_edit, value in zip(
                 row["value_edits"], snapshot.get("values", [])
             ):
-                value_edit.setText(value)
+                if value is not None:
+                    value_edit.setText(value)
             if row["gameid_edit"].text().strip():
                 # Loading clears the row, so the round and Daily Doubles are
                 # re-applied once the source game is back.
@@ -1165,15 +1191,17 @@ QCheckBox {{
         controls_layout.addWidget(random_button, 0, 2)
         controls_layout.addWidget(load_media_button, 0, 3)
         value_edits = []
+        default_values = []
         daily_double_spinbox = None
         if board_type == "standard":
+            default_values = self.default_values_for_board(board_index, board_count)
             controls_layout.addWidget(QLabel("Point Values", row_widget), 1, 0)
             values_widget = QWidget(row_widget)
             values_layout = QHBoxLayout()
             values_layout.setContentsMargins(0, 0, 0, 0)
             values_layout.setSpacing(8)
             values_widget.setLayout(values_layout)
-            for value in self.default_values_for_board(board_index, board_count):
+            for value in default_values:
                 value_edit = QLineEdit(str(value), row_widget)
                 value_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 value_edit.editingFinished.connect(self.sync_active_configuration)
@@ -1210,6 +1238,7 @@ QCheckBox {{
             "random_button": random_button,
             "load_media_button": load_media_button,
             "value_edits": value_edits,
+            "default_values": default_values,
             "daily_double_spinbox": daily_double_spinbox,
             "daily_double_indices": [],
             "daily_double_source_round_index": None,
@@ -1874,7 +1903,15 @@ QCheckBox {{
         )()
         if missing_question_count:
             summary_lines.append(f"Missing questions: {missing_question_count}")
-        if getattr(summary_data, "has_missing_daily_double", lambda: False)():
+        expected_daily_doubles = None
+        if summary_data is not data:
+            # One round picked from the source: hold it to its own place there.
+            expected_daily_doubles = data.source_daily_double_counts(
+                [selected_round_index]
+            )
+        if getattr(summary_data, "has_missing_daily_double", lambda *_: False)(
+            expected_daily_doubles
+        ):
             summary_lines.append(MISSING_DAILY_DOUBLE_WARNING)
         if media_status is not None:
             summary_lines.append(media_status.summary_text())

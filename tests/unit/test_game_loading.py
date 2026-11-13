@@ -296,3 +296,20 @@ def test_has_missing_daily_double_uses_expected_counts() -> None:
     assert game.has_missing_daily_double() is True
     assert game.has_missing_daily_double([1, 2, 2]) is False
     assert game.has_missing_daily_double([1, 2, 3]) is True
+
+
+def test_source_daily_double_counts_follow_source_round_positions() -> None:
+    """Each round keeps its source position's count, whatever else is picked."""
+    game = GameData(
+        [
+            _board_with_daily_doubles({(0, 0)}),
+            _board_with_daily_doubles({(0, 0)}),
+            FinalBoard("Final", Question((0, 0), "Q", "A", "Final")),
+        ],
+        "date",
+        "comments",
+    )
+
+    assert game.source_daily_double_counts([0, 1, 2]) == [1, 2]
+    assert game.source_daily_double_counts([1, 2]) == [2]
+    assert game.source_daily_double_counts([2, 5]) == []
