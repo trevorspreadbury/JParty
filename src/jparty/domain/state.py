@@ -18,7 +18,7 @@ from jparty.domain.models import FinalBoard
 
 QUESTION_HISTORY_FILE_NAME = "question_history.jsonl"
 # Version of the question_history.jsonl format, recorded in general.json
-# as ``history_format``. Saves without it predate the append-only ledger.
+# as ``history_format``.
 HISTORY_FORMAT = 2
 QUESTION_HISTORY_ENTRY_TYPE = "question"
 MANUAL_SCORE_ADJUSTMENT_TYPE = "manual_score_adjustment"
@@ -177,7 +177,8 @@ def get_history_entry_type(entry: dict) -> str:
         entry: Persisted JSONL history entry.
 
     Returns:
-        The entry type, defaulting legacy clue records to ``"question"``.
+        The entry type. Clue lines have no ``type`` field and read as
+        ``"question"``.
     """
     if entry.get("type"):
         return entry["type"]
@@ -336,14 +337,14 @@ def history_score_events(entry: dict) -> list[tuple]:
 
     Returns:
         ``(player_index, score_before, score_after)`` tuples. Either score may
-        be ``None`` for legacy lines that did not record it.
+        be ``None`` if the line did not record it.
     """
     if is_manual_score_adjustment(entry):
         return [
             (
                 entry.get("player_index"),
                 entry.get("score_before"),
-                entry.get("score_after", entry.get("new_score")),
+                entry.get("score_after"),
             )
         ]
     if is_score_correction(entry):
@@ -616,9 +617,7 @@ def corrected_history_entries(entries: list[dict]) -> list[dict]:
             if player_index is None:
                 continue
             score_before = scores.get(player_index, INITIAL_SCORE)
-            recorded_after = corrected_entry.get(
-                "score_after", corrected_entry.get("new_score", score_before)
-            )
+            recorded_after = corrected_entry.get("score_after", score_before)
             recorded_before = corrected_entry.get("score_before", score_before)
             score_after = score_before + recorded_after - recorded_before
             corrected_entry["score_before"] = score_before
@@ -833,8 +832,7 @@ def reconstruct_score_history(game: object) -> object:
             player_index = entry.get("player_index")
             if player_index is not None:
                 scores[player_index] = entry.get(
-                    "score_after",
-                    entry.get("new_score", scores.get(player_index, INITIAL_SCORE)),
+                    "score_after", scores.get(player_index, INITIAL_SCORE)
                 )
         else:
             for attempt in entry.get("answer_attempts", []):
@@ -885,8 +883,8 @@ class SavedGameData:
             loaded.
         selected_round_indices: Indices into ``data.rounds`` that are played,
             or ``None`` to play every round.
-        board_selection_configs: Saved advanced board selections, or ``None``
-            for a regular-mode save.
+        board_selection_configs: Saved board selections, or ``None`` for a
+            save without them.
     """
 
     data: object
@@ -894,85 +892,18 @@ class SavedGameData:
     board_selection_configs: list[dict] | None
 
 
-def board_selections_match_original_game_subset(
-    game_id: str,
-    game_data: object,
-    board_selection_configs: list[dict],
-    selected_round_indices: object,
-) -> bool:
-    """Return whether saved board selections describe a plain original-game subset.
-
-    Such saves were started from one archived game with unchanged boards, so
-    their history uses the original game's round indices.
-
-    Args:
-        game_id: Saved game id.
-        game_data: The original game's ``GameData``.
-        board_selection_configs: Saved ``board_selections`` list.
-        selected_round_indices: Saved ``selected_round_indices`` list.
-
-    Returns:
-        ``True`` when every selection is an unchanged board from ``game_id``
-        at the matching selected round index.
-    """
-    from jparty.services.game_loader import (
-        original_board_row_values,
-        standard_board_daily_double_indices,
-    )
-
-    if not game_data or selected_round_indices is None:
-        return False
-    normalized_indices = [int(index) for index in selected_round_indices]
-    if len(board_selection_configs) != len(normalized_indices):
-        return False
-    for selection, round_index in zip(
-        board_selection_configs, normalized_indices, strict=False
-    ):
-        if str(selection.get("game_id", "")).strip() != game_id:
-            return False
-        if int(selection.get("source_round_index", -1)) != round_index:
-            return False
-        if not 0 <= round_index < len(game_data.rounds):
-            return False
-        round_data = game_data.rounds[round_index]
-        expected_board_type = (
-            "final" if isinstance(round_data, FinalBoard) else "standard"
-        )
-        if selection.get("board_type") != expected_board_type:
-            return False
-        expected_row_values = original_board_row_values(game_data, round_index)
-        if list(selection.get("row_values", [])) != expected_row_values:
-            return False
-        expected_daily_double_indices = (
-            []
-            if isinstance(round_data, FinalBoard)
-            else standard_board_daily_double_indices(round_data)
-        )
-        if selection.get(
-            "daily_double_count", len(expected_daily_double_indices)
-        ) != len(expected_daily_double_indices):
-            return False
-        if list(
-            selection.get("daily_double_indices", expected_daily_double_indices)
-        ) != (expected_daily_double_indices):
-            return False
-    return True
-
-
 def load_saved_game_data(general_state: dict) -> SavedGameData:
     """Rebuild a save's game data and round mapping from ``general.json``.
 
     Resume and the ``jparty summary`` CLI both call this, so saved
-    ``round_index`` values point at the same boards in both. The three save
+    ``round_index`` values point at the same boards in both. The save
     layouts are:
 
-    - Regular mode: the full original game, with ``selected_round_indices``
-      as saved (``None`` means every round).
-    - Advanced mode that only picks unchanged boards from the saved game: the
-      full original game, with the saved ``selected_round_indices``. These
-      saves record original round indices in their history.
-    - Any other advanced-mode save: the composed game built from
-      ``board_selections``, with every composed round selected.
+    - With ``board_selections`` (regular and advanced mode): the game built
+      from ``board_selections``, with every built round selected. This is
+      the game that was played, so history positions line up.
+    - Without ``board_selections``: the full game ``game_id`` with
+      ``selected_round_indices`` as saved (``None`` means every round).
 
     Args:
         general_state: Decoded ``general.json`` contents.
@@ -985,27 +916,12 @@ def load_saved_game_data(general_state: dict) -> SavedGameData:
 
     game_id = str(general_state.get("game_id", "")).strip()
     board_selection_configs = general_state.get("board_selections")
-    selected_round_indices = general_state.get("selected_round_indices")
     if not board_selection_configs:
         return SavedGameData(
             data=game_loader.get_game(game_id),
-            selected_round_indices=selected_round_indices,
+            selected_round_indices=general_state.get("selected_round_indices"),
             board_selection_configs=None,
         )
-    source_game_ids = {
-        str(selection.get("game_id", "")).strip()
-        for selection in board_selection_configs
-    }
-    if source_game_ids == {game_id}:
-        original_data = game_loader.get_game(game_id)
-        if board_selections_match_original_game_subset(
-            game_id, original_data, board_selection_configs, selected_round_indices
-        ):
-            return SavedGameData(
-                data=original_data,
-                selected_round_indices=selected_round_indices,
-                board_selection_configs=board_selection_configs,
-            )
     data = game_loader.build_game_from_board_selection_configs(board_selection_configs)
     return SavedGameData(
         data=data,

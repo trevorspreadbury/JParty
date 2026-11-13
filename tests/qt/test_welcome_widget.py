@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QFileDialog, QLabel, QMessageBox, QWidget
 
 from jparty.app.paths import GAME_STATES_DIR
 from jparty.domain.models import Board, FinalBoard, GameData, Question
+from jparty.services.game_loader import original_board_row_values
 from jparty.services.game_parser import GameParser
 from jparty.services.question_media import QuestionMediaStatus
 from jparty.ui.widgets.welcome import (
@@ -1374,9 +1375,8 @@ def test_regular_start_with_gap_in_first_category_keeps_row_values(
         assert question.value == (question.index[1] + 1) * 200
     for question in double_jeopardy.questions:
         assert question.value == (question.index[1] + 1) * 400
-    assert game._board_selections_match_original_game_subset(
-        "4453", source, game.board_selection_configs(), [0, 1, 2]
-    )
+    for round_index, selection in enumerate(game.board_selection_configs()):
+        assert selection["row_values"] == original_board_row_values(source, round_index)
 
 
 class LoadingStubGame(StubGame):
@@ -1657,6 +1657,67 @@ def test_regular_start_reuses_the_loaded_game(
     assert game.current_round is game.data.rounds[0]
     assert game.data.rounds[0].categories == source.rounds[0].categories
     assert isinstance(game.data.rounds[1], FinalBoard)
+
+
+def test_resumed_regular_subset_shows_the_played_rounds(
+    qtbot: object,
+    game_with_players: object,
+    fixture_dir: object,
+    temp_dir: object,
+    monkeypatch: object,
+) -> None:
+    """Load Saved lists the rounds the save resumes on, with source labels (#93).
+
+    Before Start the checkboxes use the source game's round numbers; once the
+    game starts, they become positions in the game built from the ticked
+    rounds.
+    """
+    from jparty.domain import game_engine
+
+    game = game_with_players
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    source = GameParser().process_game_board_from_html(html, "4453")
+    assert source is not None
+    for target in (
+        "jparty.services.game_loader.get_game",
+        "jparty.ui.widgets.welcome.get_game",
+    ):
+        monkeypatch.setattr(target, lambda game_id: deepcopy(source))
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+    monkeypatch.setattr("jparty.services.question_media.QUESTION_MEDIA", temp_dir)
+    monkeypatch.setattr(game_engine, "GAME_STATES_DIR", temp_dir / "game_states")
+    monkeypatch.setattr(game, "_save_played_game_html", lambda: None)
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    _type_game_id(widget, "4453")
+    widget.round_checkboxes[0].setChecked(False)
+    assert game.selected_round_indices() == [1, 2]
+    widget.on_start_clicked()
+    assert game.selected_round_indices() == [0, 1]
+    saved_dir = game._game_state_dir
+    players = list(game.players)
+    game.close_game()
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(saved_dir)
+    )
+    resume_widget = Welcome(game)
+    qtbot.addWidget(resume_widget)
+
+    resume_widget.load_saved_game()
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    resume_widget.on_start_clicked()
+
+    assert [checkbox.text() for checkbox in resume_widget.round_checkboxes] == [
+        "[x] Double Jeopardy!",
+        "[x] Final Jeopardy!",
+    ]
+    assert game.selected_round_indices() == [0, 1]
+    assert game.current_round.categories == source.rounds[1].categories
 
 
 def test_media_import_reloads_the_loaded_regular_game(

@@ -1147,3 +1147,86 @@ def test_get_game_does_not_write_the_game_id_to_the_environment(
     archive_client.get_game("4453")
 
     assert "JPARTY_GAME_ID" not in os.environ
+
+
+def _game_with_distinct_rounds() -> GameData:
+    """Return Jeopardy, Double Jeopardy and Final boards with different categories."""
+    rounds = []
+    for multiplier, prefix in ((1, "J"), (2, "DJ")):
+        categories = [f"{prefix} {col}" for col in range(6)]
+        questions = [
+            Question(
+                (col, row),
+                "clue",
+                "response",
+                categories[col],
+                (row + 1) * 200 * multiplier,
+            )
+            for col in range(6)
+            for row in range(5)
+        ]
+        rounds.append(Board(categories, questions, dj=multiplier == 2))
+    final = FinalBoard("Final", Question((0, 0), "clue", "response", "Final"))
+    return GameData([*rounds, final], "January 1, 2026", "Fixture game")
+
+
+DJ_AND_FINAL_SELECTIONS = [
+    {
+        "game_id": "4453",
+        "source_round_index": 1,
+        "source_round_label": "Double Jeopardy!",
+        "board_type": "standard",
+        "row_values": [400, 800, 1200, 1600, 2000],
+        "daily_double_count": 0,
+        "daily_double_indices": [],
+    },
+    {
+        "game_id": "4453",
+        "source_round_index": 2,
+        "source_round_label": "Final Jeopardy!",
+        "board_type": "final",
+        "row_values": [],
+    },
+]
+
+
+@pytest.mark.parametrize(
+    ("general_state", "expected_rounds", "expected_selected"),
+    [
+        ({"selected_round_indices": [0, 1]}, ["J 0", "DJ 0", "Final"], [0, 1]),
+        ({"selected_round_indices": [1, 2]}, ["J 0", "DJ 0", "Final"], [1, 2]),
+        (
+            {
+                "selected_round_indices": [0, 1],
+                "board_selections": DJ_AND_FINAL_SELECTIONS,
+            },
+            ["DJ 0", "Final"],
+            [0, 1],
+        ),
+    ],
+    ids=[
+        "no-selections-prefix",
+        "no-selections-skipped-round",
+        "regular-subset",
+    ],
+)
+def test_load_saved_game_data_layouts(
+    monkeypatch: object,
+    general_state: dict,
+    expected_rounds: list,
+    expected_selected: list,
+) -> None:
+    """Each save layout loads the boards its history numbers point at (#93)."""
+    from jparty.domain.state import load_saved_game_data
+    from jparty.services import game_loader
+
+    monkeypatch.setattr(
+        game_loader, "get_game", lambda game_id: _game_with_distinct_rounds()
+    )
+
+    saved = load_saved_game_data({"game_id": "4453", **general_state})
+
+    assert [
+        round_data.categories[0] for round_data in saved.data.rounds
+    ] == expected_rounds
+    assert saved.selected_round_indices == expected_selected
