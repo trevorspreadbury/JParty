@@ -295,6 +295,74 @@ def normalize_standard_board_daily_doubles(
     return round_data
 
 
+def select_advanced_daily_double_indices(
+    round_data: object,
+    requested_count: object,
+    existing_daily_double_indices: object = None,
+    rng: random.Random | None = None,
+) -> list[list[int]]:
+    """Return the Daily Double coordinates to keep for one advanced board.
+
+    The source board's original Daily Doubles are the baseline. Asking for
+    more keeps every original and adds the extras already chosen in
+    ``existing_daily_double_indices`` (``normalize_standard_board_daily_doubles``
+    draws any still missing). Asking for fewer keeps only a subset of the
+    originals: the existing subset when it has the right size, otherwise a
+    random one.
+
+    Args:
+        round_data: Source standard board.
+        requested_count: Number of Daily Doubles the host asked for.
+        existing_daily_double_indices: Coordinates chosen earlier for this
+            board, kept when still valid so the layout stays stable.
+        rng: Random source used to pick a subset of the originals.
+
+    Returns:
+        Daily Double coordinates as ``[column, row]`` lists.
+    """
+    rng = rng or random.SystemRandom()
+    original_daily_double_indices = standard_board_daily_double_indices(round_data)
+    requested_total = max(0, int(requested_count))
+    original_index_set = {tuple(index) for index in original_daily_double_indices}
+    existing_indices = [
+        list(index)
+        for index in (existing_daily_double_indices or [])
+        if isinstance(index, list | tuple) and len(index) == QUESTION_INDEX_PART_COUNT
+    ]
+    if requested_total <= len(original_daily_double_indices):
+        if requested_total == len(original_daily_double_indices):
+            return original_daily_double_indices
+        existing_original_subset = []
+        seen_indices = set()
+        for index in existing_indices:
+            normalized_index = tuple(index)
+            if (
+                normalized_index in original_index_set
+                and normalized_index not in seen_indices
+            ):
+                existing_original_subset.append(list(index))
+                seen_indices.add(normalized_index)
+        if len(existing_original_subset) == requested_total:
+            return existing_original_subset
+        return [
+            list(index)
+            for index in rng.sample(original_daily_double_indices, requested_total)
+        ]
+
+    extra_slots = requested_total - len(original_daily_double_indices)
+    current_extra_indices = []
+    seen_extra_indices = set()
+    for index in existing_indices:
+        normalized_index = tuple(index)
+        if (
+            normalized_index not in original_index_set
+            and normalized_index not in seen_extra_indices
+        ):
+            current_extra_indices.append(list(index))
+            seen_extra_indices.add(normalized_index)
+    return original_daily_double_indices + current_extra_indices[:extra_slots]
+
+
 def compose_game_from_resolved_board_selections(
     resolved_boards: list[tuple[dict, GameData, object]],
 ) -> GameData | None:
@@ -410,5 +478,7 @@ __all__ = [
     "list_to_game",
     "normalize_standard_board_daily_doubles",
     "process_game_board_from_html",
+    "round_matches_board_type",
+    "select_advanced_daily_double_indices",
     "standard_board_daily_double_indices",
 ]

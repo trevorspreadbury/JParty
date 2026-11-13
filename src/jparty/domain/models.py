@@ -156,21 +156,32 @@ class GameData:
             if isinstance(round_data, Board) and not isinstance(round_data, FinalBoard)
         )
 
-    def has_missing_daily_double(self) -> bool:
+    def has_missing_daily_double(self, expected_counts: object = None) -> bool:
         """Return whether any standard round is missing a Daily Double.
+
+        Args:
+            expected_counts: Optional Daily Double count expected for each
+                standard round, in order. A composed (advanced-mode) game
+                passes the counts the host asked for. Without it, standard
+                round *i* is expected to have at least *i* + 1, as in a
+                regular game.
 
         Returns:
             ``True`` when a standard round has fewer Daily Doubles than
-            expected for its position.
+            expected.
         """
         standard_rounds = [
             round_data
             for round_data in self.rounds
             if isinstance(round_data, Board) and not isinstance(round_data, FinalBoard)
         ]
+        if expected_counts is None:
+            expected_counts = [index + 1 for index in range(len(standard_rounds))]
         return any(
-            round_data.daily_double_count() < index + 1
-            for index, round_data in enumerate(standard_rounds)
+            round_data.daily_double_count() < int(expected)
+            for round_data, expected in zip(
+                standard_rounds, expected_counts, strict=False
+            )
         )
 
 

@@ -91,12 +91,14 @@ Daily Double handling now has two important invariants:
 - advanced-mode extra DDs are additive on top of that baseline; reducing below
   the original count keeps only a random subset of the original DDs
 
-If you touch DD logic, review both:
+DD rules live in `src/jparty/services/game_loader.py`:
+`select_advanced_daily_double_indices` picks the baseline to keep for an
+advanced board, and `normalize_standard_board_daily_doubles` applies the layout
+and draws any extras. `src/jparty/ui/widgets/welcome.py` only calls them and
+keeps each row's chosen coordinates stable across reloads.
 
-- `src/jparty/services/game_loader.py`
-- `src/jparty/ui/widgets/welcome.py`
-
-and run the relevant Qt tests in `tests/qt/test_welcome_widget.py`.
+If you touch DD logic, run `tests/unit/test_game_loading.py` and the relevant
+Qt tests in `tests/qt/test_welcome_widget.py`.
 
 ### Saved game state
 
