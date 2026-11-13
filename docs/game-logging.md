@@ -451,7 +451,16 @@ uses the same strict reader, and stops with the same error if:
 - the score chain breaks (a line is missing or was edited)
 
 Blank lines are skipped, and a complete last line without a trailing newline
-is accepted. The error looks like this:
+is accepted. Lines with an unknown `type` are ignored.
+
+The list above is not complete. A line that is a JSON object but has a field
+of the wrong shape (for example `answer_attempts` that is not a list of
+objects, or a `player_index` that is a list) can fail with a plain
+Python error that has no line number. Load Saved shows that error as it is;
+the score editor, the end-of-game summary and `jparty summary` don't show
+the message below for it.
+
+For the cases listed above, the error looks like this:
 
 ```text
 Could not read saved clue history.
