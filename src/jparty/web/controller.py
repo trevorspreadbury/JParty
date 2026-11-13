@@ -586,11 +586,16 @@ class BuzzerController:
         """Forward a player's buzz event into the game engine.
 
         Args:
-            player: Player object that initiated the buzz.
+            player: Player object that initiated the buzz, or ``None`` for a
+                socket that never joined.
 
         Returns:
             ``None``.
+
+        A buzz from a socket with no player is ignored.
         """
+        if player is None:
+            return
         if self.game:
             i_player = self.game.players.index(player)
             self.game.buzz_trigger.emit(i_player)

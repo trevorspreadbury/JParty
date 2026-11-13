@@ -18,6 +18,18 @@ For example:
 4453-20260422T2130
 ```
 
+The timestamp is to the minute. If a folder with that name already exists
+(for example, the game was started twice in the same minute), the new session
+gets a numbered suffix instead of reusing the old folder:
+
+```text
+4453-20260422T2130-2
+4453-20260422T2130-3
+```
+
+Each fresh Start creates a new folder. Resuming a save with Load Saved keeps
+writing to that save's existing folder.
+
 The two main files are:
 
 - `general.json`: high-level session metadata
