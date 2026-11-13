@@ -1513,12 +1513,14 @@ class Game(QObject):
 
         Args:
             i_player: Zero-based player index submitting the wager.
-            amount: Wager amount chosen by the player.
+            amount: Wager amount chosen by the player. It is clamped to
+                ``0..max(score, 0)``.
 
         Returns:
             ``None``.
         """
         player = self.players[i_player]
+        amount = player.clamp_final_wager(amount)
         player.wager = amount
         self.dc.player_widget(player).set_lights(False)
         logging.info(f"{player} wagered {amount}")
