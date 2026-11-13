@@ -1094,43 +1094,6 @@ def test_build_end_game_summary_counts_manual_adjustment_as_its_own_event(
     assert _series_by_player(summary)[1] == [0, 0, 500]
 
 
-def test_score_graph_uses_composed_session_game_id(
-    game: object,
-    players: object,
-    monkeypatch: object,
-    sample_saved_game_dir: object,
-    temp_dir: object,
-) -> None:
-    """A Frankenstein game's graph is titled and named with its session id.
-
-    Loading source games used to leave the last one's id in the process
-    environment, and the graph read it from there.
-    """
-    import matplotlib.axes
-
-    import jparty.domain.game_engine as game_module
-
-    monkeypatch.setenv("JPARTY_GAME_ID", "5000")
-    monkeypatch.setattr(game_module, "GAME_SCORES_DIR", temp_dir / "scores")
-    titles = []
-    original_set_title = matplotlib.axes.Axes.set_title
-
-    def record_title(
-        self: object, label: str, *args: object, **kwargs: object
-    ) -> object:
-        titles.append(label)
-        return original_set_title(self, label, *args, **kwargs)
-
-    monkeypatch.setattr(matplotlib.axes.Axes, "set_title", record_title)
-    game._game_state_dir = sample_saved_game_dir
-    game.set_session_game_id("frankenstein-4453-5000")
-
-    game.generate_final_score_graph("original")
-
-    assert titles == ["Game frankenstein-4453-5000: Player Scores"]
-    assert (temp_dir / "scores" / "frankenstein-4453-5000-original.jpg").exists()
-
-
 def test_get_game_does_not_write_the_game_id_to_the_environment(
     monkeypatch: object,
 ) -> None:

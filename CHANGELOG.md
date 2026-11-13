@@ -21,7 +21,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 - `jparty self-check [--report FILE]` checks an installed or packaged app's
-  metadata, assets, sound, QR codes and graphs without opening a window (#83).
+  metadata, assets, sound and QR codes without opening a window (#83).
 - New saves record `history_format` and `jparty_version` in `general.json`
   (#60).
 - While JParty waits for Final Jeopardy wagers, the host can press Enter to
@@ -66,6 +66,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   every Final in order, with fresh wagers and answers for each. Before, the
   game ended after the first Final. Load Saved resumes at the first Final not
   yet judged (#98).
+- Each launch keeps the previous log as `latest.log.1` instead of wiping it,
+  so a crash still leaves a log behind. Errors in background threads are now
+  logged and show the crash dialog too (#109).
 - The app reports its real version (3.0.0) instead of 2.0.2, including
   packaged builds (#75, #83).
 - Moving or removing players in the resume lobby keeps each player's score
@@ -110,6 +113,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
   the window they buzzed early on (#108).
 - Holding a host key down no longer repeats it, so a long press of Space
   can't skip a step, such as jumping past a Final answer reveal (#108).
+
+### Removed
+- The crash dialog no longer offers to email a report. It shows the error and
+  where the log file is instead (#109).
+- The unused matplotlib score graph, the `game_scores` folder and the
+  matplotlib dependency. The end-of-game summary is unchanged (#109).
 
 ## [3.0.0-rc.1] - 2026-05-02
 

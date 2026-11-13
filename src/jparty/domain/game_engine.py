@@ -15,14 +15,11 @@ from datetime import datetime
 from pathlib import Path
 from threading import Thread
 
-import matplotlib
-import matplotlib.pyplot as plt
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QInputDialog, QMessageBox, QWidget
 
-matplotlib.use("Agg")
 from jparty import __version__
-from jparty.app.paths import GAME_SCORES_DIR, GAME_STATES_DIR
+from jparty.app.paths import GAME_STATES_DIR
 from jparty.domain.gameplay import (
     ClueFlow,
     FinalJeopardyFlow,
@@ -1727,85 +1724,6 @@ class Game(QObject):
             A dictionary containing persisted general session state.
         """
         return load_general_state(self)
-
-    def generate_final_score_graph(self, players: object) -> None:
-        """Generate and save a score-by-question graph for a player subset.
-
-        Args:
-            players: Player set selector, typically ``"original"``,
-                ``"current"``, or ``"all"``.
-
-        Returns:
-            ``None``.
-        """
-        all_score_history = self._reconstruct_score_history()
-        if not all_score_history:
-            logging.warning("No score history found to generate graph")
-            return
-        general_state = self._load_general_state()
-        saved_players = current_saved_players(
-            general_state.get("players", []), self._load_question_history()
-        )
-        original_player_map = {
-            p.get("player_number"): p.get("name", f"Player {p.get('player_number')}")
-            for p in saved_players
-        }
-        current_player_map = {p.player_number: p.name for p in self.players}
-        if players == "original":
-            player_numbers = set(original_player_map.keys())
-        elif players == "current":
-            player_numbers = set(current_player_map.keys())
-        elif players == "all":
-            player_numbers = set(original_player_map.keys()) | set(
-                current_player_map.keys()
-            )
-        else:
-            logging.error(f"Unknown player set: {players}")
-            return
-        data = {
-            pnum: all_score_history[pnum]
-            for pnum in player_numbers
-            if pnum in all_score_history
-        }
-        if not data:
-            logging.warning(f"No score data found for player set: {players}")
-            return
-        game_id = self.current_game_id() or "unknown"
-        fig = None
-        try:
-            (fig, ax) = plt.subplots(figsize=(10, 6))
-            for player_number, scores in data.items():
-                player_name = (
-                    current_player_map.get(player_number)
-                    or original_player_map.get(player_number)
-                    or f"Player {player_number}"
-                )
-                x_values = list(range(1, len(scores) + 1))
-                ax.plot(
-                    x_values,
-                    scores,
-                    marker="o",
-                    label=player_name,
-                    linewidth=2,
-                    markersize=6,
-                )
-            ax.set_xlabel("Question Number", fontsize=12)
-            ax.set_ylabel("Score", fontsize=12)
-            ax.set_title(
-                f"Game {game_id}: Player Scores", fontsize=14, fontweight="bold"
-            )
-            ax.legend(loc="best")
-            ax.grid(True, alpha=0.3)
-            GAME_SCORES_DIR.mkdir(exist_ok=True)
-            image_path = GAME_SCORES_DIR / f"{game_id}-{players}.jpg"
-            plt.tight_layout()
-            fig.savefig(str(image_path), dpi=150, bbox_inches="tight")
-        finally:
-            if fig is not None:
-                plt.close(fig)
-            plt.close("all")
-            plt.ioff()
-        QApplication.processEvents()
 
     def close_game(self) -> None:
         """Reset runtime state so the app can return to the lobby.

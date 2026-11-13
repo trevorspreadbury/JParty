@@ -14,7 +14,7 @@ from dotenv import find_dotenv, load_dotenv
 
 from .config import APP_NAME
 
-REQUIRED_SUBDIRS = ("saved_games", "question_media", "game_states", "game_scores")
+REQUIRED_SUBDIRS = ("saved_games", "question_media", "game_states")
 load_dotenv(find_dotenv(usecwd=True), override=False)
 
 
@@ -84,7 +84,6 @@ USER_DATA_ROOT = _default_user_data_root()
 SAVED_GAMES = USER_DATA_ROOT / "saved_games"
 QUESTION_MEDIA = USER_DATA_ROOT / "question_media"
 GAME_STATES_DIR = USER_DATA_ROOT / "game_states"
-GAME_SCORES_DIR = USER_DATA_ROOT / "game_scores"
 LOG_FILE = USER_DATA_ROOT / "latest.log"
 
 
