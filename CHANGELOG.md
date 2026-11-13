@@ -6,8 +6,79 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- Phones no longer receive the Final Jeopardy answer before the host reveals
+  it (#86).
+- The server checks Final Jeopardy wagers (0 up to the player's score) and
+  only accepts wagers and answers while their prompt is open. A late Final
+  answer is only taken for 3 seconds, from the phone that was connected when
+  time ran out (#86).
+- Fixed two cross-site scripting holes on the lectern page: the signature
+  image is no longer built from raw HTML, and a bad player number in the
+  lectern URL is rejected (#86).
+- Updated dependencies with known vulnerabilities (Tornado, requests,
+  PyInstaller, PyQt6, qrcode and others) (#82).
+
+### Added
+- `jparty self-check [--report FILE]` checks an installed or packaged app's
+  metadata, assets, sound, QR codes and graphs without opening a window (#83).
+- New saves record `history_format` and `jparty_version` in `general.json`
+  (#60).
+
+### Changed
+- JParty now supports up to 6 players (was 8). A 7th phone is told the game
+  is full instead of crashing the join (#87).
+- Two monitors are required again by default. Use `jparty --debug` or
+  `JPARTY_DEBUG=1` to run on one screen (#75).
+- Clue history is append-only: score corrections add `score_correction`
+  lines instead of rewriting the file, and a history line that fails to save
+  is retried before the next one (#60).
+- A damaged `question_history.jsonl` now stops Load Saved, the end-of-game
+  summary and `jparty summary` with the file, line number and reason, instead
+  of silently resetting scores (#60).
+- Regular-mode Start reuses the game already loaded on the welcome screen
+  instead of downloading it again (#85).
+- All game audio plays through Qt Multimedia; simpleaudio is removed (#78).
+- Python 3.11 or newer is required (#82).
+- PyInstaller moved to a `build` extra, `requirements.txt` was removed, and
+  `environment.yml` installs from `pyproject.toml` (#75, #83).
+
 ### Fixed
-- Bugs identified in post-tournament review (to be filled in as fix PRs merge).
+- The app reports its real version (3.0.0) instead of 2.0.2, including
+  packaged builds (#75, #83).
+- Moving or removing players in the resume lobby keeps each player's score
+  with them. Seat changes are saved as `player_renumber` lines (#61).
+- Phones on Wi-Fi no longer drop and reload in a loop, which lost Final
+  answers and sounds. An empty Final resubmission no longer replaces an
+  answer the player already gave (#82).
+- Fixed app crashes on Windows when a sound finished or was stopped (#78).
+- Websocket messages and clue timers run on the right thread, and closing a
+  game stops its timers (#76).
+- Daily Double wagers are capped at the larger of the player's score and the
+  board's top clue value (#87).
+- Resuming a save that already finished Final Jeopardy goes to the end of
+  the game instead of opening wagers again (#87).
+- The end-of-game graph for Frankenstein games uses the right game (#87).
+- Board row values are correct when a category is missing a clue, and in
+  older games where a Daily Double showed a doubled value (#59, #81).
+- Games without Final Jeopardy end instead of crashing, and a resumed game
+  on a finished board can move on with Space (#57).
+- End-of-game stats and `jparty summary` are correct for games that play
+  only some rounds (#74).
+- The welcome screen only applies the latest game load, a failed load can't
+  start the previous game, and starting a different game never overwrites a
+  prepared save (#72).
+- Advanced mode: importing media reloads the rows that use that game, failed
+  game ids can be retried, changing the board count keeps each board's Daily
+  Doubles, the missing Daily Double warning uses the requested count, and a
+  row's Random loads in the background and gives up after 10 tries (#88).
+- JParty recovers from damaged game caches and question media zips (#77).
+- An image clue lookup that fails offline no longer blanks the host board,
+  and the lookup no longer freezes the host screen (#51).
+- The image review only accepts the image the host is looking at (#73).
+- Crash reporting is installed at startup again, so unhandled errors show a
+  dialog and reach the log (#50).
+- Tests stay offline and catch more real bugs (#84, #89).
 
 ## [3.0.0-rc.1] - 2026-05-02
 
