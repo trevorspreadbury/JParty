@@ -10,7 +10,6 @@ from types import SimpleNamespace
 import pytest
 
 from jparty.domain.models import Player
-from jparty.web import controller as controller_module
 from jparty.web.controller import BuzzerController
 
 pytestmark = pytest.mark.unit
@@ -62,11 +61,8 @@ class Signal:
 
 
 @pytest.fixture
-def controller(monkeypatch: object) -> BuzzerController:
+def controller() -> BuzzerController:
     """Return a real controller attached to a minimal game stub."""
-    monkeypatch.setattr(
-        controller_module.tornado.options, "parse_command_line", lambda: None
-    )
     game = SimpleNamespace(players=[], new_player_trigger=Signal())
     return BuzzerController(game)
 

@@ -44,6 +44,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `environment.yml` installs from `pyproject.toml` (#75, #83).
 
 ### Fixed
+- `jparty --debug` no longer crashes on startup. The buzzer server stopped
+  reading the command line, so it no longer rejects JParty's own flags or
+  changes the app's logging setup.
 - The app reports its real version (3.0.0) instead of 2.0.2, including
   packaged builds (#75, #83).
 - Moving or removing players in the resume lobby keeps each player's score

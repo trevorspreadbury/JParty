@@ -6,10 +6,8 @@ production logic. Only buzzes are recorded instead of reaching a game.
 """
 
 from types import SimpleNamespace
-from unittest import mock
 
 from jparty.domain.models import Player
-from jparty.web import controller as controller_module
 from jparty.web.controller import BuzzerController
 
 
@@ -21,7 +19,7 @@ class FakeServerController(BuzzerController):
     """Real ``BuzzerController`` with a stand-in game."""
 
     def __init__(self) -> None:
-        """Build the controller without reading pytest's command line."""
+        """Build the controller around a stand-in game."""
         game = SimpleNamespace(
             players=[],
             buzz_trigger=SimpleNamespace(emit=_ignore),
@@ -29,8 +27,7 @@ class FakeServerController(BuzzerController):
             new_player_trigger=SimpleNamespace(emit=_ignore),
             answer=_ignore,
         )
-        with mock.patch.object(controller_module.tornado.options, "parse_command_line"):
-            super().__init__(game)
+        super().__init__(game)
         self.buzzed_players = []
 
     def new_player(self, player: Player) -> None:

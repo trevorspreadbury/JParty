@@ -62,13 +62,8 @@ class BuzzerServerHardeningTest(TornadoAsyncHTTPTestCase):
 
     def get_app(self) -> object:
         """Build the app around a real controller and a recording game."""
-        original = controller_module.tornado.options.parse_command_line
-        controller_module.tornado.options.parse_command_line = lambda: None
-        try:
-            self.game = RecordingGame()
-            self.controller = BuzzerController(self.game)
-        finally:
-            controller_module.tornado.options.parse_command_line = original
+        self.game = RecordingGame()
+        self.controller = BuzzerController(self.game)
         return self.controller.app
 
     def ws_url(self, path: str) -> str:

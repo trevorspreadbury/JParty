@@ -6,7 +6,6 @@ import pytest
 import tornado.ioloop
 
 from jparty.domain import Player
-from jparty.web import controller as controller_module
 from jparty.web.controller import BuzzerController
 
 pytestmark = pytest.mark.integration
@@ -43,11 +42,8 @@ def running_loop() -> object:
 
 
 @pytest.fixture
-def controller(game: object, monkeypatch: object, running_loop: object) -> object:
+def controller(game: object, running_loop: object) -> object:
     """Return a real controller attached to the background loop."""
-    monkeypatch.setattr(
-        controller_module.tornado.options, "parse_command_line", lambda: None
-    )
     controller = BuzzerController(game)
     loop, thread = running_loop
     controller.loop = loop
@@ -131,13 +127,8 @@ def test_saved_player_reclaim_logs_out_extra_phones_on_loop_thread(
         assert socket.closed_on is loop_thread
 
 
-def test_sends_run_directly_when_no_loop_has_started(
-    game: object, monkeypatch: object
-) -> None:
+def test_sends_run_directly_when_no_loop_has_started(game: object) -> None:
     """Test sends happen right away before the server loop starts."""
-    monkeypatch.setattr(
-        controller_module.tornado.options, "parse_command_line", lambda: None
-    )
     controller = BuzzerController(game)
     socket = ThreadRecordingSocket()
     controller.connected_players = [Player("Alice", socket, 0)]

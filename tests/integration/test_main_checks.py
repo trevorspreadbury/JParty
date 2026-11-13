@@ -1,5 +1,8 @@
 """Test main checks module."""
 
+import logging
+from types import SimpleNamespace
+
 import pytest
 
 from jparty.app import bootstrap as main
@@ -113,3 +116,33 @@ def test_main_reads_debug_env_var_loaded_after_config_import(
     monkeypatch.setenv(config.DEBUG_ENV_VAR, "1")
     main.main([])
     assert seen == [True]
+
+
+def test_debug_flag_does_not_break_buzzer_controller_startup(
+    monkeypatch: object,
+) -> None:
+    """``jparty --debug`` builds the real buzzer controller without crashing.
+
+    The controller used to hand ``sys.argv`` to ``tornado.options``, which
+    rejected JParty's own ``--debug`` flag and crashed startup. Building it
+    should also leave the app's logging setup alone and use the config port.
+    """
+    from jparty.web.controller import BuzzerController
+
+    monkeypatch.delenv(config.DEBUG_ENV_VAR, raising=False)
+    monkeypatch.setattr(config, "_debug_mode_requested", False)
+    monkeypatch.setattr(main.sys, "argv", ["jparty", "--debug"])
+    root = logging.getLogger()
+    logging_before = (root.level, list(root.handlers))
+    controllers = []
+    monkeypatch.setattr(
+        main,
+        "launch_gui",
+        lambda: controllers.append(BuzzerController(SimpleNamespace(players=[]))),
+    )
+
+    main.main()
+
+    assert config.debug_mode_enabled()
+    assert controllers[0].port == config.PORT
+    assert (root.level, list(root.handlers)) == logging_before
