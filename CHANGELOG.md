@@ -48,9 +48,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
   packaged builds (#75, #83).
 - Moving or removing players in the resume lobby keeps each player's score
   with them. Seat changes are saved as `player_renumber` lines (#61).
-- Phones on Wi-Fi no longer drop and reload in a loop, which lost Final
-  answers and sounds. An empty Final resubmission no longer replaces an
-  answer the player already gave (#82).
+- An empty Final resubmission no longer replaces an answer the player
+  already gave (#82).
 - Fixed app crashes on Windows when a sound finished or was stopped (#78).
 - Websocket messages and clue timers run on the right thread, and closing a
   game stops its timers (#76).
@@ -58,7 +57,6 @@ and this project follows [Semantic Versioning](https://semver.org/).
   board's top clue value (#87).
 - Resuming a save that already finished Final Jeopardy goes to the end of
   the game instead of opening wagers again (#87).
-- The end-of-game graph for Frankenstein games uses the right game (#87).
 - Board row values are correct when a category is missing a clue, and in
   older games where a Daily Double showed a doubled value (#59, #81).
 - Games without Final Jeopardy end instead of crashing, and a resumed game

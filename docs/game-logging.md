@@ -91,8 +91,9 @@ Field notes:
   are the source game's round indices ticked on the welcome screen. In
   advanced mode they are `0, 1, 2, ...`, one per composed board.
 - `board_selections`: one entry per board being played, in play order. Both
-  regular and advanced mode write it; it is `[]` only when no board was set
-  up. Each entry has:
+  regular and advanced mode write it. It is `[]` when no board was set up,
+  and also after resuming an older save that didn't have this field (resume
+  writes `[]` in its place). Each entry has:
   - `game_id`: the source game for this board
   - `source_round_index`: the round's index in that source game
   - `source_round_label`: the label shown on the welcome screen, also used in
@@ -141,6 +142,15 @@ the `round_index` values in the history point at the same boards in both:
 - Anything else, such as a Frankenstein game, changed values or extra Daily
   Doubles: build the game from `board_selections` and play every board.
   History `round_index` values are read as positions in `board_selections`.
+
+Known issue ([#93](https://github.com/trevorspreadbury/JParty/issues/93)):
+a new regular-mode game that plays only some of the source game's rounds
+(for example Double Jeopardy and Final) falls under the second case, but its
+clue lines record `round_index` as positions among the rounds being played,
+not source round indices. Resuming such a save, or running `jparty summary`
+on it, marks clues on the wrong board. Clue lines written after a resume use
+source round indices, so one file can contain both numberings. Games that
+play every round are not affected.
 
 Resume reads the history before it fetches the game, so a damaged
 `question_history.jsonl` fails before anything is downloaded.
@@ -456,7 +466,16 @@ uses the same strict reader, and stops with the same error if:
 - the score chain breaks (a line is missing or was edited)
 
 Blank lines are skipped, and a complete last line without a trailing newline
-is accepted. The error looks like this:
+is accepted. Lines with an unknown `type` are ignored.
+
+The list above is not complete. A line that is a JSON object but has a field
+of the wrong shape (for example `answer_attempts` that is not a list of
+objects, or a `player_index` that is a list) can fail with a plain
+Python error that has no line number. Load Saved shows that error as it is;
+the score editor, the end-of-game summary and `jparty summary` don't show
+the message below for it.
+
+For the cases listed above, the error looks like this:
 
 ```text
 Could not read saved clue history.
@@ -493,7 +512,7 @@ The reader still accepts saves written by earlier versions:
   before these were added). Resume leaves them missing.
 - `general.json` without `board_selections`: the full game `game_id` is
   loaded and `selected_round_indices` is played (every round if that is
-  missing too).
+  missing too). Resume then writes `board_selections` as `[]`.
 - `general.json` without `reveal_answers_after_triple_stumper`: the option
   is off.
 - `general.json` with `history_round_indices_original`: this field is
