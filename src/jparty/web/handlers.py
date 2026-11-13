@@ -159,7 +159,7 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         elif msg == "WAGER":
             self.wager(text)
         elif msg == "ANSWER":
-            self.application.controller.answer(self.player, text)
+            self.application.controller.answer(self.player, text, self)
         else:
             raise Exception("Unknown message")
 

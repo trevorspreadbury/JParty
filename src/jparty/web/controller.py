@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import socket
 import threading
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from threading import Thread
@@ -32,6 +33,9 @@ define("port", default=PORT, help="run on the given port", type=int)
 
 MAX_PORT_TRIES = 10
 DEFAULT_HTTP_PORT = 80
+# Seconds after ``TOOLATE`` during which a phone may resubmit its answer box.
+# Phones reply at once, so this only needs to cover a slow local network.
+LATE_ANSWER_GRACE_SECONDS = 3.0
 
 
 class PlayerStateDict(TypedDict):
@@ -91,7 +95,8 @@ class BuzzerController:
     saved_player_profiles: dict[int, SavedPlayerProfile]
     seat_order: list[int]
     resume_mode_active: bool
-    late_answer_players: set[Player]
+    late_answer_players: dict[Player, BuzzerSocketHandler]
+    late_answer_deadline: float
 
     def __init__(self, game: Game) -> None:
         """Initialize the buzzer controller and its Tornado application.
@@ -118,9 +123,11 @@ class BuzzerController:
         self.seat_order = []
         self.resume_mode_active = False
         # Players whose phone still had the answer box open when time ran
-        # out. Each may send one last answer (the phone resubmits its box on
-        # ``TOOLATE``); see ``toolate`` and ``answer``.
-        self.late_answer_players = set()
+        # out, mapped to the socket they were on. Each may send one last
+        # answer from that socket before ``late_answer_deadline`` (the phone
+        # resubmits its box on ``TOOLATE``); see ``toolate`` and ``answer``.
+        self.late_answer_players = {}
+        self.late_answer_deadline = 0.0
 
     def start(self, threaded: bool = True, tries: int = 0) -> None:
         """Start the Tornado server, retrying with higher ports if needed.
@@ -217,7 +224,7 @@ class BuzzerController:
                 self.close_socket(p.waiter)
         self.connected_players = []
         self.accepting_players = True
-        self.late_answer_players = set()
+        self.late_answer_players = {}
         self.clear_saved_player_reclaim()
 
     def register_socket(self, socket_handler: BuzzerSocketHandler) -> None:
@@ -614,29 +621,61 @@ class BuzzerController:
         i_player = self.game.players.index(player)
         self.game.wager_trigger.emit(i_player, player.clamp_final_wager(amount))
 
-    def answer(self, player: Player | None, guess: str) -> None:
+    def answer(
+        self,
+        player: Player | None,
+        guess: str,
+        source: BuzzerSocketHandler | None = None,
+    ) -> None:
         """Forward a player's Final Jeopardy response into the game engine.
 
         The answer is ignored unless the player's answer box is open, or time
         has just run out and this is the phone resubmitting its box after
-        ``TOOLATE``. Either way each player answers at most once.
+        ``TOOLATE``. A late answer is only taken from the socket the player
+        was on when time ran out, and only within
+        ``LATE_ANSWER_GRACE_SECONDS``, so a phone that reconnects (or ignores
+        ``TOOLATE``) can't answer while answers are being judged. Either way
+        each player answers at most once.
 
         Args:
             player: Player object submitting the response, or ``None`` for a
                 socket that never joined.
             guess: Final response text from the client.
+            source: Socket the answer arrived on. Defaults to the player's
+                current socket.
 
         Returns:
             ``None``.
         """
         if player is None or not self.game:
             return
-        if player.page != "answer" and player not in self.late_answer_players:
+        if source is None:
+            source = player.waiter
+        if player.page != "answer" and not self._is_late_answer(player, source):
             logging.warning("Ignoring answer from %s outside the answer phase", player)
             return
-        self.late_answer_players.discard(player)
+        self.late_answer_players.pop(player, None)
         player.page = "null"
         self.game.answer(player, guess)
+
+    def _is_late_answer(
+        self, player: Player, source: BuzzerSocketHandler | None
+    ) -> bool:
+        """Return whether an answer is the phone's resubmit after ``TOOLATE``.
+
+        Args:
+            player: Player submitting the answer.
+            source: Socket the answer arrived on.
+
+        Returns:
+            ``True`` if ``player`` had the answer box open when time ran out,
+            the answer came from that same socket, and the grace period has
+            not ended.
+        """
+        late_socket = self.late_answer_players.get(player)
+        if late_socket is None or source is not late_socket:
+            return False
+        return time.monotonic() <= self.late_answer_deadline
 
     def new_player(self, player: Player) -> None:
         """Register a newly connected player and notify the game.
@@ -714,7 +753,7 @@ class BuzzerController:
         Returns:
             ``None``.
         """
-        self.late_answer_players = set()
+        self.late_answer_players = {}
         for p in self.connected_players:
             self.send_to(p.waiter, "PROMPTANSWER")
             p.page = "answer"
@@ -724,16 +763,24 @@ class BuzzerController:
 
         Each phone replies to ``TOOLATE`` by submitting whatever is in its
         answer box, so players who had not answered yet may send one last
-        answer. Their page is set to ``"null"`` so a phone that reconnects
-        does not show the answer box again.
+        answer. That answer is only accepted from the socket the player is on
+        now, and only for ``LATE_ANSWER_GRACE_SECONDS``. A player whose phone
+        is disconnected when time runs out gets no late answer. Pages are set
+        to ``"null"`` so a phone that reconnects does not show the answer box
+        again.
 
         Returns:
             ``None``.
         """
+        late_answer_players = {}
         for p in self.connected_players:
             if p.page == "answer":
-                self.late_answer_players.add(p)
+                if p.waiter is not None and p.connected:
+                    late_answer_players[p] = p.waiter
                 p.page = "null"
+        self.late_answer_deadline = time.monotonic() + LATE_ANSWER_GRACE_SECONDS
+        self.late_answer_players = late_answer_players
+        for p in self.connected_players:
             self.send_to(p.waiter, "TOOLATE")
 
     def get_player_by_number(self, player_number: int) -> Player | None:

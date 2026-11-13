@@ -8,6 +8,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from tornado import gen
 from tornado.testing import AsyncHTTPTestCase as TornadoAsyncHTTPTestCase
 from tornado.testing import gen_test
 from tornado.websocket import websocket_connect
@@ -181,6 +182,79 @@ class BuzzerServerHardeningTest(TornadoAsyncHTTPTestCase):
         await self.round_trip(ws)
 
         assert self.game.answers == [("Alice", "Lincoln")]
+        ws.close()
+
+    async def reconnect(self, player: Player) -> object:
+        """Reconnect ``player`` on a new socket and return it."""
+        ws = await websocket_connect(self.ws_url("/buzzersocket"))
+        ws.write_message(
+            json.dumps({"message": "CHECK_IF_EXISTS", "text": player.token.hex()})
+        )
+        exists = json.loads(await ws.read_message())
+        assert exists["message"] == "EXISTS"
+        assert json.loads(exists["text"])["page"] == "null"
+        return ws
+
+    @gen_test
+    async def test_phone_disconnected_when_time_runs_out_cannot_answer_later(
+        self,
+    ) -> None:
+        """A phone offline at ``TOOLATE`` can't reconnect and answer (#62)."""
+        ws, player = await self.join("Alice")
+        self.controller.prompt_answers()
+        assert json.loads(await ws.read_message())["message"] == "PROMPTANSWER"
+        ws.close()
+        for _ in range(100):
+            if not player.connected:
+                break
+            await gen.sleep(0.01)
+        assert player.connected is False
+
+        self.controller.toolate()
+        reconnect = await self.reconnect(player)
+        reconnect.write_message(json.dumps({"message": "ANSWER", "text": "Grant"}))
+        await self.round_trip(reconnect)
+
+        assert self.game.answers == []
+        reconnect.close()
+
+    @gen_test
+    async def test_late_answer_only_comes_from_the_socket_open_at_time_up(
+        self,
+    ) -> None:
+        """After ``TOOLATE``, a new socket for the same player can't answer (#62)."""
+        ws, player = await self.join("Alice")
+        self.controller.prompt_answers()
+        assert json.loads(await ws.read_message())["message"] == "PROMPTANSWER"
+        self.controller.toolate()
+        assert json.loads(await ws.read_message())["message"] == "TOOLATE"
+
+        reconnect = await self.reconnect(player)
+        reconnect.write_message(json.dumps({"message": "ANSWER", "text": "Grant"}))
+        await self.round_trip(reconnect)
+
+        assert self.game.answers == []
+        ws.close()
+        reconnect.close()
+
+    @gen_test
+    async def test_late_answer_is_ignored_after_the_grace_period(self) -> None:
+        """A phone that ignores ``TOOLATE`` can't answer once judging starts (#62)."""
+        original = controller_module.LATE_ANSWER_GRACE_SECONDS
+        controller_module.LATE_ANSWER_GRACE_SECONDS = -1.0
+        try:
+            ws, _player = await self.join("Alice")
+            self.controller.prompt_answers()
+            assert json.loads(await ws.read_message())["message"] == "PROMPTANSWER"
+            self.controller.toolate()
+            assert json.loads(await ws.read_message())["message"] == "TOOLATE"
+
+            ws.write_message(json.dumps({"message": "ANSWER", "text": "Grant"}))
+            await self.round_trip(ws)
+        finally:
+            controller_module.LATE_ANSWER_GRACE_SECONDS = original
+
+        assert self.game.answers == []
         ws.close()
 
     def test_lectern_page_rejects_bad_player_numbers(self) -> None:
