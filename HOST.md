@@ -21,9 +21,9 @@ For the saved-state and clue-history file format, see
 ## Before You Start
 
 - Use the host machine on the main display you will control during the game.
-- Put the audience board on the TV or shared screen if you are using a two-screen setup.
+- Put the audience board on the TV or shared screen. JParty needs two screens unless debug mode is on (see the README).
 - Make sure players are on the same network as the host machine so they can join from the QR code.
-- Three players is the closest to a traditional Jeopardy! game, but JParty supports more or less if you want a bigger party game.
+- Three players is the closest to a traditional Jeopardy! game, but JParty supports fewer, or up to 6, if you want a different size of party game.
 
 ## Welcome Screen Overview
 

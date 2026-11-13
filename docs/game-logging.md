@@ -22,12 +22,14 @@ The two main files are:
 
 - `general.json`: high-level session metadata
 - `question_history.jsonl`: one JSON object per line for each completed
-  clue (including Final Jeopardy), manual score override, and score correction
+  clue (including Final Jeopardy), manual score override, score correction,
+  and seat change in the resume lobby
 
 ## `general.json`
 
-`general.json` is rewritten over the course of the game and currently uses this
-schema:
+`general.json` is written when a game starts and again when a saved game is
+resumed. It is not updated during play; everything that happens during play
+goes into `question_history.jsonl`. A new save looks like this:
 
 ```json
 {
@@ -42,9 +44,28 @@ schema:
       "player_number": 1
     }
   ],
-  "selected_round_indices": [0, 1, 2],
+  "selected_round_indices": [1, 2],
+  "board_selections": [
+    {
+      "game_id": "4453",
+      "source_round_index": 1,
+      "source_round_label": "Double Jeopardy!",
+      "board_type": "standard",
+      "row_values": [400, 800, 1200, 1600, 2000],
+      "daily_double_count": 2,
+      "daily_double_indices": [[1, 3], [4, 2]]
+    },
+    {
+      "game_id": "4453",
+      "source_round_index": 2,
+      "source_round_label": "Final Jeopardy!",
+      "board_type": "final",
+      "row_values": []
+    }
+  ],
+  "reveal_answers_after_triple_stumper": false,
   "started_at": 1700000000.0,
-  "last_updated": 1700000300.0,
+  "last_updated": 1700000000.0,
   "history_format": 2,
   "jparty_version": "3.0.0"
 }
@@ -52,19 +73,45 @@ schema:
 
 Field notes:
 
-- `game_id`: the J-Archive game id or Google Sheets id currently being played
-- `players`: the players as they were when the session started. Resuming
-  keeps this list as it is, even if the host reorders seats in the resume
-  lobby; see [Player Numbers](#player-numbers-and-player_renumber)
+- `game_id`: the J-Archive game id or Google Sheets id being played. For a
+  Frankenstein game built from more than one source game, it is
+  `frankenstein-<id>-<id>-...`, with one id per board. Resume refuses a save
+  without it.
+- `players`: the players as they were when the session started. Resume
+  refuses a save with no players, and each phone in the resume lobby reclaims
+  one of these profiles. Resuming keeps this list as it is, even if the host
+  reorders seats in the resume lobby; see
+  [Player Numbers](#player-numbers-and-player_renumber)
 - `players[].name`: either plain text or the signature image data URL used by
   the scoreboard/lecterns
 - `players[].player_number`: the player's number when the session started.
   Their current number is this number with every `player_renumber` line in
   `question_history.jsonl` applied in order
-- `selected_round_indices`: the original round indices chosen on the welcome
-  screen
-- `started_at`: Unix timestamp for when the game session started
-- `last_updated`: Unix timestamp for when the metadata was last saved
+- `selected_round_indices`: the rounds being played. In regular mode these
+  are the source game's round indices ticked on the welcome screen. In
+  advanced mode they are `0, 1, 2, ...`, one per composed board.
+- `board_selections`: one entry per board being played, in play order. Both
+  regular and advanced mode write it. It is `[]` when no board was set up,
+  and also after resuming an older save that didn't have this field (resume
+  writes `[]` in its place). Each entry has:
+  - `game_id`: the source game for this board
+  - `source_round_index`: the round's index in that source game
+  - `source_round_label`: the label shown on the welcome screen, also used in
+    the composed game's description
+  - `board_type`: `"standard"` or `"final"`. Resume fails if the source round
+    is no longer that type.
+  - `row_values`: the five clue values for a standard board, top row first;
+    `[]` for Final
+  - `daily_double_count` and `daily_double_indices` (standard boards only):
+    how many Daily Doubles the board has and where they are, as
+    `[category_index, row_index]` pairs
+- `reveal_answers_after_triple_stumper`: whether the host chose to show the
+  correct response after a clue nobody gets right. Resume restores it, and a
+  save without it resumes with the option off.
+- `started_at`: Unix timestamp for when the game session started. Resume
+  keeps it.
+- `last_updated`: Unix timestamp for when `general.json` was last written,
+  which is the last start or resume
 - `history_format`: version of the `question_history.jsonl` format the session
   was started with. `2` is the append-only ledger described below, with
   `score_correction` lines and the score-chain rule. Saves without this field
@@ -74,15 +121,48 @@ Field notes:
   when the game is resumed. This is for diagnosing saves only; between
   releases, dev builds all report the same number.
 
-JParty doesn't read `history_format` or `jparty_version` yet. They record
-where a save came from so that differences between versions can be found.
+JParty doesn't act on `history_format` or `jparty_version` yet; resume only
+copies them forward. They record where a save came from so that differences
+between versions can be found. `last_updated` is never read.
+
+### How resume rebuilds the game
+
+Resume (`Load Saved`) and the `jparty summary` command rebuild the game from
+`game_id`, `board_selections` and `selected_round_indices` in the same way, so
+the `round_index` values in the history point at the same boards in both:
+
+- No `board_selections` (or `[]`): load the full game `game_id` and play
+  `selected_round_indices`. A missing `selected_round_indices` means every
+  round.
+- Every board is an unchanged round of `game_id` (same round, board type, row
+  values and Daily Doubles as the source game), at the matching
+  `selected_round_indices`: load the full game `game_id` and play
+  `selected_round_indices`. History `round_index` values are read as the
+  source game's round indices.
+- Anything else, such as a Frankenstein game, changed values or extra Daily
+  Doubles: build the game from `board_selections` and play every board.
+  History `round_index` values are read as positions in `board_selections`.
+
+Known issue ([#93](https://github.com/trevorspreadbury/JParty/issues/93)):
+a new regular-mode game that plays only some of the source game's rounds
+(for example Double Jeopardy and Final) falls under the second case, but its
+clue lines record `round_index` as positions among the rounds being played,
+not source round indices. Resuming such a save, or running `jparty summary`
+on it, marks clues on the wrong board. Clue lines written after a resume use
+source round indices, so one file can contain both numberings. Games that
+play every round are not affected.
+
+Resume reads the history before it fetches the game, so a damaged
+`question_history.jsonl` fails before anything is downloaded.
 
 ## `question_history.jsonl`
 
 `question_history.jsonl` is append-only: lines are only ever added to the
-end during play, and the file is never rewritten. There are four line types:
+end during play, and the file is never rewritten. Each line is one JSON
+object. There are four line types:
 
-- clue lines (no `type`, or `"type": "question"`), one per completed clue
+- clue lines, one per completed clue. JParty writes them without a `type`
+  field; a line with no `type`, or with `"type": "question"`, is a clue line
 - `manual_score_adjustment` lines, one per manual podium override
 - `score_correction` lines, one per clue changed in the `Edit Score` dialog
 - `player_renumber` lines, written when a resumed game starts after the host
@@ -133,12 +213,17 @@ Standard clues and Final Jeopardy use the same top-level shape:
 Field notes:
 
 - `question_index`: `[round_index, [category_index, row_index]]`
-- `question_number`: running clue number for the session
-- `round_index`: zero-based round index in the currently loaded game data
+- `question_number`: running clue number for the session. Resume continues
+  from the highest one in the file.
+- `round_index`: zero-based index of the round in the game being played; see
+  [How resume rebuilds the game](#how-resume-rebuilds-the-game). Resume uses
+  `round_index` and `question_index` to mark the clue as played.
 - `category`: clue category text
-- `value`: clue value at the time it was played
+- `value`: clue value at the time it was played; for a Daily Double, the
+  wager
 - `is_daily_double`: whether the clue was a Daily Double
-- `buzz_phases`: response-window breakdown for standard buzzed clues
+- `buzz_phases`: response-window breakdown for standard buzzed clues; `[]`
+  for Daily Doubles and Final Jeopardy, which have no buzzer race
 - `answer_attempts`: every judged answer attempt for the clue, in order
 - `completed_at`: Unix timestamp for when the clue finished
 
@@ -161,7 +246,8 @@ Each `buzz_attempts[]` object contains:
 - `timestamp`: Unix timestamp of the buzz
 - `is_early`: `true` if the player buzzed before responses opened
 - `is_success`: `true` if the buzz won that response window
-- `is_rebound`: `true` if the attempt happened during a rebound window
+- `is_rebound`: currently always `false`. To find rebound buzzes, use the
+  phase's `phase_type` instead.
 - `in_timeout`: `true` if the player buzzed while locked out of the current
   response window
 
@@ -263,6 +349,16 @@ Daily Double player, or when there is no saved clue history yet.
 }
 ```
 
+Field notes:
+
+- `player_index`: the player whose podium was clicked
+- `score_before`: the player's total before the override
+- `score_after`: the total the host entered
+- `new_score`: the same number as `score_after`. Lines from older versions
+  may have only `new_score`; it is then used as `score_after`.
+
+An override that doesn't change the total writes no line.
+
 ### `score_correction`
 
 A correction never edits the original clue line. Instead it records the
@@ -358,10 +454,28 @@ Readers use the file in two ways:
 
 ## Damaged History Files
 
-Loading `question_history.jsonl` is all-or-nothing. If any line is not valid
-JSON (for example, the last line was cut off while it was being written), or
-the score chain breaks (a line is missing or was edited), every reader stops
-with the same error:
+Loading `question_history.jsonl` is all-or-nothing. Every reader (resume,
+the score editor, the end-of-game summary and graph, and `jparty summary`)
+uses the same strict reader, and stops with the same error if:
+
+- the file is not valid UTF-8 text
+- a line is not valid JSON (for example, the last line was cut off while it
+  was being written)
+- a line is valid JSON but not an object
+- a `player_renumber` mapping is not a one-to-one reordering of numbers
+- the score chain breaks (a line is missing or was edited)
+
+Blank lines are skipped, and a complete last line without a trailing newline
+is accepted. Lines with an unknown `type` are ignored.
+
+The list above is not complete. A line that is a JSON object but has a field
+of the wrong shape (for example `answer_attempts` that is not a list of
+objects, or a `player_index` that is a list) can fail with a plain
+Python error that has no line number. Load Saved shows that error as it is;
+the score editor, the end-of-game summary and `jparty summary` don't show
+the message below for it.
+
+For the cases listed above, the error looks like this:
 
 ```text
 Could not read saved clue history.
@@ -389,6 +503,26 @@ score-chain check. While lines are waiting, the score editor and end-of-game
 summary include them. If they still can't be written when the host closes the
 game, the host is told how many are missing. The save still loads, and resumes
 from before those clues. JParty never rewrites or reorders existing lines.
+
+## Older Saves
+
+The reader still accepts saves written by earlier versions:
+
+- `general.json` without `history_format` or `jparty_version` (started
+  before these were added). Resume leaves them missing.
+- `general.json` without `board_selections`: the full game `game_id` is
+  loaded and `selected_round_indices` is played (every round if that is
+  missing too). Resume then writes `board_selections` as `[]`.
+- `general.json` without `reveal_answers_after_triple_stumper`: the option
+  is off.
+- `general.json` with `history_round_indices_original`: this field is
+  ignored. It belonged to a one-time round-index rewrite that has been
+  removed, so the history file is never rewritten.
+- Clue lines with no `type` field (all clue lines are written this way).
+- `manual_score_adjustment` lines with only `new_score`, used as
+  `score_after`.
+- Score changes without `score_before` or `score_after`: the score chain
+  check skips the missing value instead of failing.
 
 For the host-side gameplay flow and score correction UI, see
 [HOST.md](../HOST.md).
