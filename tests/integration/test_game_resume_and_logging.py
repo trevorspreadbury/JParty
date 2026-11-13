@@ -1545,6 +1545,49 @@ def test_resume_with_two_finals_before_any_final_opens_the_first(
     assert game.buzzer_controller.open_wagers_calls
 
 
+def test_failed_resume_leaves_the_loaded_game_untouched(
+    game: object, monkeypatch: object, sample_saved_game_dir: object
+) -> None:
+    """A save whose game can't be loaded must not clear the current game (#102)."""
+    from jparty.services import game_loader
+
+    current_data = game.data
+    game.set_session_game_id("111")
+    game.set_selected_round_indices([0])
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: None)
+
+    with pytest.raises(ValueError, match="invalid or incomplete"):
+        game.prepare_resume_from_dir(sample_saved_game_dir)
+
+    assert game.data is current_data
+    assert game._session_game_id == "111"
+    assert game.selected_round_indices() == [0]
+    assert game._resume_state is None
+
+
+def test_read_saved_game_does_not_change_the_game(
+    game: object, monkeypatch: object, sample_saved_game_dir: object
+) -> None:
+    """Reading a save is side-effect free, so it can run on a worker (#102)."""
+    from jparty.services import game_loader
+
+    current_data = game.data
+    saved_data = deepcopy(game.data)
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: saved_data)
+
+    loaded = game.read_saved_game(sample_saved_game_dir)
+
+    assert game.data is current_data
+    assert game._resume_state is None
+    assert loaded.saved_game.data is saved_data
+
+    resume_state = game.apply_saved_game(loaded)
+
+    assert game.data is saved_data
+    assert resume_state["path"] == sample_saved_game_dir
+    assert resume_state["player_count"] == len(loaded.general_state["players"])
+
+
 def test_reordering_and_removing_players_in_a_new_lobby_renumbers_seats(
     game_with_players: object,
 ) -> None:
