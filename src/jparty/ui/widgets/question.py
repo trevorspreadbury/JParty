@@ -5,13 +5,20 @@ audience displays, including specialized flows for image-based clues, Daily
 Double prompts, and Final Jeopardy category and answer screens.
 """
 
+import logging
+import sys
 from pathlib import Path
 from uuid import uuid4
 
 from PyQt6 import sip
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
-from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+from PyQt6.QtNetwork import (
+    QNetworkAccessManager,
+    QNetworkReply,
+    QNetworkRequest,
+    QSslSocket,
+)
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -31,6 +38,31 @@ from jparty.services.image_lookup import (
     wikimedia_image_search_url,
 )
 from jparty.ui.styles import CARDPAL, MyLabel
+
+WINDOWS_TLS_BACKEND = "schannel"
+
+
+def use_windows_tls_backend() -> None:
+    """Make Qt use Windows' own TLS instead of OpenSSL for image lookups.
+
+    Qt's OpenSSL backend loads whichever ``libssl`` DLL it finds first. Under
+    a conda-based Python that is conda's copy, and the image lookup then
+    crashes the app once its network manager is destroyed. Windows' built-in
+    Secure Channel backend avoids loading OpenSSL at all. Qt only accepts the
+    choice before its first TLS connection, so this is called before the
+    image widget creates its network manager. Other platforms are unchanged.
+
+    Returns:
+        ``None``.
+    """
+    if sys.platform != "win32":
+        return
+    if WINDOWS_TLS_BACKEND not in QSslSocket.availableBackends():
+        return
+    if QSslSocket.activeBackend() == WINDOWS_TLS_BACKEND:
+        return
+    if not QSslSocket.setActiveBackend(WINDOWS_TLS_BACKEND):
+        logging.warning("Could not switch Qt to the Windows TLS backend")
 
 
 class QuestionWidget(QWidget):
@@ -157,6 +189,7 @@ class HostImageQuestionWidget(QWidget):
         self.image_url = self.question.image_url
         self._request_generation = 0
         self._current_reply = None
+        use_windows_tls_backend()
         self.network_manager = QNetworkAccessManager(self)
         self.setup_ui()
         if self.image_url:
