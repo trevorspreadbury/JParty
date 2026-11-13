@@ -3,8 +3,10 @@
 from types import SimpleNamespace
 
 import pytest
-from PyQt6.QtCore import QRect, Qt
+from PyQt6.QtCore import QEvent, QRect, Qt
+from PyQt6.QtGui import QKeyEvent
 
+from jparty.domain.input import KeystrokeManager
 from jparty.domain.models import Question
 from jparty.ui.windows.display import DisplayWindow, HostDisplayWindow
 
@@ -92,10 +94,10 @@ def _board_slot_widget(window: object) -> object:
 class _InertThread:
     """Thread stand-in that never runs its target.
 
-    Real windows start background threads for hint flashing, scoreboard
-    lights, and welcome-screen game loading. Those threads touch Qt widgets
-    (and the network) after a test tears the windows down, which crashes the
-    test process, so these tests keep them from running.
+    Real windows start a background thread for welcome-screen game loading.
+    It touches Qt widgets (and the network) after a test tears the windows
+    down, which crashes the test process, so these tests keep it from
+    running.
     """
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -109,10 +111,8 @@ def _game_with_real_windows(qtbot: object, game: object, monkeypatch: object) ->
     """Attach real audience and host windows to a test game."""
     from jparty.services import archive_client
     from jparty.ui import welcome_loader
-    from jparty.ui.widgets import borders, scoreboard
 
-    for module in (borders, scoreboard, welcome_loader):
-        monkeypatch.setattr(module, "Thread", _InertThread)
+    monkeypatch.setattr(welcome_loader, "Thread", _InertThread)
     monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
     game.set_session_game_id("4453")
     game.buzzer_controller.host = lambda: "localhost"
@@ -333,3 +333,29 @@ def test_failed_image_review_screen_leaves_board_usable(
     for window in (board_window, host_window):
         window.load_question(text_question)
         _assert_showing_clue(window, text_question)
+
+
+@pytest.mark.parametrize(("auto_repeat", "expected_calls"), [(False, 1), (True, 0)])
+def test_host_key_auto_repeat_is_ignored(
+    qtbot: object, auto_repeat: bool, expected_calls: int
+) -> None:
+    """Holding a key fires its host action once, not again for each repeat."""
+    calls = []
+    game = _stub_game()
+    game.keystroke_manager = KeystrokeManager()
+    game.keystroke_manager.addEvent(
+        "STEP", Qt.Key.Key_Space, lambda: calls.append(1), active=True, persistent=True
+    )
+    host_window = StubHostDisplayWindow(game)
+    qtbot.addWidget(host_window)
+    event = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_Space,
+        Qt.KeyboardModifier.NoModifier,
+        " ",
+        auto_repeat,
+    )
+
+    host_window.keyPressEvent(event)
+
+    assert len(calls) == expected_calls

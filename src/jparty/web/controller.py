@@ -751,6 +751,19 @@ class BuzzerController:
             self.send_to(p.waiter, "PROMPTWAGER", str(max(p.score, 0)))
             p.page = "wager"
 
+    def close_wagers(self) -> None:
+        """Close every wager prompt that is still open.
+
+        Used when the host opens Final without waiting for every wager. A
+        wager that arrives afterwards is ignored by ``wager``.
+
+        Returns:
+            ``None``.
+        """
+        for p in self.connected_players:
+            if p.page == "wager":
+                p.page = "null"
+
     def prompt_answers(self) -> None:
         """Prompt all connected players to enter Final Jeopardy answers.
 

@@ -5,13 +5,20 @@ audience displays, including specialized flows for image-based clues, Daily
 Double prompts, and Final Jeopardy category and answer screens.
 """
 
+import logging
+import sys
 from pathlib import Path
 from uuid import uuid4
 
 from PyQt6 import sip
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
-from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+from PyQt6.QtNetwork import (
+    QNetworkAccessManager,
+    QNetworkReply,
+    QNetworkRequest,
+    QSslSocket,
+)
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -31,6 +38,31 @@ from jparty.services.image_lookup import (
     wikimedia_image_search_url,
 )
 from jparty.ui.styles import CARDPAL, MyLabel
+
+WINDOWS_TLS_BACKEND = "schannel"
+
+
+def use_windows_tls_backend() -> None:
+    """Make Qt use Windows' own TLS instead of OpenSSL for image lookups.
+
+    Qt's OpenSSL backend loads whichever ``libssl`` DLL it finds first. Under
+    a conda-based Python that is conda's copy, and the image lookup then
+    crashes the app once its network manager is destroyed. Windows' built-in
+    Secure Channel backend avoids loading OpenSSL at all. Qt only accepts the
+    choice before its first TLS connection, so this is called before the
+    image widget creates its network manager. Other platforms are unchanged.
+
+    Returns:
+        ``None``.
+    """
+    if sys.platform != "win32":
+        return
+    if WINDOWS_TLS_BACKEND not in QSslSocket.availableBackends():
+        return
+    if QSslSocket.activeBackend() == WINDOWS_TLS_BACKEND:
+        return
+    if not QSslSocket.setActiveBackend(WINDOWS_TLS_BACKEND):
+        logging.warning("Could not switch Qt to the Windows TLS backend")
 
 
 class QuestionWidget(QWidget):
@@ -134,6 +166,10 @@ class HostQuestionWidget(QuestionWidget):
         return True
 
 
+# The host display has a black background, so the review text must be light.
+IMAGE_REVIEW_TEXT_STYLE = "color: white;"
+
+
 class HostImageQuestionWidget(QWidget):
     """Widget to display and manage an image-based question for a game.
 
@@ -157,6 +193,7 @@ class HostImageQuestionWidget(QWidget):
         self.image_url = self.question.image_url
         self._request_generation = 0
         self._current_reply = None
+        use_windows_tls_backend()
         self.network_manager = QNetworkAccessManager(self)
         self.setup_ui()
         if self.image_url:
@@ -189,6 +226,7 @@ class HostImageQuestionWidget(QWidget):
         self.question_label.setFont(QFont("ITC Korinna", 16))
         self.question_label.setWordWrap(True)
         self.question_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.question_label.setStyleSheet(IMAGE_REVIEW_TEXT_STYLE)
         self.left_layout.addWidget(self.question_label)
 
     def setup_answer_label(self) -> None:
@@ -197,6 +235,7 @@ class HostImageQuestionWidget(QWidget):
         self.answer_label.setFont(QFont("ITC Korinna", 14))
         self.answer_label.setWordWrap(True)
         self.answer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.answer_label.setStyleSheet(IMAGE_REVIEW_TEXT_STYLE)
         self.left_layout.addWidget(self.answer_label)
 
     def setup_right_layout(self) -> None:
@@ -212,7 +251,9 @@ class HostImageQuestionWidget(QWidget):
         """Create and configure the image display label."""
         self.image_label = QLabel("Loading image...", self)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.image_label.setStyleSheet("border: 1px solid black;")
+        self.image_label.setStyleSheet(
+            f"{IMAGE_REVIEW_TEXT_STYLE} border: 1px solid white;"
+        )
         self.image_label.setSizePolicy(
             QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.MinimumExpanding
         )
@@ -565,7 +606,9 @@ class HostFinalJeopardyWidget(FinalJeopardyWidget, HostQuestionWidget):
         self.answer_label.setVisible(False)
         self.main_layout.setStretchFactor(self.question_label, 6)
         self.hint_label = MyLabel(
-            "Waiting for all players to wager...", self.startFontSize, self
+            "Waiting for all players to wager... (Enter: open now, missing wagers = $0)",
+            self.startFontSize,
+            self,
         )
         self.main_layout.replaceWidget(self.answer_label, self.hint_label)
         self.main_layout.setStretchFactor(self.hint_label, 1)

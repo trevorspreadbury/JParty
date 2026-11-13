@@ -1,16 +1,18 @@
 """Test image questions module."""
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from PyQt6 import sip
 from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QObject, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPixmap
-from PyQt6.QtNetwork import QNetworkReply
+from PyQt6.QtGui import QColor, QPalette, QPixmap
+from PyQt6.QtNetwork import QNetworkReply, QSslSocket
 
 from jparty.domain.models import Question
 from jparty.services import image_lookup
+from jparty.ui.widgets import question as question_module
 from jparty.ui.widgets.question import HostImageQuestionWidget, QuestionWidget
 
 pytestmark = pytest.mark.qt
@@ -287,3 +289,49 @@ def test_first_reply_arriving_last_does_not_replace_newer_image(
     saved = QPixmap(widget.question.image_url)
     assert temp_dir in Path(widget.question.image_url).parents
     assert saved.toImage().pixelColor(0, 0) == QColor("blue")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows TLS backend only")
+def test_image_lookup_uses_windows_tls_backend(
+    qtbot: object, offline_image_lookup: None
+) -> None:
+    """Test image lookups use Windows' TLS, not a possibly foreign OpenSSL (#105).
+
+    On conda-based Python, Qt's OpenSSL backend loads conda's ``libssl`` and
+    the app crashes after a failed lookup is dismissed.
+    """
+    widget = _review_widget(_lookup_question())
+    qtbot.addWidget(widget)
+    assert QSslSocket.activeBackend() == "schannel"
+
+
+def test_tls_backend_is_left_alone_off_windows(monkeypatch: object) -> None:
+    """Test other platforms keep Qt's default TLS backend."""
+    chosen = []
+    monkeypatch.setattr(question_module.sys, "platform", "linux")
+    monkeypatch.setattr(
+        question_module.QSslSocket, "setActiveBackend", lambda name: chosen.append(name)
+    )
+    question_module.use_windows_tls_backend()
+    assert chosen == []
+
+
+def test_image_review_text_is_light_on_the_black_host_display(
+    qtbot: object, offline_image_lookup: None
+) -> None:
+    """The clue, answer and image status must be readable on black."""
+    question = Question(
+        index=(0, 0),
+        text="Identify this person",
+        answer="Who is Ada Lovelace?",
+        category="History",
+        value=400,
+    )
+    game = SimpleNamespace(active_question=question)
+    widget = HostImageQuestionWidget(game)
+    qtbot.addWidget(widget)
+
+    for label in (widget.question_label, widget.answer_label, widget.image_label):
+        label.ensurePolished()
+        text_color = label.palette().color(QPalette.ColorRole.WindowText)
+        assert text_color.lightness() > 200, label.text()

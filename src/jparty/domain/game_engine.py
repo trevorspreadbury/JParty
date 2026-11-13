@@ -15,14 +15,11 @@ from datetime import datetime
 from pathlib import Path
 from threading import Thread
 
-import matplotlib
-import matplotlib.pyplot as plt
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QInputDialog, QMessageBox, QWidget
 
-matplotlib.use("Agg")
 from jparty import __version__
-from jparty.app.paths import GAME_SCORES_DIR, GAME_STATES_DIR
+from jparty.app.paths import GAME_STATES_DIR
 from jparty.domain.gameplay import (
     ClueFlow,
     FinalJeopardyFlow,
@@ -55,6 +52,7 @@ from jparty.domain.state import (
     load_general_state,
     load_question_history,
     load_saved_game_data,
+    question_for_history_entry,
     read_history_file,
     reconstruct_score_history,
     ruling_score_effect,
@@ -63,7 +61,6 @@ from jparty.domain.state import (
 from jparty.services.game_loader import build_game_from_board_selection_configs
 from jparty.ui.widgets.common import CompoundObject, SongPlayer
 
-QUESTION_INDEX_PART_COUNT = 2
 DEFAULT_DAILY_DOUBLE_WAGER_CAP = 1000
 
 
@@ -114,6 +111,8 @@ class Game(QObject):
         self.soliciting_player = False
         self.early_buzzes = set()
         self.responses_open_time = None
+        # True only between start_final and the Final clue being shown.
+        self.final_wagers_open = False
         self.song_player = SongPlayer()
         self._judgement_round = 0
         self._sorted_players = None
@@ -143,6 +142,9 @@ class Game(QObject):
         )
         self.keystroke_manager.addEvent(
             "OPEN_FINAL", Qt.Key.Key_Space, self.open_final, self.spacehints
+        )
+        self.keystroke_manager.addEvent(
+            "FORCE_OPEN_FINAL", Qt.Key.Key_Return, self.force_open_final
         )
         self.keystroke_manager.addEvent(
             "CLOSE_GAME", Qt.Key.Key_Space, self.close_game, self.spacehints
@@ -621,22 +623,7 @@ class Game(QObject):
             ``None``.
         """
         for entry in question_history:
-            round_index = entry.get("round_index")
-            question_index = entry.get("question_index")
-            if (
-                round_index is None
-                or question_index is None
-                or len(question_index) < QUESTION_INDEX_PART_COUNT
-                or (round_index >= len(self.data.rounds))
-            ):
-                continue
-            question_coords = question_index[1]
-            if (
-                not isinstance(question_coords, list | tuple)
-                or len(question_coords) != QUESTION_INDEX_PART_COUNT
-            ):
-                continue
-            question = self.data.rounds[round_index].get_question(*question_coords)
+            question = question_for_history_entry(self.data, entry)
             if question is not None:
                 question.complete = True
 
@@ -1111,23 +1098,7 @@ class Game(QObject):
         Returns:
             Matching question object, or ``None`` when unavailable.
         """
-        question_index = entry.get("question_index")
-        round_index = entry.get("round_index")
-        if (
-            not self.data
-            or question_index is None
-            or round_index is None
-            or len(question_index) < QUESTION_INDEX_PART_COUNT
-            or round_index >= len(self.data.rounds)
-        ):
-            return None
-        question_coords = question_index[1]
-        if (
-            not isinstance(question_coords, list | tuple)
-            or len(question_coords) != QUESTION_INDEX_PART_COUNT
-        ):
-            return None
-        return self.data.rounds[round_index].get_question(*question_coords)
+        return question_for_history_entry(self.data, entry)
 
     def get_recent_score_corrections(self, limit: int = 5) -> list[dict]:
         """Return recent standard-clue history entries for the score editor.
@@ -1579,7 +1550,10 @@ class Game(QObject):
         logging.info("start final")
         for player in self.players:
             self.dc.player_widget(player).set_lights(True)
+        self.final_wagers_open = True
         self.buzzer_controller.open_wagers()
+        # Lets the host open Final without waiting on a missing wager.
+        self.keystroke_manager.activate("FORCE_OPEN_FINAL")
         self._refresh_score_edit_controls()
 
     def wager(self, i_player: object, amount: object) -> None:
@@ -1592,8 +1566,15 @@ class Game(QObject):
 
         Returns:
             ``None``.
+
+        A wager that arrives after the clue is shown is ignored. The server
+        can accept a wager just before the host presses Enter, and its signal
+        reaches this thread just after, when the forced 0 must stand.
         """
         player = self.players[i_player]
+        if not self.final_wagers_open:
+            logging.info(f"Ignoring {player}'s wager; the Final clue is open")
+            return
         amount = player.clamp_final_wager(amount)
         player.wager = amount
         self.dc.player_widget(player).set_lights(False)
@@ -1602,7 +1583,28 @@ class Game(QObject):
             self.host_display.question_widget.hint_label.setText(
                 "Press space to show clue!"
             )
+            self.keystroke_manager.deactivate("FORCE_OPEN_FINAL")
             self.keystroke_manager.activate("OPEN_FINAL")
+
+    def force_open_final(self) -> None:
+        """Open the Final clue now, counting any missing wager as 0.
+
+        Bound to the host's Enter key while Final wagers are open. It covers
+        players who cannot wager (a dead phone, someone who left), so the game
+        is never stuck waiting. Their wager prompts are closed so a late wager
+        from their phone is ignored.
+
+        Returns:
+            ``None``.
+        """
+        for player in self.players:
+            if player.wager is None:
+                player.wager = 0
+                self.dc.player_widget(player).set_lights(False)
+                logging.info(f"{player} did not wager; host counted it as 0")
+        self.buzzer_controller.close_wagers()
+        self.keystroke_manager.deactivate("OPEN_FINAL")
+        self.open_final()
 
     def answer(self, player: object, guess: object) -> None:
         """Store a player's Final Jeopardy response text.
@@ -1742,85 +1744,6 @@ class Game(QObject):
         """
         return load_general_state(self)
 
-    def generate_final_score_graph(self, players: object) -> None:
-        """Generate and save a score-by-question graph for a player subset.
-
-        Args:
-            players: Player set selector, typically ``"original"``,
-                ``"current"``, or ``"all"``.
-
-        Returns:
-            ``None``.
-        """
-        all_score_history = self._reconstruct_score_history()
-        if not all_score_history:
-            logging.warning("No score history found to generate graph")
-            return
-        general_state = self._load_general_state()
-        saved_players = current_saved_players(
-            general_state.get("players", []), self._load_question_history()
-        )
-        original_player_map = {
-            p.get("player_number"): p.get("name", f"Player {p.get('player_number')}")
-            for p in saved_players
-        }
-        current_player_map = {p.player_number: p.name for p in self.players}
-        if players == "original":
-            player_numbers = set(original_player_map.keys())
-        elif players == "current":
-            player_numbers = set(current_player_map.keys())
-        elif players == "all":
-            player_numbers = set(original_player_map.keys()) | set(
-                current_player_map.keys()
-            )
-        else:
-            logging.error(f"Unknown player set: {players}")
-            return
-        data = {
-            pnum: all_score_history[pnum]
-            for pnum in player_numbers
-            if pnum in all_score_history
-        }
-        if not data:
-            logging.warning(f"No score data found for player set: {players}")
-            return
-        game_id = self.current_game_id() or "unknown"
-        fig = None
-        try:
-            (fig, ax) = plt.subplots(figsize=(10, 6))
-            for player_number, scores in data.items():
-                player_name = (
-                    current_player_map.get(player_number)
-                    or original_player_map.get(player_number)
-                    or f"Player {player_number}"
-                )
-                x_values = list(range(1, len(scores) + 1))
-                ax.plot(
-                    x_values,
-                    scores,
-                    marker="o",
-                    label=player_name,
-                    linewidth=2,
-                    markersize=6,
-                )
-            ax.set_xlabel("Question Number", fontsize=12)
-            ax.set_ylabel("Score", fontsize=12)
-            ax.set_title(
-                f"Game {game_id}: Player Scores", fontsize=14, fontweight="bold"
-            )
-            ax.legend(loc="best")
-            ax.grid(True, alpha=0.3)
-            GAME_SCORES_DIR.mkdir(exist_ok=True)
-            image_path = GAME_SCORES_DIR / f"{game_id}-{players}.jpg"
-            plt.tight_layout()
-            fig.savefig(str(image_path), dpi=150, bbox_inches="tight")
-        finally:
-            if fig is not None:
-                plt.close(fig)
-            plt.close("all")
-            plt.ioff()
-        QApplication.processEvents()
-
     def close_game(self) -> None:
         """Reset runtime state so the app can return to the lobby.
 
@@ -1948,6 +1871,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
+        self.final_wagers_open = False
         self.dc.question_widget.show_question()
         self.keystroke_manager.activate("FINAL_OPEN_RESPONSES")
 
@@ -2072,10 +1996,19 @@ class Game(QObject):
             self.apply_manual_score_override(player, new_score)
 
     def close(self) -> None:
-        """Stop audio playback and shut down the Qt application.
+        """Save queued history, stop timers and audio, and quit the app.
+
+        Like ``close_game``, this makes a last attempt to write any clue
+        history lines that earlier failed to save, and warns the host if they
+        are still unsaved. A running clue or Final Jeopardy timer is
+        cancelled so its thread does not keep the process alive.
 
         Returns:
             ``None``.
         """
+        self._finish_pending_history()
+        if self.timer:
+            self.timer.cancel()
+        self.timer = None
         self.song_player.stop()
         QApplication.quit()

@@ -464,6 +464,62 @@ def test_build_summary_text_flags_missing_daily_double(qtbot: object) -> None:
     assert "CRITICAL: Missing Daily Double" in summary
 
 
+def _give_daily_doubles(board: Board, count: int) -> None:
+    """Make exactly ``count`` of one board's clues Daily Doubles."""
+    for position, question in enumerate(board.questions):
+        question.dd = position < count
+
+
+def test_unticking_jeopardy_still_flags_double_jeopardy_missing_one_dd(
+    qtbot: object,
+) -> None:
+    """Double Jeopardy! needs two Daily Doubles even when played alone (#103)."""
+    game = StubGame()
+    rounds = game.data.rounds
+    rounds[1] = Board(
+        rounds[1].categories, [deepcopy(q) for q in rounds[1].questions], dj=True
+    )
+    _give_daily_doubles(rounds[0], 1)
+    _give_daily_doubles(rounds[1], 1)
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.set_summary(widget.build_summary_text())
+    assert MISSING_DAILY_DOUBLE_WARNING in widget.summary_label.text()
+
+    widget.round_checkboxes[0].setChecked(False)
+
+    assert MISSING_DAILY_DOUBLE_WARNING in widget.summary_label.text()
+
+    _give_daily_doubles(rounds[1], 2)
+    widget.round_checkboxes[1].setChecked(False)
+    widget.round_checkboxes[1].setChecked(True)
+
+    assert MISSING_DAILY_DOUBLE_WARNING not in widget.summary_label.text()
+
+
+def test_advanced_row_flags_double_jeopardy_missing_one_dd(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A row using Double Jeopardy! expects its two original DDs (#103)."""
+    source = _fixture_source_game("Game 111")
+    source.rounds[1] = Board(
+        source.rounds[1].categories,
+        [deepcopy(q) for q in source.rounds[1].questions],
+        dj=True,
+    )
+    _give_daily_doubles(source.rounds[0], 1)
+    _give_daily_doubles(source.rounds[1], 1)
+    widget, _, _ = _advanced_widget(qtbot, monkeypatch, {"111": source})
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    row = _load_advanced_row(widget, 0, "111")
+    assert MISSING_DAILY_DOUBLE_WARNING not in row["status_label"].text()
+
+    row["board_radios"][1].click()
+
+    assert MISSING_DAILY_DOUBLE_WARNING in row["status_label"].text()
+
+
 def test_welcome_radio_updates_triple_stumper_reveal_option(qtbot: object) -> None:
     """Test the welcome radio toggles the reveal-answer game option."""
     game = StubGame()
@@ -1040,6 +1096,29 @@ def test_advanced_options_preserve_existing_rows_when_board_counts_change(
     assert widget._advanced_rows[0]["gameid_edit"].text() == "111"
     assert widget._advanced_rows[0]["value_edits"][0].text() == "300"
     assert widget._advanced_rows[1]["gameid_edit"].text() == ""
+
+
+def test_advanced_board_count_change_redraws_untouched_default_values(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Going to 4+ boards gives untouched rows the new ladder (#103)."""
+    widget, _, _ = _advanced_widget(qtbot, monkeypatch, {})
+    widget.final_board_count_spinbox.setValue(0)
+    widget.standard_board_count_spinbox.setValue(3)
+    widget._advanced_rows[0]["value_edits"][0].setText("250")
+
+    widget.standard_board_count_spinbox.setValue(4)
+
+    values = [
+        [edit.text() for edit in row["value_edits"]] for row in widget._advanced_rows
+    ]
+    expected = [
+        [str(value) for value in widget.default_values_for_board(index, 4)]
+        for index in range(4)
+    ]
+    expected[0][0] = "250"
+    assert values == expected
+    assert [int(row[-1]) for row in values] == sorted(int(row[-1]) for row in values)
 
 
 def test_advanced_options_require_all_rows_before_start_enables(

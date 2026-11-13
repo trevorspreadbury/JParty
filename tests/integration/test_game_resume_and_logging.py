@@ -1586,3 +1586,97 @@ def test_read_saved_game_does_not_change_the_game(
     assert game.data is saved_data
     assert resume_state["path"] == sample_saved_game_dir
     assert resume_state["player_count"] == len(loaded.general_state["players"])
+
+
+def test_reordering_and_removing_players_in_a_new_lobby_renumbers_seats(
+    game_with_players: object,
+) -> None:
+    """Test buzzer keys and player numbers follow seats in a fresh lobby."""
+    from jparty.domain.input import index_to_key
+
+    game = game_with_players
+    alice, bob, cara = game.players
+
+    game.move_player_up(bob)
+    assert [player.name for player in game.players] == ["Bob", "Alice", "Cara"]
+    game.remove_player(alice)
+
+    assert [
+        (player.name, player.player_number, player.key) for player in game.players
+    ] == [
+        ("Bob", 0, index_to_key[0]),
+        ("Cara", 1, index_to_key[1]),
+    ]
+
+
+def _start_new_game(game: object, monkeypatch: object) -> object:
+    """Start a fresh session without saving game HTML, and return its folder."""
+    from jparty.services import archive_client
+
+    monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
+    game.set_session_game_id("4453")
+    game.start_game()
+    return game._game_state_dir / "general.json"
+
+
+def test_failed_general_state_write_keeps_the_previous_file_and_warns(
+    game: object, players: object, monkeypatch: object
+) -> None:
+    """Test a full disk leaves the old general.json whole and tells the host."""
+    from jparty.services import game_cache
+
+    warnings = []
+    monkeypatch.setattr(
+        game, "show_host_warning", lambda title, text: warnings.append((title, text))
+    )
+    general_file = _start_new_game(game, monkeypatch)
+    before = general_file.read_text()
+
+    def disk_full(*args: object, **kwargs: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(game_cache.os, "fsync", disk_full)
+    game._save_general_state()
+
+    assert general_file.read_text() == before
+    assert json.loads(before)["game_id"] == "4453"
+    assert not list(general_file.parent.glob("*.tmp"))
+    assert len(warnings) == 1
+    title, text = warnings[0]
+    assert title == "Game Not Saved"
+    assert "No space left on device" in text
+    assert "Load Saved may not be able to resume" in text
+
+
+def test_general_state_write_retries_while_windows_locks_the_file(
+    game: object, players: object, monkeypatch: object
+) -> None:
+    """Test a briefly locked general.json is still replaced, with no warning."""
+    import os
+
+    from jparty.services import game_cache
+
+    warnings = []
+    monkeypatch.setattr(
+        game, "show_host_warning", lambda title, text: warnings.append((title, text))
+    )
+    general_file = _start_new_game(game, monkeypatch)
+    game.players[0].name = "Alicia"
+    real_replace = os.replace
+    attempts = []
+
+    def locked_twice(source: object, destination: object) -> None:
+        attempts.append(destination)
+        if len(attempts) <= 2:
+            raise PermissionError(13, "The process cannot access the file")
+        real_replace(source, destination)
+
+    sleeps = []
+    monkeypatch.setattr(game_cache.os, "replace", locked_twice)
+    monkeypatch.setattr(game_cache, "_sleep", sleeps.append)
+    game._save_general_state()
+
+    assert len(attempts) == 3
+    assert sleeps == list(game_cache._REPLACE_RETRY_DELAYS[:2])
+    assert warnings == []
+    assert json.loads(general_file.read_text())["players"][0]["name"] == "Alicia"

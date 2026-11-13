@@ -361,6 +361,7 @@ class FakeBuzzerController:
         self.connected_players = []
         self.accepting_players = True
         self.open_wagers_calls = []
+        self.close_wagers_calls = 0
         self.prompt_answers_calls = 0
         self.toolate_calls = 0
         self.broadcasts = []
@@ -383,6 +384,13 @@ class FakeBuzzerController:
             players = self.connected_players
         for player in players:
             player.page = "wager"
+
+    def close_wagers(self) -> None:
+        """Test close wagers."""
+        self.close_wagers_calls += 1
+        for player in self.connected_players:
+            if player.page == "wager":
+                player.page = "null"
 
     def prompt_answers(self) -> None:
         """Test prompt answers."""

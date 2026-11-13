@@ -359,3 +359,20 @@ def test_find_random_game_stops_once_cancelled() -> None:
         load_game=load,
     ) == ("", None)
     assert calls == ["5", "5"]
+
+
+def test_source_daily_double_counts_follow_source_round_positions() -> None:
+    """Each round keeps its source position's count, whatever else is picked."""
+    game = GameData(
+        [
+            _board_with_daily_doubles({(0, 0)}),
+            _board_with_daily_doubles({(0, 0)}),
+            FinalBoard("Final", Question((0, 0), "Q", "A", "Final")),
+        ],
+        "date",
+        "comments",
+    )
+
+    assert game.source_daily_double_counts([0, 1, 2]) == [1, 2]
+    assert game.source_daily_double_counts([1, 2]) == [2]
+    assert game.source_daily_double_counts([2, 5]) == []

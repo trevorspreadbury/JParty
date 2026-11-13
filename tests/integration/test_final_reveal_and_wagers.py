@@ -1,6 +1,7 @@
 """Test Final Jeopardy reveal and wager rules with the real controller (#62)."""
 
 import pytest
+from PyQt6.QtCore import Qt
 
 from jparty.web import controller as controller_module
 from jparty.web.controller import BuzzerController
@@ -66,7 +67,80 @@ def test_game_clamps_final_wagers(
     """The game clamps Final wagers to ``0..max(score, 0)``."""
     player = game_with_players.players[0]
     player.score = score
+    _start_final(game_with_players)
 
     game_with_players.wager(0, requested)
 
     assert player.wager == expected
+
+
+def _key_active(game: object, ident: str) -> bool:
+    """Return whether a host key event is currently active."""
+    return game.keystroke_manager._events[ident].active
+
+
+def _start_final(game: object) -> None:
+    """Move the test game into Final wagering."""
+    game.current_round = game.data.rounds[2]
+    game.active_question = game.current_round.question
+    game.start_final()
+
+
+def test_open_final_waits_for_every_wager(game_with_players: object) -> None:
+    """Space opens Final only after the last wager arrives."""
+    game = game_with_players
+    _start_final(game)
+
+    for i_player in range(len(game.players) - 1):
+        game.wager(i_player, 0)
+        assert not _key_active(game, "OPEN_FINAL")
+        assert _key_active(game, "FORCE_OPEN_FINAL")
+
+    game.wager(len(game.players) - 1, 0)
+
+    assert _key_active(game, "OPEN_FINAL")
+    assert not _key_active(game, "FORCE_OPEN_FINAL")
+
+
+def test_host_can_open_final_with_missing_wagers_as_zero(
+    game_with_players: object, real_controller: BuzzerController
+) -> None:
+    """Enter opens Final at once; missing wagers count as 0 and late ones drop."""
+    game = game_with_players
+    for player in game.players:
+        player.score = 1000
+    _start_final(game)
+    real_controller.wager(game.players[0], 600)
+
+    game.keystroke_manager.call(Qt.Key.Key_Return)
+
+    assert [p.wager for p in game.players] == [600, 0, 0]
+    assert game.dc.question_widget.show_question_calls == 1
+    assert _key_active(game, "FINAL_OPEN_RESPONSES")
+    assert not _key_active(game, "OPEN_FINAL")
+    assert not _key_active(game, "FORCE_OPEN_FINAL")
+    real_controller.wager(game.players[1], 900)
+    assert game.players[1].wager == 0
+
+
+def test_wager_landing_after_enter_is_ignored(
+    game_with_players: object, real_controller: BuzzerController
+) -> None:
+    """A wager already sent when the host presses Enter doesn't replace the 0.
+
+    The server can accept the wager just before Enter, but its signal reaches
+    the game just after, when the clue (and no hint label) is on screen.
+    """
+    game = game_with_players
+    for player in game.players:
+        player.score = 1000
+    _start_final(game)
+
+    game.keystroke_manager.call(Qt.Key.Key_Return)
+    # The real question widget deletes its hint label when the clue shows.
+    game.host_display.question_widget.hint_label = None
+    game.wager(1, 700)
+
+    assert [p.wager for p in game.players] == [0, 0, 0]
+    assert _key_active(game, "FINAL_OPEN_RESPONSES")
+    assert not _key_active(game, "OPEN_FINAL")

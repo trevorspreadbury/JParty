@@ -8,7 +8,9 @@ layer.
 
 from __future__ import annotations
 
+import binascii
 import logging
+from base64 import urlsafe_b64decode
 from typing import TYPE_CHECKING, Any
 
 import tornado.escape
@@ -21,6 +23,81 @@ from jparty.domain.models import Player
 if TYPE_CHECKING:
     from jparty.web.app import Application
     from jparty.web.controller import BuzzerController
+
+SIGNATURE_PREFIX = "data:image/png;base64,"
+MAX_NAME_LENGTH = 100
+MAX_SIGNATURE_LENGTH = 2_000_000
+MAX_ANSWER_LENGTH = 500
+
+
+def clean_player_name(text: object) -> str | None:
+    """Return a phone's name as it should be stored, or ``None`` to reject it.
+
+    The host UI draws the name on the Qt thread. A name that is not a string,
+    or a signature whose image data is not valid base64, would raise there,
+    so it is rejected here instead.
+
+    Args:
+        text: ``text`` field of the phone's ``NAME`` message.
+
+    Returns:
+        The name with surrounding spaces removed and text names cut to
+        ``MAX_NAME_LENGTH``, or ``None`` if the name is empty, not a string,
+        or a bad signature.
+    """
+    if not isinstance(text, str):
+        return None
+    name = text.strip()
+    if not name:
+        return None
+    # The host widgets treat anything starting with the prefix (without the
+    # comma) as a signature, so check all of those.
+    if name.startswith(SIGNATURE_PREFIX[:-1]):
+        if len(name) > MAX_SIGNATURE_LENGTH or not name.startswith(SIGNATURE_PREFIX):
+            return None
+        try:
+            # Decode the same way the host widgets do.
+            data = urlsafe_b64decode(name[len(SIGNATURE_PREFIX) :])
+        except (binascii.Error, ValueError):
+            return None
+        return name if data else None
+    return name[:MAX_NAME_LENGTH]
+
+
+def clean_final_answer(text: object) -> str | None:
+    """Return a phone's Final answer as text, or ``None`` to reject it.
+
+    Args:
+        text: ``text`` field of the phone's ``ANSWER`` message.
+
+    Returns:
+        The answer cut to ``MAX_ANSWER_LENGTH``, or ``None`` if it is not a
+        string.
+    """
+    if not isinstance(text, str):
+        return None
+    return text[:MAX_ANSWER_LENGTH]
+
+
+def parse_wager(text: object) -> int | None:
+    """Read a phone's wager as a whole number of dollars.
+
+    The phone's number box accepts forms like ``1e3`` and ``250.5``, so the
+    text is read as a float and rounded toward zero. The controller clamps the
+    result to what the player may bet.
+
+    Args:
+        text: ``text`` field of the phone's ``WAGER`` message.
+
+    Returns:
+        The wager, or ``None`` if it is not a finite number.
+    """
+    if isinstance(text, bool) or not isinstance(text, (str, int, float)):
+        return None
+    try:
+        return int(float(text))
+    except (ValueError, OverflowError):
+        return None
 
 
 class WelcomeHandler(tornado.web.RequestHandler):
@@ -158,12 +235,17 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         elif msg == "WAGER":
             self.wager(text)
         elif msg == "ANSWER":
-            self.application.controller.answer(self.player, text, self)
+            self.answer(text)
         else:
             raise Exception("Unknown message")
 
-    def init_player(self, name: str) -> None:
+    def init_player(self, name: object) -> None:
         """Create and register a player from the submitted display name.
+
+        A socket that already has a player gets that player's token again
+        instead of a second player, so a double-tap on "Play!" can't add a
+        ghost player. A name that ``clean_player_name`` rejects sends the phone
+        back to the name page.
 
         Args:
             name: Player name provided by the client.
@@ -171,6 +253,9 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         Returns:
             ``None``.
         """
+        if self.player is not None:
+            self.send("TOKEN", self.player.token.hex())
+            return
         if self.controller.in_saved_player_reclaim_mode():
             if self.controller.saved_player_claims_complete():
                 self.send("ALL_CLAIMED")
@@ -188,13 +273,21 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         if len(self.controller.connected_players) >= MAXPLAYERS:
             self.send("GAMEFULL")
             return
+        clean_name = clean_player_name(name)
+        if clean_name is None:
+            logging.warning("Rejecting invalid player name from a phone")
+            self.send("NEW")
+            return
         player_index = len(self.controller.connected_players)
-        self.player = Player(name, self, player_index)
+        self.player = Player(clean_name, self, player_index)
         self.application.controller.new_player(self.player)
         self.send("TOKEN", self.player.token.hex())
 
-    def claim_player(self, player_number: str) -> None:
+    def claim_player(self, player_number: object) -> None:
         """Claim a saved player profile during resume setup.
+
+        A socket that already has a player is sent that player again, so one
+        phone can't claim several saved players.
 
         Args:
             player_number: Saved player slot requested by the client.
@@ -205,12 +298,15 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         if not self.controller.in_saved_player_reclaim_mode():
             self.send("NEW")
             return
-        if self.controller.saved_player_claims_complete() and self.player is None:
+        if self.player is not None:
+            self.send_claimed(self.player)
+            return
+        if self.controller.saved_player_claims_complete():
             self.send("ALL_CLAIMED")
             return
         try:
             saved_player_number = int(player_number)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             self.send(
                 "SHOW_CHOOSER",
                 tornado.escape.json_encode(
@@ -221,6 +317,17 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         player = self.controller.claim_saved_player(self, saved_player_number)
         if player is None:
             return
+        self.send_claimed(player)
+
+    def send_claimed(self, player: Player) -> None:
+        """Tell the phone which saved player it holds.
+
+        Args:
+            player: Saved player claimed by this socket.
+
+        Returns:
+            ``None``.
+        """
         self.send(
             "CLAIMED",
             tornado.escape.json_encode(
@@ -236,7 +343,7 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         """
         self.application.controller.buzz(self.player)
 
-    def wager(self, text: str) -> None:
+    def wager(self, text: object) -> None:
         """Parse and forward a wager from the connected player.
 
         Args:
@@ -245,15 +352,36 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         Returns:
             ``None``.
 
-        Text that is not a whole number is ignored. The controller checks the
+        The phone hides its wager box as soon as it sends, so a wager that
+        ``parse_wager`` can't read prompts the phone again. Otherwise Final
+        would wait for a wager that never comes. The controller checks the
         phase and clamps the amount.
         """
-        try:
-            amount = int(text)
-        except (TypeError, ValueError):
+        amount = parse_wager(text)
+        if amount is None:
             logging.warning("Ignoring invalid wager %r from %s", text, self.player)
+            if self.player is not None and self.player.page == "wager":
+                self.controller.open_wagers([self.player])
             return
         self.application.controller.wager(self.player, amount)
+
+    def answer(self, text: object) -> None:
+        """Forward a Final answer from the connected player.
+
+        Args:
+            text: Answer text from the phone.
+
+        Returns:
+            ``None``.
+
+        An answer that is not a string is ignored, since the host could not
+        show it for judging.
+        """
+        guess = clean_final_answer(text)
+        if guess is None:
+            logging.warning("Ignoring invalid answer from %s", self.player)
+            return
+        self.application.controller.answer(self.player, guess, self)
 
     def toolate(self) -> None:
         """Send a too-late notification to this player client.
@@ -266,11 +394,15 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
     def on_close(self) -> None:
         """Handle websocket closure for a player client.
 
+        The player is only marked disconnected if this is still their socket.
+        An old socket that closes after the phone reconnected leaves the
+        player connected.
+
         Returns:
             ``None``.
         """
         self.controller.unregister_socket(self)
-        if self.player is not None:
+        if self.player is not None and self.player.waiter is self:
             self.player.connected = False
         return None
 
