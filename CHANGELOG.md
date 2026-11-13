@@ -26,7 +26,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
   (#60).
 - While JParty waits for Final Jeopardy wagers, the host can press Enter to
   open the clue right away. Anyone who hasn't wagered is counted as wagering
-  $0, so a dead phone or a player who left no longer stalls the game (#PR).
+  $0, so a dead phone or a player who left no longer stalls the game (#108).
 
 ### Changed
 - JParty now supports up to 6 players (was 8). A 7th phone is told the game
@@ -102,9 +102,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Tests stay offline and catch more real bugs (#84, #89).
 - A player who buzzed too early is no longer locked out again when the clue
   reopens after a wrong answer. The early-buzz penalty now only applies to
-  the window they buzzed early on (#PR).
+  the window they buzzed early on (#108).
 - Holding a host key down no longer repeats it, so a long press of Space
-  can't skip a step, such as jumping past a Final answer reveal (#PR).
+  can't skip a step, such as jumping past a Final answer reveal (#108).
 
 ## [3.0.0-rc.1] - 2026-05-02
 
