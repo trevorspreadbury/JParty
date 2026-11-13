@@ -1,0 +1,2491 @@
+"""Test welcome widget module."""
+
+from copy import deepcopy
+from types import SimpleNamespace
+from typing import NoReturn
+
+import pytest
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QPixmap
+from PyQt6.QtWidgets import QFileDialog, QLabel, QMessageBox, QWidget
+
+from jparty.app.paths import GAME_STATES_DIR
+from jparty.domain.models import Board, FinalBoard, GameData, Question
+from jparty.services.game_loader import original_board_row_values
+from jparty.services.game_parser import GameParser
+from jparty.services.question_media import QuestionMediaStatus
+from jparty.ui.widgets.welcome import (
+    ADVANCED_RANDOM_MAX_ATTEMPTS,
+    MISSING_DAILY_DOUBLE_WARNING,
+    QuestionMediaPreview,
+    Welcome,
+)
+
+pytestmark = pytest.mark.qt
+
+
+class StubGame:
+    """Test helper for stubgame."""
+
+    def __init__(self) -> None:
+        """Test init."""
+        categories = [f"Cat {index}" for index in range(6)]
+        questions = [
+            Question((col, row), f"Q {col}-{row}", f"A {col}-{row}", categories[col])
+            for col in range(6)
+            for row in range(5)
+        ]
+        self.data = GameData(
+            [
+                Board(categories, questions[:30], dj=False),
+                Board(categories, questions[:30], dj=True),
+                FinalBoard(
+                    "Final Category",
+                    Question((0, 0), "Final clue", "Final response", "Final Category"),
+                ),
+            ],
+            "January 1, 2026",
+            "Fixture game",
+        )
+        self.resume_expected = None
+        self.buzzer_controller = SimpleNamespace(connected_players=[])
+        self.start_game_calls = 0
+        self.clear_resume_state_calls = 0
+        self._selected_round_indices = None
+        self._board_selection_configs = []
+        self._composed_board_selection_configs = None
+        self._composed_game_data = None
+        self._session_game_id = ""
+        self._reveal_answers_after_triple_stumper = False
+        self.resume_claimed = 0
+
+    def start_game(self) -> None:
+        """Test start game."""
+        self.start_game_calls += 1
+
+    def clear_resume_state(self) -> None:
+        """Test clear resume state."""
+        self.resume_expected = None
+        self.resume_claimed = 0
+        self.clear_resume_state_calls += 1
+
+    def prepare_resume_from_dir(self, selected_dir: object) -> object:
+        """Test prepare resume from dir."""
+        self.resume_expected = 2
+        self.resume_claimed = 0
+        self.set_selected_round_indices([0, 2])
+        return {
+            "game_id": "4453",
+            "general_state": {
+                "players": [{"name": "Alice"}, {"name": "Bob"}],
+                "selected_round_indices": [0, 2],
+                "reveal_answers_after_triple_stumper": True,
+            },
+        }
+
+    def read_saved_game(self, selected_dir: object) -> object:
+        """Test reading a save; the stub defers all work to the apply step."""
+        return selected_dir
+
+    def apply_saved_game(self, loaded: object) -> object:
+        """Test applying a save through ``prepare_resume_from_dir``."""
+        return self.prepare_resume_from_dir(loaded)
+
+    def startable(self) -> object:
+        """Test startable."""
+        if self.resume_expected is None:
+            return False
+        return self.resume_claimed == self.resume_expected
+
+    def set_selected_round_indices(self, indices: object) -> None:
+        """Test set selected round indices."""
+        self._selected_round_indices = list(indices) if indices is not None else None
+
+    def selected_round_indices(self) -> object:
+        """Test selected round indices."""
+        if self._selected_round_indices is None:
+            return []
+        return self._selected_round_indices
+
+    def set_board_selection_configs(self, configs: object) -> None:
+        """Test storing board-selection configs."""
+        self._board_selection_configs = list(configs) if configs is not None else []
+
+    def board_selection_configs(self) -> object:
+        """Test reading board-selection configs."""
+        return self._board_selection_configs
+
+    def set_session_game_id(self, game_id: object) -> None:
+        """Test storing the current session game id."""
+        self._session_game_id = str(game_id)
+
+    def set_composed_game_data(
+        self, configs: object, composed_game_data: object | None
+    ) -> None:
+        """Test storing composed advanced game data."""
+        self._composed_board_selection_configs = configs
+        self._composed_game_data = composed_game_data
+
+    def matching_composed_game_data(self, configs: object) -> object | None:
+        """Test reading composed advanced game data."""
+        if configs != self._composed_board_selection_configs:
+            return None
+        return self._composed_game_data
+
+    def set_reveal_answers_after_triple_stumper(self, enabled: bool) -> None:
+        """Test storing the triple-stumper reveal preference."""
+        self._reveal_answers_after_triple_stumper = bool(enabled)
+
+    def reveal_answers_after_triple_stumper_enabled(self) -> bool:
+        """Test reading the triple-stumper reveal preference."""
+        return self._reveal_answers_after_triple_stumper
+
+    def expected_player_count(self) -> object:
+        """Test expected player count."""
+        return self.resume_expected
+
+    def resume_claim_status(self) -> tuple[int, int]:
+        """Test resume claim status."""
+        return (self.resume_claimed, self.resume_expected or 0)
+
+    def close(self) -> None:
+        """Test close."""
+        return None
+
+    def valid_game(self) -> bool:
+        """Test valid game."""
+        return True
+
+
+class PreviewParent(QWidget):
+    """Minimal parent object that captures preview requests."""
+
+    def __init__(self, game: object) -> None:
+        """Initialize preview capture state."""
+        super().__init__()
+        self.game = game
+        self.preview_widget = None
+        self.preview_requests = []
+        self.back_calls = 0
+
+    def load_question_media_preview(
+        self, preview_questions: list[tuple[int, object]]
+    ) -> None:
+        """Capture and render the preview widget."""
+        self.preview_requests.append(preview_questions)
+        self.preview_widget = QuestionMediaPreview(
+            self.game,
+            preview_questions,
+            on_back=self.show_welcome_from_preview,
+            on_start=self.game.start_game,
+        )
+
+    def show_welcome_from_preview(self) -> None:
+        """Track returns from the preview widget."""
+        self.back_calls += 1
+
+
+def test_load_saved_game_requires_matching_player_count(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Test test load saved game requires matching player count."""
+    game = StubGame()
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved"
+    )
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    widget.load_saved_game()
+    assert widget.start_button.text() == "Resume!"
+    assert widget.start_button.isEnabled() is False
+    assert [checkbox.text() for checkbox in widget.round_checkboxes] == [
+        "[x] Jeopardy!",
+        "[ ] Double Jeopardy!",
+        "[x] Final Jeopardy!",
+    ]
+    assert [checkbox.isChecked() for checkbox in widget.round_checkboxes] == [
+        True,
+        False,
+        True,
+    ]
+    assert all(checkbox.isEnabled() for checkbox in widget.round_checkboxes)
+    assert widget.reveal_answers_radio.isChecked() is True
+    assert "Claimed 0 of 2 saved players" in widget.summary_label.text()
+    assert (
+        "Claim every saved player profile to resume (0/2)."
+        in widget.summary_label.text()
+    )
+    game.resume_claimed = 2
+    widget.check_start()
+    assert widget.start_button.isEnabled() is True
+
+
+def test_load_saved_game_defaults_to_game_states_dir(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Resume picker should open in the configured game-states directory."""
+    game = StubGame()
+    dialog_calls = []
+
+    def fake_get_existing_directory(*args: object, **kwargs: object) -> str:
+        dialog_calls.append((args, kwargs))
+        return ""
+
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", fake_get_existing_directory
+    )
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+
+    widget.load_saved_game()
+
+    assert dialog_calls
+    args, kwargs = dialog_calls[0]
+    assert kwargs == {}
+    assert args[1] == "Select Saved Game Folder"
+    assert args[2] == str(GAME_STATES_DIR)
+
+
+def test_load_saved_game_round_checkboxes_remain_editable(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Resumed games should restore and still allow changing saved round picks."""
+    game = StubGame()
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved"
+    )
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+
+    widget.load_saved_game()
+    widget.round_checkboxes[1].setChecked(True)
+
+    assert game.selected_round_indices() == [0, 1, 2]
+    assert widget.round_checkboxes[1].text() == "[x] Double Jeopardy!"
+
+
+def test_load_saved_game_preserves_double_and_final_subset_labels(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Subset resumes should still show the full original round list."""
+    game = StubGame()
+
+    def prepare_resume_from_dir(selected_dir: object) -> object:
+        game.resume_expected = 1
+        game.resume_claimed = 0
+        game.set_selected_round_indices([1, 2])
+        return {
+            "game_id": "4453",
+            "general_state": {
+                "players": [{"name": "Alice"}],
+                "selected_round_indices": [1, 2],
+                "board_selections": [
+                    {
+                        "game_id": "4453",
+                        "source_round_index": 1,
+                        "source_round_label": "Double Jeopardy!",
+                        "board_type": "standard",
+                        "row_values": [400, 800, 1200, 1600, 2000],
+                    },
+                    {
+                        "game_id": "4453",
+                        "source_round_index": 2,
+                        "source_round_label": "Final Jeopardy!",
+                        "board_type": "final",
+                        "row_values": [],
+                    },
+                ],
+            },
+        }
+
+    game.prepare_resume_from_dir = prepare_resume_from_dir
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved"
+    )
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+
+    widget.load_saved_game()
+
+    assert [checkbox.text() for checkbox in widget.round_checkboxes] == [
+        "[ ] Jeopardy!",
+        "[x] Double Jeopardy!",
+        "[x] Final Jeopardy!",
+    ]
+    assert game.selected_round_indices() == [1, 2]
+
+
+def test_load_saved_game_invalid_folder_shows_warning(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Test test load saved game invalid folder shows warning."""
+    game = StubGame()
+    warnings = []
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/bad"
+    )
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
+
+    def raise_error(selected_dir: object) -> NoReturn:
+        """Test raise error."""
+        raise FileNotFoundError("Saved game folder must contain general.json")
+
+    game.prepare_resume_from_dir = raise_error
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    widget.load_saved_game()
+    assert warnings
+    assert widget.start_button.text() == "Start!"
+    assert widget.start_button.isEnabled() is False
+
+
+def test_welcome_round_checkboxes_default_to_all_selected(qtbot: object) -> None:
+    """Test welcome round checkboxes default to all selected."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.set_summary("January 1, 2026\nFixture game")
+    assert [checkbox.text() for checkbox in widget.round_checkboxes] == [
+        "[x] Jeopardy!",
+        "[x] Double Jeopardy!",
+        "[x] Final Jeopardy!",
+    ]
+    assert all(checkbox.isChecked() for checkbox in widget.round_checkboxes)
+    assert game.selected_round_indices() == [0, 1, 2]
+
+
+def test_welcome_round_checkboxes_update_selected_rounds(qtbot: object) -> None:
+    """Test welcome round checkboxes update selected rounds."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.set_summary("January 1, 2026\nFixture game")
+    widget.round_checkboxes[1].setChecked(False)
+    assert widget.round_checkboxes[1].text() == "[ ] Double Jeopardy!"
+    assert game.selected_round_indices() == [0, 2]
+    widget.round_checkboxes[1].setChecked(True)
+    assert widget.round_checkboxes[1].text() == "[x] Double Jeopardy!"
+    assert game.selected_round_indices() == [0, 1, 2]
+
+
+def test_welcome_round_checkboxes_survive_summary_rebuild(qtbot: object) -> None:
+    """Refreshing the summary should preserve an existing round selection."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.set_summary("January 1, 2026\nFixture game")
+    widget.round_checkboxes[0].setChecked(False)
+
+    widget.set_summary("January 1, 2026\nFixture game")
+
+    assert [checkbox.isChecked() for checkbox in widget.round_checkboxes] == [
+        False,
+        True,
+        True,
+    ]
+    assert game.selected_round_indices() == [1, 2]
+
+
+def test_welcome_round_checkboxes_label_triple_jeopardy_games(qtbot: object) -> None:
+    """Test welcome labels a third standard board as Triple Jeopardy."""
+    game = StubGame()
+    game.data = GameData(
+        [
+            game.data.rounds[0],
+            game.data.rounds[1],
+            Board(
+                [f"Cat {index}" for index in range(6)],
+                [
+                    Question(
+                        (col, row),
+                        f"TQ {col}-{row}",
+                        f"TA {col}-{row}",
+                        f"Cat {col}",
+                    )
+                    for col in range(6)
+                    for row in range(5)
+                ],
+                dj=False,
+            ),
+            game.data.rounds[2],
+        ],
+        game.data.date,
+        game.data.comments,
+    )
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.set_summary("January 1, 2026\nFixture game")
+    assert [checkbox.text() for checkbox in widget.round_checkboxes] == [
+        "[x] Jeopardy!",
+        "[x] Double Jeopardy!",
+        "[x] Triple Jeopardy!",
+        "[x] Final Jeopardy!",
+    ]
+
+
+def test_build_summary_text_warns_about_missing_questions(qtbot: object) -> None:
+    """Test welcome summary shows missing-question warnings."""
+    game = StubGame()
+    game.data.rounds[0].questions = game.data.rounds[0].questions[:29]
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    summary = widget.build_summary_text()
+    assert "WARNING: Missing 1 question" in summary
+
+
+def test_deselecting_missing_round_removes_missing_question_warning(
+    qtbot: object,
+) -> None:
+    """Regular round deselection should hide warnings from unselected rounds."""
+    game = StubGame()
+    game.data.rounds[0].questions = game.data.rounds[0].questions[:29]
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.set_summary("January 1, 2026\nFixture game")
+
+    assert "WARNING: Missing 1 question" in widget.summary_label.text()
+    widget.round_checkboxes[0].setChecked(False)
+
+    assert "WARNING: Missing 1 question" not in widget.summary_label.text()
+
+
+def test_build_summary_text_flags_missing_daily_double(qtbot: object) -> None:
+    """Test welcome summary flags missing Daily Doubles as critical."""
+    game = StubGame()
+    for question in game.data.rounds[0].questions:
+        question.dd = False
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    summary = widget.build_summary_text()
+    assert "CRITICAL: Missing Daily Double" in summary
+
+
+def _give_daily_doubles(board: Board, count: int) -> None:
+    """Make exactly ``count`` of one board's clues Daily Doubles."""
+    for position, question in enumerate(board.questions):
+        question.dd = position < count
+
+
+def test_unticking_jeopardy_still_flags_double_jeopardy_missing_one_dd(
+    qtbot: object,
+) -> None:
+    """Double Jeopardy! needs two Daily Doubles even when played alone (#103)."""
+    game = StubGame()
+    rounds = game.data.rounds
+    rounds[1] = Board(
+        rounds[1].categories, [deepcopy(q) for q in rounds[1].questions], dj=True
+    )
+    _give_daily_doubles(rounds[0], 1)
+    _give_daily_doubles(rounds[1], 1)
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.set_summary(widget.build_summary_text())
+    assert MISSING_DAILY_DOUBLE_WARNING in widget.summary_label.text()
+
+    widget.round_checkboxes[0].setChecked(False)
+
+    assert MISSING_DAILY_DOUBLE_WARNING in widget.summary_label.text()
+
+    _give_daily_doubles(rounds[1], 2)
+    widget.round_checkboxes[1].setChecked(False)
+    widget.round_checkboxes[1].setChecked(True)
+
+    assert MISSING_DAILY_DOUBLE_WARNING not in widget.summary_label.text()
+
+
+def test_advanced_row_flags_double_jeopardy_missing_one_dd(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A row using Double Jeopardy! expects its two original DDs (#103)."""
+    source = _fixture_source_game("Game 111")
+    source.rounds[1] = Board(
+        source.rounds[1].categories,
+        [deepcopy(q) for q in source.rounds[1].questions],
+        dj=True,
+    )
+    _give_daily_doubles(source.rounds[0], 1)
+    _give_daily_doubles(source.rounds[1], 1)
+    widget, _, _ = _advanced_widget(qtbot, monkeypatch, {"111": source})
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    row = _load_advanced_row(widget, 0, "111")
+    assert MISSING_DAILY_DOUBLE_WARNING not in row["status_label"].text()
+
+    row["board_radios"][1].click()
+
+    assert MISSING_DAILY_DOUBLE_WARNING in row["status_label"].text()
+
+
+def test_welcome_radio_updates_triple_stumper_reveal_option(qtbot: object) -> None:
+    """Test the welcome radio toggles the reveal-answer game option."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    assert widget.reveal_answers_radio.isChecked() is False
+    widget.reveal_answers_radio.setChecked(True)
+    assert game.reveal_answers_after_triple_stumper_enabled() is True
+
+
+def test_advanced_options_compose_frankenstein_board(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced options should compose multiple boards into one game config."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    source_a = game.data
+    source_b = GameData(
+        [source_a.rounds[0], source_a.rounds[2]],
+        "January 2, 2026",
+        "Second fixture",
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source_a, "222": source_b}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source_a, "222": source_b}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(1)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+    widget._advanced_rows[1]["gameid_edit"].setText("222")
+    widget.refresh_advanced_row(1)
+    widget._advanced_rows[0]["value_edits"][0].setText("300")
+    widget.sync_advanced_configuration()
+
+    assert len(game.board_selection_configs()) == 2
+    assert game.board_selection_configs()[0]["game_id"] == "111"
+    assert game.board_selection_configs()[1]["game_id"] == "222"
+    assert game.board_selection_configs()[0]["board_type"] == "standard"
+    assert game.board_selection_configs()[1]["board_type"] == "final"
+    assert game.data.rounds[0].get_question(0, 0).value == 300
+    assert "Board 1: 111 - Jeopardy!" in widget.summary_label.text()
+    assert "Final 1: 222 - Final Jeopardy!" in widget.summary_label.text()
+
+
+def test_advanced_row_status_ignores_missing_questions_on_unselected_rounds(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced row status should only reflect the currently selected source round."""
+    game = StubGame()
+    game.data.rounds[0].questions = game.data.rounds[0].questions[:29]
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+
+    assert "Missing questions: 1" in widget._advanced_rows[0]["status_label"].text()
+    widget._advanced_rows[0]["board_radios"][1].click()
+
+    assert "Missing questions: 1" not in widget._advanced_rows[0]["status_label"].text()
+
+
+def test_advanced_options_store_daily_double_count_and_locations(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced standard rows should persist chosen Daily Double locations."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+    widget._advanced_rows[0]["daily_double_spinbox"].setValue(3)
+    widget.sync_advanced_configuration()
+
+    selection = game.board_selection_configs()[0]
+    assert selection["daily_double_count"] == 3
+    assert len(selection["daily_double_indices"]) == 3
+    assert "DDs: 3" in widget.summary_label.text()
+
+
+def test_advanced_row_typing_uses_debounce_without_focus_loss(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced rows should fetch after debounce while typing, not on blur."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    source = game.data
+    load_calls = []
+    monkeypatch.setattr("jparty.ui.widgets.welcome.ADVANCED_ROW_DEBOUNCE_MS", 10)
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: load_calls.append(game_id) or {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+
+    assert load_calls == []
+    qtbot.waitUntil(lambda: load_calls == ["111"], timeout=500)
+    qtbot.waitUntil(
+        lambda: len(widget._advanced_rows[0]["board_radios"]) == 2,
+        timeout=500,
+    )
+
+
+def test_advanced_daily_double_toggle_does_not_reload_source_games(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Daily Double count changes should compose from cached row data only."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    source = game.data
+    load_calls = []
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: load_calls.append(game_id) or {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+
+    assert load_calls == ["111"]
+    widget._advanced_rows[0]["daily_double_spinbox"].setValue(3)
+
+    assert load_calls == ["111"]
+
+
+def test_advanced_row_round_radios_remain_single_select(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Choosing a different source round should uncheck the prior one."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+
+    radios = widget._advanced_rows[0]["board_radios"]
+    assert len(radios) == 2
+    assert radios[0].isChecked() is True
+    radios[1].click()
+
+    assert radios[0].isChecked() is False
+    assert radios[1].isChecked() is True
+
+
+def test_advanced_row_round_click_updates_selected_source_round(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Clicking a different round should update the saved source round."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+
+    widget._advanced_rows[0]["board_radios"][1].click()
+
+    assert game.board_selection_configs()[0]["source_round_index"] == 1
+
+
+def test_advanced_row_switching_round_reuses_selected_round_daily_doubles(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Changing source rounds should use that round's original Daily Doubles."""
+    game = StubGame()
+    game.data.rounds[0].questions = deepcopy(game.data.rounds[0].questions)
+    game.data.rounds[1].questions = deepcopy(game.data.rounds[1].questions)
+    game.data.rounds[0].questions[1].dd = True
+    game.data.rounds[1].questions[1].dd = False
+    game.data.rounds[1].questions[9].dd = True
+    game.data.rounds[1].questions[22].dd = True
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+    widget._advanced_rows[0]["daily_double_spinbox"].setValue(2)
+    widget._advanced_rows[0]["board_radios"][1].click()
+
+    selection = game.board_selection_configs()[0]
+    assert selection["source_round_index"] == 1
+    assert selection["daily_double_indices"] == [[1, 4], [4, 2]]
+
+
+def test_advanced_daily_doubles_keep_originals_when_adding_more(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Increasing DD count should preserve original HTML DD locations."""
+    game = StubGame()
+    game.data.rounds[0].questions = deepcopy(game.data.rounds[0].questions)
+    for question in game.data.rounds[0].questions:
+        question.dd = False
+    game.data.rounds[0].questions[1].dd = True
+    game.data.rounds[0].questions[14].dd = True
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+    widget._advanced_rows[0]["daily_double_spinbox"].setValue(4)
+
+    selection = game.board_selection_configs()[0]
+    assert [0, 1] in selection["daily_double_indices"]
+    assert [2, 4] in selection["daily_double_indices"]
+    assert len(selection["daily_double_indices"]) == 4
+
+
+def test_advanced_daily_doubles_below_original_only_keep_original_subset(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Reducing DD count below original should only keep original HTML DDs."""
+    game = StubGame()
+    game.data.rounds[0].questions = deepcopy(game.data.rounds[0].questions)
+    for question in game.data.rounds[0].questions:
+        question.dd = False
+    game.data.rounds[0].questions[1].dd = True
+    game.data.rounds[0].questions[14].dd = True
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+    widget._advanced_rows[0]["daily_double_spinbox"].setValue(4)
+    widget._advanced_rows[0]["daily_double_spinbox"].setValue(1)
+
+    selection = game.board_selection_configs()[0]
+    assert len(selection["daily_double_indices"]) == 1
+    assert selection["daily_double_indices"][0] in [[0, 1], [2, 4]]
+
+
+def test_advanced_options_replace_regular_workflow(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced mode should hide the regular picker and use row-local actions."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda _: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+
+    assert widget.regular_workflow_widget.isHidden() is True
+    assert widget.advanced_controls_widget.isHidden() is False
+    assert widget.advanced_start_button.isVisible() is True
+    assert "random_button" in widget._advanced_rows[0]
+    assert "load_media_button" in widget._advanced_rows[0]
+
+
+def test_advanced_row_layout_keeps_compact_game_id_and_wider_action_buttons(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced rows should favor usable action buttons over oversized id fields."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda _: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.resize(1600, 1000)
+    widget.advanced_options_checkbox.setChecked(True)
+    row = widget._advanced_rows[0]
+
+    assert row["gameid_edit"].maximumWidth() <= 260
+    assert row["random_button"].minimumWidth() >= 130
+    assert row["load_media_button"].minimumWidth() >= 130
+
+
+def test_advanced_row_random_populates_matching_board_type(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced row Random should load a source game that matches the slot type."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    standard_source = game.data
+    final_only = GameData(
+        [game.data.rounds[2]],
+        "January 3, 2026",
+        "Final-only fixture",
+    )
+    random_ids = iter(["333", "111"])
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_random_game", lambda: next(random_ids)
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": standard_source, "333": final_only}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": standard_source, "333": final_only}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget.random_advanced_row(0)
+
+    assert widget._advanced_rows[0]["gameid_edit"].text() == "111"
+
+
+def test_advanced_row_load_media_uses_row_game_id(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced row media import should target that row's source game id."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    imported = []
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.import_question_media",
+        lambda source_path, game_id: imported.append((source_path, game_id)),
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: "C:/media")
+
+    widget.load_advanced_question_media(0)
+
+    assert imported == [("C:/media", "111")]
+
+
+def test_advanced_options_validate_board_type(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced rows should reject source games without the expected board type."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    final_only = GameData(
+        [game.data.rounds[2]],
+        "January 3, 2026",
+        "Final-only fixture",
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"333": final_only}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"333": final_only}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("333")
+    widget.refresh_advanced_row(0)
+
+    assert (
+        "No Jeopardy board found in this source game."
+        in widget._advanced_rows[0]["status_label"].text()
+    )
+    assert game.board_selection_configs() == []
+    assert widget.start_button.isEnabled() is False
+
+
+def test_advanced_options_preserve_existing_rows_when_board_counts_change(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Changing advanced board counts should preserve existing row data."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+    widget._advanced_rows[0]["value_edits"][0].setText("300")
+
+    widget.standard_board_count_spinbox.setValue(2)
+
+    assert widget._advanced_rows[0]["gameid_edit"].text() == "111"
+    assert widget._advanced_rows[0]["value_edits"][0].text() == "300"
+    assert widget._advanced_rows[1]["gameid_edit"].text() == ""
+
+
+def test_advanced_board_count_change_redraws_untouched_default_values(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Going to 4+ boards gives untouched rows the new ladder (#103)."""
+    widget, _, _ = _advanced_widget(qtbot, monkeypatch, {})
+    widget.final_board_count_spinbox.setValue(0)
+    widget.standard_board_count_spinbox.setValue(3)
+    widget._advanced_rows[0]["value_edits"][0].setText("250")
+
+    widget.standard_board_count_spinbox.setValue(4)
+
+    values = [
+        [edit.text() for edit in row["value_edits"]] for row in widget._advanced_rows
+    ]
+    expected = [
+        [str(value) for value in widget.default_values_for_board(index, 4)]
+        for index in range(4)
+    ]
+    expected[0][0] = "250"
+    assert values == expected
+    assert [int(row[-1]) for row in values] == sorted(int(row[-1]) for row in values)
+
+
+def test_advanced_options_require_all_rows_before_start_enables(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Advanced mode should not become startable until every slot is filled."""
+    game = StubGame()
+    game.startable = lambda: True
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    source = game.data
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"111": source, "222": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"111": source, "222": source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(2)
+    widget.final_board_count_spinbox.setValue(0)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+
+    assert game.board_selection_configs() == []
+    assert widget.advanced_start_button.isEnabled() is False
+    assert "Fill every board slot before starting" in widget.summary_label.text()
+
+    widget._advanced_rows[1]["gameid_edit"].setText("222")
+    widget.refresh_advanced_row(1)
+
+    assert len(game.board_selection_configs()) == 2
+    assert widget.advanced_start_button.isEnabled() is True
+
+
+def test_disabling_advanced_options_clears_advanced_state_and_returns_to_standard_mode(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Turning off advanced options should reset the welcome screen."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda _: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+    widget.textbox.setText("4453")
+    widget.set_summary("January 1, 2026\nFixture game")
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget._advanced_rows[0]["gameid_edit"].setText("111")
+    widget._advanced_rows[1]["gameid_edit"].setText("222")
+    widget.advanced_options_checkbox.setChecked(False)
+
+    assert widget.advanced_controls_widget.isVisible() is False
+    assert widget.standard_board_count_spinbox.value() == 2
+    assert widget.final_board_count_spinbox.value() == 1
+    assert widget.textbox.text() == ""
+    assert widget.summary_label.text() == ""
+    assert widget.rounds_widget.isHidden() is True
+    assert widget.round_checkboxes == []
+    assert game.board_selection_configs() == []
+    assert widget.start_button.isEnabled() is False
+
+    widget.advanced_options_checkbox.setChecked(True)
+    assert widget._advanced_rows[0]["gameid_edit"].text() == ""
+    assert widget._advanced_rows[1]["gameid_edit"].text() == ""
+
+
+def test_resume_round_selector_does_not_clear_saved_board_selections(
+    qtbot: object,
+) -> None:
+    """Resume-mode round UI should not overwrite a saved Frankenstein config."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.resume_path = "C:/saved"
+    game.set_board_selection_configs(
+        [
+            {
+                "game_id": "111",
+                "source_round_index": 0,
+                "source_round_label": "Jeopardy!",
+                "board_type": "standard",
+                "row_values": [200, 400, 600, 800, 1000],
+            },
+            {
+                "game_id": "222",
+                "source_round_index": 1,
+                "source_round_label": "Double Jeopardy!",
+                "board_type": "standard",
+                "row_values": [400, 800, 1200, 1600, 2000],
+            },
+        ]
+    )
+    widget.configure_round_selector(enabled=False)
+
+    assert [selection["game_id"] for selection in game.board_selection_configs()] == [
+        "111",
+        "222",
+    ]
+
+
+def test_build_summary_text_includes_question_media_status(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Welcome summary should include the detected media status line."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.textbox.setText("4453")
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda _: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+    widget._question_media_status = QuestionMediaStatus(directory=None, zip_file=None)
+    summary = widget.build_summary_text()
+    assert "Question media status: no folder or zip archive found." in summary
+
+
+def test_load_question_media_requires_game_id(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Import should warn when no destination game id has been typed."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
+    widget.load_question_media()
+    assert warnings
+
+
+def test_load_question_media_imports_directory_and_refreshes_status(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> None:
+    """Successful import should refresh the welcome summary."""
+    game = StubGame()
+    source_dir = temp_dir / "source"
+    source_dir.mkdir()
+    media_file = source_dir / "0-0-0.png"
+    media_file.write_bytes(b"png")
+    monkeypatch.setattr(
+        "jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media"
+    )
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.textbox.setText("4453")
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: str(source_dir))
+    widget.load_question_media()
+    assert (temp_dir / "question_media" / "4453" / "0-0-0.png").exists()
+    assert "Question media status: found folder." in widget.summary_label.text()
+
+
+def test_load_question_media_imports_zip_and_refreshes_status(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> None:
+    """Zip imports should extract into the game directory and refresh the summary."""
+    from zipfile import ZipFile
+
+    game = StubGame()
+    source_zip = temp_dir / "media.zip"
+    with ZipFile(source_zip, "w") as archive:
+        archive.writestr("1-2-3.jpg", b"jpg")
+    monkeypatch.setattr(
+        "jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media"
+    )
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.textbox.setText("4453")
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: str(source_zip))
+    widget.load_question_media()
+    assert (temp_dir / "question_media" / "4453" / "1-2-3.jpg").exists()
+    assert "Question media status: found folder." in widget.summary_label.text()
+
+
+def test_start_click_opens_preview_for_selected_round_local_media(
+    qtbot: object, temp_dir: object
+) -> None:
+    """Welcome should show preview instead of starting immediately when local media exists."""
+    game = StubGame()
+    image_path = temp_dir / "0-0-0.png"
+    pixmap = QPixmap(40, 40)
+    pixmap.fill(QColor("blue"))
+    assert pixmap.save(str(image_path))
+    game.data.rounds[0].questions[0].image = True
+    game.data.rounds[0].questions[0].image_url = str(image_path)
+    game.data.rounds[1].questions[0].image = True
+    game.data.rounds[1].questions[0].image_url = str(image_path)
+    game.set_selected_round_indices([0])
+    parent = PreviewParent(game)
+    qtbot.addWidget(parent)
+    widget = Welcome(game, parent)
+    qtbot.addWidget(widget)
+    widget._question_media_status = QuestionMediaStatus(
+        directory=temp_dir, zip_file=None
+    )
+    widget.on_start_clicked()
+    assert game.start_game_calls == 0
+    assert len(parent.preview_requests) == 1
+    assert len(parent.preview_requests[0]) == 1
+    assert parent.preview_widget is not None
+    qtbot.addWidget(parent.preview_widget)
+    assert parent.preview_widget.cards
+    answer_labels = parent.preview_widget.cards[0].findChildren(QLabel)
+    assert any(
+        label.text() == game.data.rounds[0].questions[0].answer
+        for label in answer_labels
+    )
+
+
+def test_preview_buttons_go_back_or_start_game(qtbot: object, temp_dir: object) -> None:
+    """Preview buttons should return to welcome or continue into game start."""
+    game = StubGame()
+    image_path = temp_dir / "0-0-0.png"
+    pixmap = QPixmap(40, 40)
+    pixmap.fill(QColor("green"))
+    assert pixmap.save(str(image_path))
+    question = game.data.rounds[0].questions[0]
+    question.image = True
+    question.image_url = str(image_path)
+    parent = PreviewParent(game)
+    qtbot.addWidget(parent)
+    preview = QuestionMediaPreview(
+        game,
+        [(0, question)],
+        on_back=parent.show_welcome_from_preview,
+        on_start=game.start_game,
+    )
+    qtbot.addWidget(preview)
+    preview.show()
+    qtbot.mouseClick(preview.back_button, Qt.MouseButton.LeftButton)
+    assert parent.back_calls == 1
+    qtbot.mouseClick(preview.start_button, Qt.MouseButton.LeftButton)
+    assert game.start_game_calls == 1
+
+
+def test_franken_preview_start_uses_cached_composed_game_with_local_media(
+    qtbot: object,
+    game_with_players: object,
+    fixture_dir: object,
+    temp_dir: object,
+    monkeypatch: object,
+) -> None:
+    """Starting from preview should deep-copy cached franken data without recursion."""
+    game = game_with_players
+    media_root = temp_dir / "question_media"
+    media_dir = media_root / "4453"
+    media_dir.mkdir(parents=True)
+    image_path = media_dir / "0-0-0.png"
+    pixmap = QPixmap(40, 40)
+    pixmap.fill(QColor("magenta"))
+    assert pixmap.save(str(image_path))
+
+    monkeypatch.setattr("jparty.services.question_media.QUESTION_MEDIA", media_root)
+    monkeypatch.setattr("jparty.services.game_parser.QUESTION_MEDIA", media_root)
+    monkeypatch.setattr(game, "_save_played_game_html", lambda: None)
+
+    parser = GameParser()
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    parsed_source = parser.process_game_board_from_html(html, "4453")
+    assert parsed_source is not None
+
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_game",
+        lambda game_id: {"4453": parsed_source}[game_id],
+    )
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"4453": parsed_source}[game_id],
+    )
+
+    parent = PreviewParent(game)
+    qtbot.addWidget(parent)
+    widget = Welcome(game, parent)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(1)
+    widget._advanced_rows[0]["gameid_edit"].setText("4453")
+    widget.refresh_advanced_row(0)
+    widget._advanced_rows[1]["gameid_edit"].setText("4453")
+    widget.refresh_advanced_row(1)
+
+    assert widget.advanced_start_button.isEnabled() is True
+    assert game.board_selection_configs()
+
+    qtbot.mouseClick(widget.advanced_start_button, Qt.MouseButton.LeftButton)
+
+    assert game.dc.board_widget.loaded_rounds == []
+    assert len(parent.preview_requests) == 1
+    assert parent.preview_widget is not None
+    qtbot.addWidget(parent.preview_widget)
+
+    qtbot.mouseClick(parent.preview_widget.start_button, Qt.MouseButton.LeftButton)
+
+    assert game.current_round is game.data.rounds[0]
+    assert game.dc.board_widget.loaded_rounds == [game.data.rounds[0]]
+    assert game.data.rounds[0].questions[0].image_url == str(image_path)
+
+
+def test_regular_start_with_gap_in_first_category_keeps_row_values(
+    qtbot: object,
+    game_with_players: object,
+    fixture_dir: object,
+    temp_dir: object,
+    monkeypatch: object,
+) -> None:
+    """Test a missing category-0 clue does not change any column's values (#53)."""
+    game = game_with_players
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    source = GameParser().process_game_board_from_html(html, "4453")
+    assert source is not None
+    source.rounds[0].questions = [
+        question for question in source.rounds[0].questions if question.index != (0, 2)
+    ]
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game", lambda game_id: deepcopy(source)
+    )
+    monkeypatch.setattr("jparty.services.question_media.QUESTION_MEDIA", temp_dir)
+    monkeypatch.setattr(game, "_save_played_game_html", lambda: None)
+
+    parent = PreviewParent(game)
+    qtbot.addWidget(parent)
+    widget = Welcome(game, parent)
+    widget.textbox.blockSignals(True)
+    widget.textbox.setText("4453")
+    widget.textbox.blockSignals(False)
+    game.data = deepcopy(source)
+    game.set_selected_round_indices([0, 1, 2])
+    widget.on_start_clicked()
+
+    jeopardy, double_jeopardy = game.data.rounds[0], game.data.rounds[1]
+    assert len(jeopardy.questions) == 29
+    for question in jeopardy.questions:
+        assert question.value == (question.index[1] + 1) * 200
+    for question in double_jeopardy.questions:
+        assert question.value == (question.index[1] + 1) * 400
+    for round_index, selection in enumerate(game.board_selection_configs()):
+        assert selection["row_values"] == original_board_row_values(source, round_index)
+
+
+class LoadingStubGame(StubGame):
+    """Stub game whose readiness follows the loaded data, like the real ``Game``."""
+
+    def __init__(self) -> None:
+        """Start with no game loaded."""
+        super().__init__()
+        self.data = None
+
+    def valid_game(self) -> bool:
+        """Return whether playable data is loaded."""
+        return self.data is not None and bool(self.data.rounds)
+
+    def startable(self) -> bool:
+        """Return whether a fresh game could start."""
+        if self.resume_expected is not None:
+            return self.resume_claimed == self.resume_expected
+        return self.valid_game()
+
+
+class ImmediateLoader:
+    """Loader that runs each task inline, so results arrive synchronously."""
+
+    def run_async(self, target: object) -> None:
+        """Run the task right away."""
+        target()
+
+
+class DeferredLoader:
+    """Loader that holds tasks so a test can finish them in any order."""
+
+    def __init__(self) -> None:
+        """Start with no pending tasks."""
+        self.pending = []
+
+    def run_async(self, target: object) -> None:
+        """Queue the task without running it."""
+        self.pending.append(target)
+
+
+def _fixture_source_game(comments: str) -> GameData:
+    """Return a small playable game whose comments identify it."""
+    data = StubGame().data
+    data.comments = comments
+    return data
+
+
+def _loading_widget(
+    qtbot: object, monkeypatch: object, loader: object, games: dict
+) -> tuple[Welcome, LoadingStubGame]:
+    """Build a welcome widget whose loads read from ``games``.
+
+    A value that is an exception is raised by ``get_game`` instead.
+    """
+
+    def fake_get_game(game_id: object) -> object:
+        result = games[str(game_id)]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_game", fake_get_game)
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+    game = LoadingStubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = loader
+    return widget, game
+
+
+def _type_game_id(widget: Welcome, game_id: str) -> None:
+    """Type a game id and fire the debounce right away."""
+    widget.textbox.setText(game_id)
+    widget.show_summary()
+
+
+def test_failed_load_after_good_one_clears_the_old_game(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A failed load must not leave the previous game startable (#56)."""
+    good = _fixture_source_game("Game 111")
+    widget, game = _loading_widget(
+        qtbot,
+        monkeypatch,
+        ImmediateLoader(),
+        {"111": good, "1112222": IndexError("sheet is not shared")},
+    )
+
+    _type_game_id(widget, "111")
+    assert game.data is good
+    assert widget.start_button.isEnabled() is True
+
+    _type_game_id(widget, "1112222")
+
+    assert game.data is None
+    assert game._session_game_id == ""
+    assert widget.start_button.isEnabled() is False
+    assert widget.summary_label.text().startswith("Cannot get game")
+    assert widget.round_checkboxes == []
+
+
+def test_older_load_finishing_last_is_ignored(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A slow earlier load must not replace the game the textbox shows (#56)."""
+    slow = _fixture_source_game("Game 111")
+    fast = _fixture_source_game("Game 222")
+    loader = DeferredLoader()
+    widget, game = _loading_widget(
+        qtbot, monkeypatch, loader, {"111": slow, "222": fast}
+    )
+
+    _type_game_id(widget, "111")
+    _type_game_id(widget, "222")
+    assert widget.start_button.isEnabled() is False
+    older, newer = loader.pending
+    newer()
+    older()
+
+    assert widget.textbox.text() == "222"
+    assert game.data is fast
+    assert game._session_game_id == "222"
+    assert "Game 222" in widget.summary_label.text()
+    assert widget.start_button.isEnabled() is True
+
+
+def test_typing_during_a_load_disables_start_and_drops_the_result(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Editing the id while a load runs keeps Start off and drops that load (#56)."""
+    first = _fixture_source_game("Game 111")
+    second = _fixture_source_game("Game 222")
+    loader = DeferredLoader()
+    widget, game = _loading_widget(
+        qtbot, monkeypatch, loader, {"111": first, "222": second}
+    )
+    _type_game_id(widget, "111")
+    loader.pending.pop()()
+    assert widget.start_button.isEnabled() is True
+
+    _type_game_id(widget, "222")
+    widget.textbox.setText("2223")
+    assert widget.start_button.isEnabled() is False
+    loader.pending.pop()()
+
+    assert game.data is not second
+    assert "Game 222" not in widget.summary_label.text()
+    assert widget.start_button.isEnabled() is False
+    assert widget.debounce_timer.isActive() is True
+
+
+def test_failed_id_loads_on_retry(qtbot: object, monkeypatch: object) -> None:
+    """A failed load is not cached, so the same id loads once it is reachable."""
+    good = _fixture_source_game("Game 111")
+    games = {"111": ConnectionError("offline")}
+    widget, game = _loading_widget(qtbot, monkeypatch, ImmediateLoader(), games)
+
+    _type_game_id(widget, "111")
+    assert game.data is None
+    assert widget.summary_label.text().startswith("Cannot get game")
+
+    games["111"] = good
+    widget.show_summary()
+
+    assert game.data is good
+    assert widget.start_button.isEnabled() is True
+
+
+def test_random_shows_the_picked_id_without_reloading_it(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Random fills in the id without starting a second, debounced load."""
+    picked = _fixture_source_game("Random game")
+    widget, game = _loading_widget(
+        qtbot, monkeypatch, ImmediateLoader(), {"4321": picked}
+    )
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 4321)
+
+    widget.random(False)
+
+    assert widget.textbox.text() == "4321"
+    assert widget.debounce_timer.isActive() is False
+    assert game.data is picked
+    assert game._session_game_id == "4321"
+    assert widget.start_button.isEnabled() is True
+
+
+def test_random_result_is_dropped_after_typing(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Typing while Random is loading wins over the random pick."""
+    picked = _fixture_source_game("Random game")
+    loader = DeferredLoader()
+    widget, game = _loading_widget(qtbot, monkeypatch, loader, {"4321": picked})
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 4321)
+
+    widget.random(False)
+    widget.textbox.setText("111")
+    loader.pending.pop()()
+
+    assert widget.textbox.text() == "111"
+    assert game.data is None
+
+
+def test_random_keeps_round_choices_after_the_debounce(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Round choices made after Random survive the debounce window (#66)."""
+    picked = _fixture_source_game("Random game")
+    widget, game = _loading_widget(
+        qtbot, monkeypatch, ImmediateLoader(), {"4321": picked}
+    )
+    calls = []
+
+    def counting_get_game(game_id: object) -> object:
+        calls.append(str(game_id))
+        return picked
+
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_game", counting_get_game)
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 4321)
+
+    widget.random(False)
+    widget.round_checkboxes[1].setChecked(False)
+    qtbot.wait(2200)
+
+    assert calls == ["4321"]
+    assert [checkbox.isChecked() for checkbox in widget.round_checkboxes] == [
+        True,
+        False,
+        True,
+    ]
+    assert game.selected_round_indices() == [0, 2]
+
+
+def test_regular_start_reuses_the_loaded_game(
+    qtbot: object,
+    game_with_players: object,
+    fixture_dir: object,
+    temp_dir: object,
+    monkeypatch: object,
+) -> None:
+    """Start in regular mode composes from the loaded game, not a new fetch (#66)."""
+    game = game_with_players
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    source = GameParser().process_game_board_from_html(html, "4453")
+    assert source is not None
+    calls = []
+
+    def counting_get_game(game_id: object) -> object:
+        calls.append(str(game_id))
+        return deepcopy(source)
+
+    for target in (
+        "jparty.services.game_loader.get_game",
+        "jparty.ui.widgets.welcome.get_game",
+    ):
+        monkeypatch.setattr(target, counting_get_game)
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+    monkeypatch.setattr("jparty.services.question_media.QUESTION_MEDIA", temp_dir)
+    monkeypatch.setattr(game, "_save_played_game_html", lambda: None)
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+
+    _type_game_id(widget, "4453")
+    widget.round_checkboxes[1].setChecked(False)
+    widget.on_start_clicked()
+
+    assert calls == ["4453"]
+    assert len(game.data.rounds) == 2
+    assert game.current_round is game.data.rounds[0]
+    assert game.data.rounds[0].categories == source.rounds[0].categories
+    assert isinstance(game.data.rounds[1], FinalBoard)
+
+
+def test_resumed_regular_subset_shows_the_played_rounds(
+    qtbot: object,
+    game_with_players: object,
+    fixture_dir: object,
+    temp_dir: object,
+    monkeypatch: object,
+) -> None:
+    """Load Saved lists the rounds the save resumes on, with source labels (#93).
+
+    Before Start the checkboxes use the source game's round numbers; once the
+    game starts, they become positions in the game built from the ticked
+    rounds.
+    """
+    from jparty.domain import game_engine
+
+    game = game_with_players
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    source = GameParser().process_game_board_from_html(html, "4453")
+    assert source is not None
+    for target in (
+        "jparty.services.game_loader.get_game",
+        "jparty.ui.widgets.welcome.get_game",
+    ):
+        monkeypatch.setattr(target, lambda game_id: deepcopy(source))
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+    monkeypatch.setattr("jparty.services.question_media.QUESTION_MEDIA", temp_dir)
+    monkeypatch.setattr(game_engine, "GAME_STATES_DIR", temp_dir / "game_states")
+    monkeypatch.setattr(game, "_save_played_game_html", lambda: None)
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    _type_game_id(widget, "4453")
+    widget.round_checkboxes[0].setChecked(False)
+    assert game.selected_round_indices() == [1, 2]
+    widget.on_start_clicked()
+    assert game.selected_round_indices() == [0, 1]
+    saved_dir = game._game_state_dir
+    players = list(game.players)
+    game.close_game()
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(saved_dir)
+    )
+    resume_widget = Welcome(game)
+    qtbot.addWidget(resume_widget)
+    resume_widget.loader = ImmediateLoader()
+
+    resume_widget.load_saved_game()
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    resume_widget.on_start_clicked()
+
+    assert [checkbox.text() for checkbox in resume_widget.round_checkboxes] == [
+        "[x] Double Jeopardy!",
+        "[x] Final Jeopardy!",
+    ]
+    assert game.selected_round_indices() == [0, 1]
+    assert game.current_round.categories == source.rounds[1].categories
+
+
+def test_media_import_reloads_the_loaded_regular_game(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> None:
+    """Importing media reparses the loaded game and keeps round choices (#66)."""
+    first = _fixture_source_game("Game 111")
+    reparsed = _fixture_source_game("Game 111 with media")
+    games = {"111": first}
+    widget, game = _loading_widget(qtbot, monkeypatch, ImmediateLoader(), games)
+    source_dir = temp_dir / "source"
+    source_dir.mkdir()
+    (source_dir / "0-0-0.png").write_bytes(b"png")
+    monkeypatch.setattr(
+        "jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media"
+    )
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: str(source_dir))
+    _type_game_id(widget, "111")
+    widget.round_checkboxes[0].setChecked(False)
+    games["111"] = reparsed
+
+    widget.load_question_media()
+
+    assert game.data is reparsed
+    assert game.selected_round_indices() == [1, 2]
+    assert widget.start_button.isEnabled() is True
+
+
+def test_failed_media_reload_keeps_the_loaded_regular_game(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> None:
+    """A failed reload after a media import keeps the game startable (#66)."""
+    first = _fixture_source_game("Game abcdefg")
+    games = {"abcdefg": first}
+    widget, game = _loading_widget(qtbot, monkeypatch, ImmediateLoader(), games)
+    source_dir = temp_dir / "source"
+    source_dir.mkdir()
+    (source_dir / "0-0-0.png").write_bytes(b"png")
+    monkeypatch.setattr(
+        "jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media"
+    )
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: str(source_dir))
+    _type_game_id(widget, "abcdefg")
+    widget.round_checkboxes[0].setChecked(False)
+    games["abcdefg"] = RuntimeError("sheets failed")
+
+    widget.load_question_media()
+
+    assert game.data is first
+    assert game.selected_round_indices() == [1, 2]
+    assert widget.start_button.isEnabled() is True
+    assert "could not be reloaded" in widget.summary_label.text()
+    assert not widget.summary_label.text().startswith("Cannot get game")
+
+    # Rebuilding the summary on a round toggle keeps the warning.
+    widget.round_checkboxes[0].setChecked(True)
+    assert "could not be reloaded" in widget.summary_label.text()
+
+
+def test_failed_typed_load_after_media_reload_still_clears_the_game(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> None:
+    """Only the media reload keeps the old game; a normal failed load clears it."""
+    games = {"111": _fixture_source_game("Game 111"), "222": RuntimeError("down")}
+    widget, game = _loading_widget(qtbot, monkeypatch, ImmediateLoader(), games)
+    source_dir = temp_dir / "source"
+    source_dir.mkdir()
+    monkeypatch.setattr(
+        "jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media"
+    )
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: str(source_dir))
+    _type_game_id(widget, "111")
+    widget.load_question_media()
+
+    _type_game_id(widget, "222")
+
+    assert game.data is None
+    assert widget.summary_label.text().startswith("Cannot get game")
+    assert widget.start_button.isEnabled() is False
+
+
+def test_load_saved_drops_a_load_in_flight(qtbot: object, monkeypatch: object) -> None:
+    """A load that finishes after Load Saved must not clear the prepared resume."""
+    loader = DeferredLoader()
+    widget, game = _loading_widget(
+        qtbot, monkeypatch, loader, {"111": _fixture_source_game("Game 111")}
+    )
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved"
+    )
+    game.data = _fixture_source_game("Saved game")
+    _type_game_id(widget, "111")
+
+    widget.load_saved_game()
+    typed_load, resume_load = loader.pending
+    typed_load()
+    resume_load()
+
+    assert widget.resume_path == "C:/saved"
+    assert widget.start_button.text() == "Resume!"
+    assert game.resume_expected == 2
+
+
+def test_load_saved_reads_the_save_on_the_loader(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Load Saved fetches the game off the UI thread and keeps Start off (#102)."""
+    loader = DeferredLoader()
+    widget, game = _loading_widget(
+        qtbot, monkeypatch, loader, {"111": _fixture_source_game("Game 111")}
+    )
+    _type_game_id(widget, "111")
+    loader.pending.pop()()
+    assert widget.start_button.isEnabled() is True
+    reads = []
+    read_saved_game = game.read_saved_game
+
+    def recording_read(selected_dir: object) -> object:
+        reads.append(selected_dir)
+        return read_saved_game(selected_dir)
+
+    game.read_saved_game = recording_read
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved"
+    )
+
+    widget.load_saved_game()
+
+    assert reads == []
+    assert widget.start_button.isEnabled() is False
+    assert widget.summary_label.text() == "Loading..."
+    loader.pending.pop()()
+    assert reads == ["C:/saved"]
+    assert widget.resume_path == "C:/saved"
+    assert widget.start_button.text() == "Resume!"
+
+
+def test_failed_load_saved_refreshes_the_screen(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A save that can't be read puts back the typed game, not a dead screen (#102)."""
+    loaded = _fixture_source_game("Game 111")
+    widget, game = _loading_widget(
+        qtbot, monkeypatch, ImmediateLoader(), {"111": loaded}
+    )
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/bad"
+    )
+
+    def raise_error(selected_dir: object) -> NoReturn:
+        raise ValueError("Saved game points to an invalid or incomplete game")
+
+    game.read_saved_game = raise_error
+    _type_game_id(widget, "111")
+
+    widget.load_saved_game()
+
+    assert warnings
+    assert widget.resume_path is None
+    assert widget.start_button.text() == "Start!"
+    assert game.data is loaded
+    assert "Game 111" in widget.summary_label.text()
+    assert widget.start_button.isEnabled() is True
+
+
+def test_failed_load_saved_during_a_load_does_not_stay_loading(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A failed Load Saved started mid-load still ends with a loaded game (#102)."""
+    loader = DeferredLoader()
+    loaded = _fixture_source_game("Game 111")
+    widget, game = _loading_widget(qtbot, monkeypatch, loader, {"111": loaded})
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: None)
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/bad"
+    )
+
+    def raise_error(selected_dir: object) -> NoReturn:
+        raise FileNotFoundError("Saved game folder must contain general.json")
+
+    game.read_saved_game = raise_error
+    _type_game_id(widget, "111")
+    widget.load_saved_game()
+    typed_load, resume_load = loader.pending
+    loader.pending.clear()
+    typed_load()
+    resume_load()
+    assert widget.summary_label.text() == "Loading..."
+    loader.pending.pop()()
+
+    assert game.data is loaded
+    assert "Game 111" in widget.summary_label.text()
+    assert widget.start_button.isEnabled() is True
+
+
+def test_importing_media_during_a_load_keeps_start_off(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> None:
+    """Importing media while a new id loads can't start the old game (#102)."""
+    loader = DeferredLoader()
+    old = _fixture_source_game("Game 111")
+    new = _fixture_source_game("Game 222")
+    widget, game = _loading_widget(qtbot, monkeypatch, loader, {"111": old, "222": new})
+    source_dir = temp_dir / "source"
+    source_dir.mkdir()
+    (source_dir / "0-0-0.png").write_bytes(b"png")
+    monkeypatch.setattr(
+        "jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media"
+    )
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: str(source_dir))
+    _type_game_id(widget, "111")
+    loader.pending.pop()()
+    _type_game_id(widget, "222")
+
+    widget.load_question_media()
+
+    assert widget.start_button.isEnabled() is False
+    assert game._session_game_id == "111"
+    assert "Game 111" not in widget.summary_label.text()
+    assert widget.summary_label.text().startswith("Loading...")
+    loader.pending.pop()()
+    assert game.data is new
+    assert game._session_game_id == "222"
+    assert widget.start_button.isEnabled() is True
+
+
+def test_stale_random_result_arriving_late_is_ignored(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A Random pick that finishes after a typed id loaded is dropped (#72).
+
+    The host types 222 while Random is still fetching its pick, and 222
+    loads first. Only the request id tells the Random result is stale, since
+    Random results replace the textbox instead of matching it.
+    """
+    picked = _fixture_source_game("Random game")
+    typed = _fixture_source_game("Game 222")
+    loader = DeferredLoader()
+    widget, game = _loading_widget(qtbot, monkeypatch, loader, {"222": typed})
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 4321)
+
+    def get_game_while_host_types(game_id: object) -> object:
+        if str(game_id) == "222":
+            return typed
+        _type_game_id(widget, "222")
+        loader.pending.pop()()
+        return picked
+
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_game", get_game_while_host_types)
+
+    widget.random(False)
+    loader.pending.pop()()
+
+    assert widget.textbox.text() == "222"
+    assert game.data is typed
+    assert game._session_game_id == "222"
+    assert "Game 222" in widget.summary_label.text()
+    assert widget.start_button.isEnabled() is True
+
+
+def test_random_gives_up_after_max_attempts(qtbot: object, monkeypatch: object) -> None:
+    """Regular Random stops after a fixed number of failed tries (#102)."""
+    widget, game = _loading_widget(qtbot, monkeypatch, ImmediateLoader(), {})
+    calls = []
+
+    def failing_get_game(game_id: object) -> NoReturn:
+        calls.append(str(game_id))
+        raise ValueError("unparseable")
+
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_game", failing_get_game)
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 333)
+
+    widget.random(False)
+
+    assert calls == ["333"] * ADVANCED_RANDOM_MAX_ATTEMPTS
+    assert game.data is None
+    assert "Could not find a playable random game" in widget.summary_label.text()
+    assert widget.start_button.isEnabled() is False
+
+
+def test_random_keeps_trying_after_a_network_error(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """One failed fetch doesn't end the Random search (#102)."""
+    picked = _fixture_source_game("Random game")
+    widget, game = _loading_widget(
+        qtbot,
+        monkeypatch,
+        ImmediateLoader(),
+        {"1": ConnectionError("blip"), "2": picked},
+    )
+    random_ids = iter([1, 2])
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.get_random_game", lambda: next(random_ids)
+    )
+
+    widget.random(False)
+
+    assert widget.textbox.text() == "2"
+    assert game.data is picked
+    assert widget.start_button.isEnabled() is True
+
+
+def test_failed_random_keeps_the_loaded_game(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """If Random finds nothing, the game already loaded stays startable."""
+    loaded = _fixture_source_game("Game 111")
+    widget, game = _loading_widget(
+        qtbot, monkeypatch, ImmediateLoader(), {"111": loaded, "333": None}
+    )
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 333)
+    _type_game_id(widget, "111")
+
+    widget.random(False)
+
+    assert widget.textbox.text() == "111"
+    assert game.data is loaded
+    assert "Kept game 111." in widget.summary_label.text()
+    assert widget.start_button.isEnabled() is True
+
+
+def test_failed_random_after_load_saved_does_not_keep_the_save_as_typed_game(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A failed Random after Load Saved must not offer the save as the typed game.
+
+    Load Saved replaces the game the textbox named, so "Kept game 111." would
+    start the save's game as a new game under id 111.
+    """
+    widget, game = _loading_widget(
+        qtbot,
+        monkeypatch,
+        ImmediateLoader(),
+        {"111": _fixture_source_game("Game 111"), "333": None},
+    )
+    _type_game_id(widget, "111")
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved"
+    )
+    widget.load_saved_game()
+    game.data = _fixture_source_game("Saved game")
+    assert widget.start_button.text() == "Resume!"
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 333)
+
+    widget.random(False)
+
+    assert "Kept game" not in widget.summary_label.text()
+    assert widget.start_button.isEnabled() is False
+
+
+def test_enabling_advanced_clears_a_prepared_resume(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Ticking Advanced after Load Saved must drop the resume (#58)."""
+    game = StubGame()
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved"
+    )
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    widget.load_saved_game()
+    assert widget.resume_path == "C:/saved"
+    clears_before = game.clear_resume_state_calls
+
+    widget.advanced_options_checkbox.setChecked(True)
+
+    assert widget.resume_path is None
+    assert game.resume_expected is None
+    assert game.clear_resume_state_calls > clears_before
+    assert widget.start_button.text() == "Start!"
+
+
+def test_advanced_start_after_load_saved_leaves_the_save_untouched(
+    qtbot: object,
+    game_with_players: object,
+    sample_saved_game_dir: object,
+    monkeypatch: object,
+) -> None:
+    """Load Saved, then an Advanced board, then Start makes a new save (#58)."""
+    game = game_with_players
+    general_before = (sample_saved_game_dir / "general.json").read_bytes()
+    history_before = (sample_saved_game_dir / "question_history.jsonl").read_bytes()
+    source = deepcopy(game.data)
+    for target in (
+        "jparty.services.game_loader.get_game",
+        "jparty.ui.widgets.welcome.get_game",
+    ):
+        monkeypatch.setattr(target, lambda game_id: deepcopy(source))
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+    monkeypatch.setattr(game, "_save_played_game_html", lambda: None)
+    monkeypatch.setattr(
+        QFileDialog,
+        "getExistingDirectory",
+        lambda *args, **kwargs: str(sample_saved_game_dir),
+    )
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+
+    widget.load_saved_game()
+    assert widget.resume_path == str(sample_saved_game_dir)
+    widget.advanced_options_checkbox.setChecked(True)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(1)
+    widget._advanced_rows[0]["gameid_edit"].setText("9999")
+    widget.refresh_advanced_row(0)
+    widget._advanced_rows[1]["gameid_edit"].setText("9999")
+    widget.refresh_advanced_row(1)
+    widget.on_start_clicked()
+
+    assert game._game_state_dir != sample_saved_game_dir
+    assert (game._game_state_dir / "general.json").exists()
+    assert (sample_saved_game_dir / "general.json").read_bytes() == general_before
+    assert (
+        sample_saved_game_dir / "question_history.jsonl"
+    ).read_bytes() == history_before
+    assert game.question_number == 1
+    assert all(player.score == 0 for player in game.players)
+    assert not any(question.complete for question in game.data.rounds[0].questions)
+
+
+def _advanced_widget(
+    qtbot: object, monkeypatch: object, games: dict, loader: object = None
+) -> tuple[Welcome, StubGame, list]:
+    """Build a welcome widget in advanced mode whose loads read from ``games``.
+
+    A value that is an exception is raised by ``get_game`` instead.
+
+    Returns:
+        The widget, its game, and the list of ids passed to ``get_game``.
+    """
+    calls = []
+
+    def fake_get_game(game_id: object) -> object:
+        calls.append(str(game_id))
+        result = games[str(game_id)]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_game", fake_get_game)
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = loader or ImmediateLoader()
+    widget.advanced_options_checkbox.setChecked(True)
+    return widget, game, calls
+
+
+def _load_advanced_row(widget: Welcome, row_index: int, game_id: str) -> dict:
+    """Type a source id into one advanced row and load it right away."""
+    row = widget._advanced_rows[row_index]
+    row["gameid_edit"].setText(game_id)
+    widget.refresh_advanced_row(row_index)
+    return row
+
+
+def test_advanced_media_import_reloads_loaded_rows(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Media imported after loading reaches every row using that game (#67)."""
+    first = _fixture_source_game("Game 111")
+    reparsed = _fixture_source_game("Game 111 with media")
+    games = {"111": first}
+    widget, _, _ = _advanced_widget(qtbot, monkeypatch, games)
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.import_question_media", lambda path, game_id: None
+    )
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: "C:/media")
+    widget.standard_board_count_spinbox.setValue(2)
+    widget.final_board_count_spinbox.setValue(0)
+    row_a = _load_advanced_row(widget, 0, "111")
+    row_b = _load_advanced_row(widget, 1, "111")
+    row_a["board_radios"][1].click()
+    row_a["daily_double_spinbox"].setValue(3)
+    kept_daily_doubles = list(row_a["daily_double_indices"])
+    games["111"] = reparsed
+
+    widget.load_advanced_question_media(0)
+
+    assert row_a["loaded_data"] is reparsed
+    assert row_b["loaded_data"] is reparsed
+    assert row_a["board_radios"][1].isChecked()
+    assert row_a["daily_double_indices"] == kept_daily_doubles
+    assert "Game 111 with media" in row_b["status_label"].text()
+
+
+def test_advanced_failed_row_fetch_can_be_retried(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A failed row load is not cached, so the same id loads on retry (#67)."""
+    games = {"111": ConnectionError("offline")}
+    widget, _, calls = _advanced_widget(qtbot, monkeypatch, games)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+
+    row = _load_advanced_row(widget, 0, "111")
+    assert row["status_label"].text().startswith("Cannot load game")
+
+    games["111"] = _fixture_source_game("Game 111")
+    widget.refresh_advanced_row(0)
+
+    assert calls == ["111", "111"]
+    assert row["loaded_data"] is games["111"]
+    assert len(row["board_radios"]) == 2
+
+
+def test_advanced_board_count_change_keeps_daily_doubles(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Adding or removing boards keeps existing rows' Daily Doubles (#67)."""
+    widget, game, _ = _advanced_widget(
+        qtbot, monkeypatch, {"111": _fixture_source_game("Game 111")}
+    )
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    row = _load_advanced_row(widget, 0, "111")
+    row["board_radios"][1].click()
+    row["daily_double_spinbox"].setValue(3)
+    kept_daily_doubles = game.board_selection_configs()[0]["daily_double_indices"]
+
+    for board_count in (2, 1, 2, 1, 2):
+        widget.standard_board_count_spinbox.setValue(board_count)
+        row = widget._advanced_rows[0]
+        assert row["board_radios"][1].isChecked()
+        assert [list(index) for index in row["daily_double_indices"]] == (
+            kept_daily_doubles
+        )
+
+
+def test_advanced_three_boards_with_requested_daily_doubles_show_no_warning(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """The missing-DD warning compares against the host's requested counts (#67)."""
+    widget, game, _ = _advanced_widget(
+        qtbot, monkeypatch, {"111": _fixture_source_game("Game 111")}
+    )
+    widget.standard_board_count_spinbox.setValue(3)
+    widget.final_board_count_spinbox.setValue(0)
+    for row_index in range(3):
+        _load_advanced_row(widget, row_index, "111")
+
+    requested = [row["daily_double_spinbox"].value() for row in widget._advanced_rows]
+    placed = [
+        selection["daily_double_count"] for selection in game.board_selection_configs()
+    ]
+    assert requested == placed == [1, 2, 2]
+    assert MISSING_DAILY_DOUBLE_WARNING not in widget.summary_label.text()
+
+
+def test_advanced_row_random_and_enter_load_off_the_ui_thread(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Row Random and Enter fetch on the loader, and Random gives up (#67)."""
+    final_only = GameData(
+        [_fixture_source_game("Final only").rounds[2]], "January 3, 2026", "Final"
+    )
+    loader = DeferredLoader()
+    widget, _, calls = _advanced_widget(
+        qtbot,
+        monkeypatch,
+        {"333": final_only, "111": _fixture_source_game("Game 111")},
+        loader,
+    )
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 333)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    row = widget._advanced_rows[0]
+
+    widget.random_advanced_row(0)
+    assert calls == []
+    loader.pending.pop()()
+
+    assert calls == ["333"] * ADVANCED_RANDOM_MAX_ATTEMPTS
+    assert row["status_label"].text().startswith("Could not find a random game")
+    assert row["gameid_edit"].text() == ""
+
+    row["gameid_edit"].setText("111")
+    widget.refresh_advanced_row(0)
+    assert calls == ["333"] * ADVANCED_RANDOM_MAX_ATTEMPTS
+    loader.pending.pop()()
+
+    assert calls[-1] == "111"
+    assert len(row["board_radios"]) == 2
+
+
+def test_failed_advanced_row_random_restores_the_previous_game(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A Random that gives up puts back the row's earlier game and choices (#67)."""
+    final_only = GameData(
+        [_fixture_source_game("Final only").rounds[2]], "January 3, 2026", "Final"
+    )
+    widget, game, _ = _advanced_widget(
+        qtbot,
+        monkeypatch,
+        {"333": final_only, "111": _fixture_source_game("Game 111")},
+    )
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 333)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    row = _load_advanced_row(widget, 0, "111")
+    row["board_radios"][1].click()
+    row["daily_double_spinbox"].setValue(3)
+    kept_config = game.board_selection_configs()[0]
+
+    widget.random_advanced_row(0)
+
+    assert row["gameid_edit"].text() == "111"
+    assert row["loaded_data"] is not None
+    assert row["board_radios"][1].isChecked()
+    assert game.board_selection_configs()[0] == kept_config
+    status = row["status_label"].text()
+    assert "Could not find a random game" in status
+    assert "Kept game 111." in status
+
+
+def test_advanced_load_for_a_rebuilt_row_is_dropped(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A slow load for a row that was rebuilt can't land on the new row (#67)."""
+    old = _fixture_source_game("Old load")
+    new = _fixture_source_game("New load")
+    games = {"111": old}
+    loader = DeferredLoader()
+    widget, _, _ = _advanced_widget(qtbot, monkeypatch, games, loader)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    _load_advanced_row(widget, 0, "111")
+    stale_load = loader.pending.pop()
+
+    # Changing the board count rebuilds every row, and the new row 0 reloads
+    # the same id. With per-row counters that reload got the same request id
+    # as the stale load, so the stale result was applied to the new row.
+    widget.standard_board_count_spinbox.setValue(2)
+    new_row = widget._advanced_rows[0]
+    assert new_row["gameid_edit"].text() == "111"
+    assert len(loader.pending) == 1
+    games["111"] = new
+    loader.pending.pop()()
+    assert new_row["loaded_data"] is new
+
+    games["111"] = old
+    stale_load()
+
+    assert new_row["loaded_data"] is new
+    assert "New load" in new_row["status_label"].text()
+
+
+def test_advanced_row_random_result_is_dropped_after_typing(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Typing while row Random runs wins over the random pick (#67)."""
+    loader = DeferredLoader()
+    widget, _, _ = _advanced_widget(
+        qtbot, monkeypatch, {"111": _fixture_source_game("Game 111")}, loader
+    )
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 111)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    row = widget._advanced_rows[0]
+
+    widget.random_advanced_row(0)
+    row["gameid_edit"].setText("222")
+    loader.pending.pop()()
+
+    assert row["gameid_edit"].text() == "222"
+    assert row["loaded_data"] is None

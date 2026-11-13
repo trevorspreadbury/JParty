@@ -1,18 +1,25 @@
 import sys, platform
-sys.path.append('')
-from jparty.version import version
+from pathlib import Path
+
+ROOT = Path(SPECPATH).resolve()  # PyInstaller sets SPECPATH; __file__ is undefined in specs
+sys.path.append(str(ROOT / "src"))
+from jparty import __version__ as version
+from PyInstaller.utils.hooks import copy_metadata
 
 uname = platform.uname()
 arch = uname.machine
 iconfile = "resources/icon.icns" if uname.system=="Darwin" else "resources/icon.ico"
 
-a = Analysis(['run.py'],
-             pathex=['.'],
+a = Analysis(['src/jparty/__main__.py'],
+             pathex=['src'],
              binaries=[],
              datas=[
-                 ("jparty/data/*", "data"),
-                 ("jparty/buzzer", "buzzer"),
-             ],
+                 ("src/jparty/assets/data/*", "jparty/assets/data"),
+                 ("src/jparty/assets/buzzer", "jparty/assets/buzzer"),
+             ]
+             # Bundle jparty's package metadata so importlib.metadata.version("jparty")
+             # works in the packaged app (`jparty self-check` verifies it).
+             + copy_metadata("jparty"),
              hiddenimports=["qrcode"],
              hookspath=[],
              runtime_hooks=[],

@@ -1,11 +1,10 @@
+# Base conda environment. Dependency pins live in pyproject.toml; this file only
+# provides Python and pip, then installs JParty from the repo checkout.
+# Run from the repo root. Add extras afterwards as needed, e.g.
+# `pip install -e .[test]` for tests or `pip install -e .[build]` for PyInstaller.
 name: JParty
 dependencies:
-  - requests==2.31.0
-  - tornado==6.3.3
-  - beautifulsoup4==4.11.1
+  - python>=3.11
   - pip
   - pip:
-      - pyinstaller==6.6.0
-      - pyqt6==6.4.0
-      - qrcode==7.3.1
-      - simpleaudio==1.0.4
+      - -e .
