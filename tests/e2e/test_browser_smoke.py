@@ -140,6 +140,57 @@ def test_buzzer_browser_smoke(
     assert live_browser_server.controller.buzzed_players == ["Alice"]
 
 
+def test_new_final_prompts_start_with_empty_boxes(
+    live_browser_server: object, browser_page: object
+) -> None:
+    """A second Final's wager and answer boxes don't keep the first Final's text.
+
+    When time runs out the phone sends whatever is in the answer box, so a
+    leftover answer would be recorded for the next Final.
+    """
+    browser_page.goto(f"{live_browser_server.url}/")
+    browser_page.wait_for_function(
+        "window.updater && window.updater.socket && window.updater.socket.readyState === 1"
+    )
+    browser_page.evaluate("nameForm('Alice')")
+    wait_until(lambda: len(live_browser_server.controller.connected_players) == 1)
+    socket = live_browser_server.controller.connected_players[0].waiter
+
+    def server_sends(msg: str, text: str = "") -> None:
+        live_browser_server.loop.add_callback(socket.send, msg, text)
+
+    wager_box = browser_page.locator("input[name='wager']")
+    answer_box = browser_page.locator("input[name='answer']")
+    # The page stylesheet hides each page and the test's jQuery stub only
+    # sets inline styles, so wait on the page's own state, not visibility.
+    current_page = "page => current_page === page"
+
+    def type_into(name: str, text: str) -> None:
+        browser_page.evaluate(
+            "([name, text]) => {"
+            " document.querySelector(`input[name='${name}']`).value = text; }",
+            [name, text],
+        )
+
+    # First Final: the player types a wager and an answer.
+    server_sends("PROMPTWAGER", "1000")
+    browser_page.wait_for_function(current_page, arg="wager")
+    type_into("wager", "500")
+    server_sends("PROMPTANSWER")
+    browser_page.wait_for_function(current_page, arg="answer")
+    type_into("answer", "What is Ohio?")
+    assert wager_box.input_value() == "500"
+    assert answer_box.input_value() == "What is Ohio?"
+
+    # Second Final: both prompts must start empty.
+    server_sends("PROMPTWAGER", "2000")
+    browser_page.wait_for_function(current_page, arg="wager")
+    assert wager_box.input_value() == ""
+    server_sends("PROMPTANSWER")
+    browser_page.wait_for_function(current_page, arg="answer")
+    assert answer_box.input_value() == ""
+
+
 def test_lectern_browser_smoke(
     live_browser_server: object, browser_page: object
 ) -> None:
