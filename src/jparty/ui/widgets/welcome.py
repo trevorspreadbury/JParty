@@ -1456,12 +1456,20 @@ QCheckBox {{
         """Load a random source game into one advanced row on a worker thread.
 
         The worker tries at most ``ADVANCED_RANDOM_MAX_ATTEMPTS`` games and
-        stops early once a newer load for the row has started.
+        stops early once a newer load for the row has started. If every try
+        fails, the game the row had loaded before is restored (see
+        ``handle_advanced_row_random_result``).
         """
         if not 0 <= row_index < len(self._advanced_rows):
             return
         row = self._advanced_rows[row_index]
         row["load_timer"].stop()
+        previous_game_id = row["gameid_edit"].text().strip()
+        row["random_fallback"] = (
+            (previous_game_id, self.advanced_row_selection(row))
+            if previous_game_id and row.get("loaded_data") is not None
+            else None
+        )
         self._clear_advanced_row_loaded_state(row)
         request_id = self._next_advanced_request_id(row)
         row["loading"] = True
@@ -1520,13 +1528,34 @@ QCheckBox {{
         if request_id != row["load_request_id"]:
             return
         row["loading"] = False
+        fallback = row.pop("random_fallback", None)
         game_id = str(game_id).strip()
         if not game_id:
             expected_label = self.expected_board_type_label(row["board_type"])
-            row["status_label"].setText(
+            failure_text = (
                 f"Could not find a random game with a {expected_label} after "
                 f"{ADVANCED_RANDOM_MAX_ATTEMPTS} tries. Try again."
             )
+            if (
+                fallback is not None
+                and fallback[0] == row["gameid_edit"].text().strip()
+            ):
+                # Put back the game the row had before Random, keeping its
+                # round and Daily Doubles. It is usually cached, so this is
+                # immediate; otherwise it reloads on the worker thread.
+                previous_game_id, selection = fallback
+                self.reload_advanced_row(row_index, selection)
+                if not row["loading"]:
+                    row["status_label"].setText(
+                        "\n\n".join(
+                            [
+                                row["status_label"].text(),
+                                f"{failure_text} Kept game {previous_game_id}.",
+                            ]
+                        )
+                    )
+                return
+            row["status_label"].setText(failure_text)
             self.sync_active_configuration()
             return
         self._cache_advanced_game(game_id, data, media_status)

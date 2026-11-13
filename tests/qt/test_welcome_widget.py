@@ -2001,6 +2001,69 @@ def test_advanced_row_random_and_enter_load_off_the_ui_thread(
     assert len(row["board_radios"]) == 2
 
 
+def test_failed_advanced_row_random_restores_the_previous_game(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A Random that gives up puts back the row's earlier game and choices (#67)."""
+    final_only = GameData(
+        [_fixture_source_game("Final only").rounds[2]], "January 3, 2026", "Final"
+    )
+    widget, game, _ = _advanced_widget(
+        qtbot,
+        monkeypatch,
+        {"333": final_only, "111": _fixture_source_game("Game 111")},
+    )
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 333)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    row = _load_advanced_row(widget, 0, "111")
+    row["board_radios"][1].click()
+    row["daily_double_spinbox"].setValue(3)
+    kept_config = game.board_selection_configs()[0]
+
+    widget.random_advanced_row(0)
+
+    assert row["gameid_edit"].text() == "111"
+    assert row["loaded_data"] is not None
+    assert row["board_radios"][1].isChecked()
+    assert game.board_selection_configs()[0] == kept_config
+    status = row["status_label"].text()
+    assert "Could not find a random game" in status
+    assert "Kept game 111." in status
+
+
+def test_advanced_load_for_a_rebuilt_row_is_dropped(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A slow load for a row that was rebuilt can't land on the new row (#67)."""
+    old = _fixture_source_game("Old load")
+    new = _fixture_source_game("New load")
+    games = {"111": old}
+    loader = DeferredLoader()
+    widget, _, _ = _advanced_widget(qtbot, monkeypatch, games, loader)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    _load_advanced_row(widget, 0, "111")
+    stale_load = loader.pending.pop()
+
+    # Changing the board count rebuilds every row, and the new row 0 reloads
+    # the same id. With per-row counters that reload got the same request id
+    # as the stale load, so the stale result was applied to the new row.
+    widget.standard_board_count_spinbox.setValue(2)
+    new_row = widget._advanced_rows[0]
+    assert new_row["gameid_edit"].text() == "111"
+    assert len(loader.pending) == 1
+    games["111"] = new
+    loader.pending.pop()()
+    assert new_row["loaded_data"] is new
+
+    games["111"] = old
+    stale_load()
+
+    assert new_row["loaded_data"] is new
+    assert "New load" in new_row["status_label"].text()
+
+
 def test_advanced_row_random_result_is_dropped_after_typing(
     qtbot: object, monkeypatch: object
 ) -> None:
