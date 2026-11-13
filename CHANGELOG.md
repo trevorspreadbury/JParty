@@ -44,6 +44,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `environment.yml` installs from `pyproject.toml` (#75, #83).
 
 ### Fixed
+- Load Saved now reads the save without freezing the window. A save that
+  can't be loaded no longer leaves a Start button that does nothing, and the
+  screen goes back to the typed game. Importing question media while a game
+  is still loading no longer lets Start play the previous game. Random now
+  gives up after 10 tries instead of retrying forever, and one network error
+  no longer ends the search (#114).
 - A player name or Final answer containing "BUZZ" (such as "What is a
   BUZZARD?") is no longer read as a buzz. Such names now join, such answers
   are recorded, and a buzz from a phone that has not joined is ignored
