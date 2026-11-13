@@ -389,3 +389,77 @@ def test_corrections_that_fail_to_save_are_applied_and_saved_later(
     entries = read_history_file(history_file)
     assert _matches_live_scores(game, history_score_totals(entries))
     assert game._pending_history_lines == []
+
+
+def _quit_without_exiting(monkeypatch: object) -> list:
+    """Record ``QApplication.quit`` calls instead of quitting the test app."""
+    import jparty.domain.game_engine as game_module
+
+    quits = []
+    monkeypatch.setattr(game_module.QApplication, "quit", lambda: quits.append(1))
+    return quits
+
+
+def test_closing_the_window_saves_clues_that_failed_earlier(
+    game_with_players: object,
+    disk_full: dict,
+    warnings_shown: list,
+    monkeypatch: object,
+) -> None:
+    """Test Alt+F4 after a failed write retries the queued clues before quitting."""
+    game = game_with_players
+    quits = _quit_without_exiting(monkeypatch)
+    disk_full["on"] = False
+    _play_two_clues(game)
+    history_file = game._game_state_dir / "question_history.jsonl"
+
+    disk_full["on"] = True
+    _answer_correctly(game, 2)
+    disk_full["on"] = False
+    game.close()
+
+    entries = read_history_file(history_file)
+    assert [entry["question_number"] for entry in entries] == [1, 2, 3]
+    assert game._pending_history_lines == []
+    assert len(warnings_shown) == 1
+    assert quits == [1]
+
+
+def test_closing_the_window_warns_about_clues_it_still_cannot_save(
+    game_with_players: object,
+    disk_full: dict,
+    warnings_shown: list,
+    monkeypatch: object,
+) -> None:
+    """Test Alt+F4 tells the host how many queued clues are missing."""
+    game = game_with_players
+    _quit_without_exiting(monkeypatch)
+    disk_full["on"] = False
+    _play_two_clues(game)
+
+    disk_full["on"] = True
+    _answer_correctly(game, 2)
+    game.close()
+
+    assert warnings_shown[-1] == (
+        "Clue History Not Saved",
+        "Could not save the last 1 clue history entries. The saved game will "
+        "still load, but it resumes from before those clues.",
+    )
+
+
+def test_closing_the_window_cancels_a_running_clue_timer(
+    game_with_players: object, monkeypatch: object
+) -> None:
+    """Test a clue timer left running does not outlive the window."""
+    game = game_with_players
+    _quit_without_exiting(monkeypatch)
+    game.load_question(game.current_round.get_question(0, 0))
+    game.open_responses()
+    timer = game.timer
+    assert timer is not None
+
+    game.close()
+
+    assert timer.cancel_calls == 1
+    assert game.timer is None
