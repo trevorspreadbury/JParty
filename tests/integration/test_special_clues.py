@@ -93,6 +93,21 @@ def test_daily_double_cap_ignores_played_daily_double_wagers(
     assert _capture_dd_wager_cap(game, monkeypatch, game.players[0]) == 1000
 
 
+def test_daily_double_cap_counts_unplayed_daily_doubles_in_the_top_row(
+    game_with_players: object, monkeypatch: object
+) -> None:
+    """Unplayed Daily Doubles still set the cap when they fill the top row."""
+    game = game_with_players
+    questions = game.current_round.questions
+    top_value = max(question.value for question in questions)
+    for question in questions:
+        if question.value == top_value:
+            question.dd = True
+    game.players[0].score = 0
+
+    assert _capture_dd_wager_cap(game, monkeypatch, game.players[0]) == top_value
+
+
 def test_daily_double_cap_uses_score_when_higher_than_board(
     game_with_players: object, monkeypatch: object
 ) -> None:

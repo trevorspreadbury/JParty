@@ -1800,18 +1800,23 @@ class Game(QObject):
     def _board_top_clue_value(self) -> int:
         """Return the highest clue value on the current board.
 
-        Daily Doubles are skipped, because a played Daily Double's value is
-        replaced by its wager. The cap comes from the board itself, not from
-        the round's position, since a game can start with any selected round.
+        Played Daily Doubles are skipped, because their value is replaced by
+        the wager. Unplayed ones (including the one being wagered on) still
+        hold their row value and count, so a board whose top row is all
+        Daily Doubles still caps at that row. The cap comes from the board
+        itself, not from the round's position, since a game can start with
+        any selected round.
 
         Returns:
-            The highest regular clue value, or the standard first-round cap
-            when the board has no usable values.
+            The highest clue value, or the standard first-round cap when the
+            board has no usable values.
         """
         values = [
             question.value
             for question in getattr(self.current_round, "questions", [])
-            if not question.dd and question.value and question.value > 0
+            if not (question.dd and question.complete)
+            and question.value
+            and question.value > 0
         ]
         return max(values, default=DEFAULT_DAILY_DOUBLE_WAGER_CAP)
 
