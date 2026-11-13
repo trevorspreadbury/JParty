@@ -47,12 +47,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Saving `general.json` no longer empties it first, so a full disk or a
   crash mid-save keeps the previous save loadable. A save briefly locked by
   Windows is retried, and if saving still fails the host is warned instead of
-  the error only going to the log (#PR).
+  the error only going to the log (#111).
 - Closing the window now makes a last attempt to save clue history that
   failed to save earlier, warns the host if it still cannot, and stops a
-  running clue or Final Jeopardy timer (#PR).
+  running clue or Final Jeopardy timer (#111).
 - A damaged clue history line with a negative round number no longer marks
-  or shows a clue from a different round (#PR).
+  or shows a clue from a different round (#111).
 - A player name or Final answer containing "BUZZ" (such as "What is a
   BUZZARD?") is no longer read as a buzz. Such names now join, such answers
   are recorded, and a buzz from a phone that has not joined is ignored
