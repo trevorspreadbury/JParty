@@ -245,6 +245,22 @@ class DisplayWindow(QMainWindow):
         self.final_display = FinalDisplay(self.game, self)
         self.final_window = self.final_display.answer_widget
 
+    def unload_final(self) -> None:
+        """Remove a finished Final's clue and judging view.
+
+        Used when another round follows a Final, so the board slot is free
+        for the next round.
+
+        Returns:
+            ``None``.
+        """
+        if self.final_display is not None:
+            self.final_display.close()
+            self.final_display.deleteLater()
+        self.final_display = None
+        self.final_window = None
+        self.hide_question()
+
     def load_end_game_summary(self, summary: object) -> None:
         """Show the audience-facing end-of-game summary screen.
 

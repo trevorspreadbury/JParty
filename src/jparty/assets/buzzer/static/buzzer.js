@@ -262,10 +262,16 @@ var updater = {
                     load_page(null);
                     break;
                 case "PROMPTWAGER":
+                    // A new prompt starts empty, so a game with several
+                    // Finals never resends the previous Final's wager.
+                    $("input[name='wager']").val("");
                     set_max_wager(jsondata.text);
                     load_page("wager");
                     break;
                 case "PROMPTANSWER":
+                    // Likewise, clear the previous Final's answer. EXISTS
+                    // (a reconnect) keeps what the player has typed so far.
+                    $("input[name='answer']").val("");
                     load_page("answer");
                     break;
                 case "TOOLATE":

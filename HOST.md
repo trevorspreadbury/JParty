@@ -101,7 +101,9 @@ This is for building a custom "Frankenstein" game from multiple boards.
 When enabled, the standard single-game workflow is replaced by advanced board selection controls. You can:
 
 - Choose how many Jeopardy boards to include
-- Choose how many Final Jeopardy boards to include
+- Choose how many Final Jeopardy boards to include. Finals are played one
+  after another once the standard boards are done; each Final has its own
+  wagers and answers, and the winner is shown after the last one
 - Fill each slot with a specific game id
 - Randomize individual board slots
 - Import media for an individual board source

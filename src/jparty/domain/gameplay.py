@@ -386,7 +386,11 @@ class FinalJeopardyFlow:
                 self.game.players, key=lambda player: player.score
             )
         elif self.game._judgement_round == len(self.game.players):
-            self.game.end_game()
+            if self.game.has_later_round():
+                self.finish_final()
+                self.game.next_round()
+            else:
+                self.game.end_game()
             return
         self.game.answering_player = self.game._sorted_players[
             self.game._judgement_round
@@ -444,6 +448,30 @@ class FinalJeopardyFlow:
         )
         self.game.keystroke_manager.activate("FINAL_NEXT_PLAYER")
         self.game._judgement_round += 1
+
+    def finish_final(self) -> None:
+        """Close out a judged Final so a later round can be played.
+
+        Used when the game has more rounds after this Final (advanced mode
+        can include several Final boards). The Final's history is saved,
+        its clue is marked complete, and the wagers, answers and judging
+        position are cleared so the next Final starts fresh.
+        """
+        if self.game.active_question is not None:
+            if self.game._current_question_history:
+                self.game.score_recorder.flush_question_history()
+            self.game.active_question.complete = True
+        self.game.question_number += 1
+        self.game.active_question = None
+        self.game.answering_player = None
+        self.game.timer = None
+        self.game._judgement_round = 0
+        self.game._sorted_players = []
+        for player in self.game.players:
+            player.wager = None
+            player.finalanswer = ""
+            self.game.dc.player_widget(player).set_lights(False)
+        self.game.dc.unload_final()
 
     def finished_song(self) -> None:
         """Handle the end of the Final Jeopardy think music."""
