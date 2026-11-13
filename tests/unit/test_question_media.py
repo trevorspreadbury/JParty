@@ -1,12 +1,15 @@
 """Tests for local question-media detection and import helpers."""
 
 import threading
+import zlib
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
 import pytest
 
 from jparty.services import question_media
+
+_REAL_RENAME = Path.rename
 
 
 def test_detect_question_media_reports_directory_and_zip(
@@ -215,3 +218,200 @@ def test_import_corrupt_zip_raises_without_creating_folder(
 
     assert not (media_root / "4453").exists()
     assert list(media_root.iterdir()) == []
+
+
+def _media_root_with_zip(temp_dir: Path, monkeypatch: object) -> Path:
+    """Point media lookups at a folder holding a valid ``4453.zip``."""
+    media_root = temp_dir / "question_media"
+    media_root.mkdir()
+    with ZipFile(media_root / "4453.zip", "w") as archive:
+        archive.writestr("0-1-2.png", b"png")
+    monkeypatch.setattr(question_media, "QUESTION_MEDIA", media_root)
+    monkeypatch.setattr(question_media, "_EXTRACT_FAILURES", {})
+    monkeypatch.setattr(question_media, "_EXTRACT_RETRY_AFTER", {})
+    return media_root
+
+
+def _fake_clock(monkeypatch: object) -> dict[str, float]:
+    """Replace the module clock with one the test moves by hand."""
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(question_media, "_monotonic", lambda: clock["now"])
+    return clock
+
+
+def _counting_extract(monkeypatch: object) -> list[Path]:
+    """Record each zip extraction attempt while still extracting for real."""
+    opened: list[Path] = []
+    real_extract = question_media._extract_media_zip
+
+    def counting_extract(source: Path, destination: Path) -> None:
+        """Count extraction attempts."""
+        opened.append(source)
+        real_extract(source, destination)
+
+    monkeypatch.setattr(question_media, "_extract_media_zip", counting_extract)
+    return opened
+
+
+def _lock_path_method(
+    monkeypatch: object, method_name: str, failures: int | None
+) -> list[float]:
+    """Make ``Path.<method_name>`` raise ``PermissionError`` like a Windows lock.
+
+    ``failures`` is how many calls fail before the real method runs; ``None``
+    fails every call. Sleeps between retries are recorded instead of waited.
+    """
+    real_method = getattr(Path, method_name)
+    calls = {"count": 0}
+
+    def locked(self: Path, target: object) -> object:
+        """Fail while the simulated lock is held, then move for real."""
+        calls["count"] += 1
+        if failures is None or calls["count"] <= failures:
+            raise PermissionError(5, "Access is denied", str(self))
+        return real_method(self, target)
+
+    monkeypatch.setattr(Path, method_name, locked)
+    sleeps: list[float] = []
+    monkeypatch.setattr(question_media, "_sleep", sleeps.append)
+    return sleeps
+
+
+def test_extraction_retries_a_briefly_locked_rename(
+    temp_dir: object, monkeypatch: object
+) -> None:
+    """A rename that fails twice with a file lock should still succeed."""
+    media_root = _media_root_with_zip(temp_dir, monkeypatch)
+    sleeps = _lock_path_method(monkeypatch, "rename", failures=2)
+
+    resolved = question_media.find_question_media_file("4453", 0, (1, 2))
+
+    assert resolved == str(media_root / "4453" / "0-1-2.png")
+    assert len(sleeps) == 2
+    assert question_media._EXTRACT_FAILURES == {}
+    assert question_media.detect_question_media("4453").error is None
+    assert sorted(path.name for path in media_root.iterdir()) == ["4453", "4453.zip"]
+
+
+def test_locked_rename_is_not_remembered_as_a_failure(
+    temp_dir: object, monkeypatch: object
+) -> None:
+    """A rename that stays locked should fail this load only."""
+    media_root = _media_root_with_zip(temp_dir, monkeypatch)
+    clock = _fake_clock(monkeypatch)
+    sleeps = _lock_path_method(monkeypatch, "rename", failures=None)
+
+    assert question_media.find_question_media_file("4453", 0, (1, 2)) is False
+
+    assert sleeps == list(question_media._MOVE_RETRY_DELAYS)
+    assert sum(sleeps) < 1
+    assert question_media._EXTRACT_FAILURES == {}
+    status = question_media.detect_question_media("4453")
+    assert status.error is None
+    assert "could not be extracted" not in status.summary_text()
+    assert sorted(path.name for path in media_root.iterdir()) == ["4453.zip"]
+
+    monkeypatch.setattr(Path, "rename", _REAL_RENAME)
+    clock["now"] += question_media._EXTRACT_RETRY_WINDOW
+    resolved = question_media.find_question_media_file("4453", 0, (1, 2))
+
+    assert resolved == str(media_root / "4453" / "0-1-2.png")
+    assert question_media._EXTRACT_RETRY_AFTER == {}
+
+
+def test_lasting_lock_is_tried_once_per_parse(
+    temp_dir: object, monkeypatch: object
+) -> None:
+    """A lock that does not clear should not be retried for every clue."""
+    media_root = _media_root_with_zip(temp_dir, monkeypatch)
+    clock = _fake_clock(monkeypatch)
+    sleeps = _lock_path_method(monkeypatch, "rename", failures=None)
+    opened = _counting_extract(monkeypatch)
+
+    for column in range(6):
+        for row in range(5):
+            question_media.find_question_media_file("4453", 0, (column, row))
+        clock["now"] += 0.5
+
+    assert len(opened) == 1
+    assert sleeps == list(question_media._MOVE_RETRY_DELAYS)
+    assert question_media.detect_question_media("4453").error is None
+
+    clock["now"] += question_media._EXTRACT_RETRY_WINDOW
+    monkeypatch.setattr(Path, "rename", _REAL_RENAME)
+    resolved = question_media.find_question_media_file("4453", 0, (1, 2))
+
+    assert len(opened) == 2
+    assert resolved == str(media_root / "4453" / "0-1-2.png")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("File is encrypted, password required for extraction"),
+        NotImplementedError("That compression method is not supported"),
+        EOFError(),
+        zlib.error("Error -3 while decompressing data: invalid block type"),
+    ],
+    ids=["encrypted", "unsupported-compression", "truncated", "bad-deflate-data"],
+)
+def test_damaged_zip_contents_are_reported_and_not_retried(
+    temp_dir: object, monkeypatch: object, error: Exception
+) -> None:
+    """Errors from the zip's contents should be shown and cached like BadZipFile."""
+    media_root = _media_root_with_zip(temp_dir, monkeypatch)
+    opened: list[Path] = []
+
+    def failing_extract(source: Path, destination: Path) -> None:
+        """Fail the way ``zipfile`` does for this kind of damaged archive."""
+        opened.append(source)
+        raise error
+
+    monkeypatch.setattr(question_media, "_extract_media_zip", failing_extract)
+
+    for column in range(3):
+        assert question_media.find_question_media_file("4453", 0, (column, 0)) is False
+
+    assert len(opened) == 1
+    status = question_media.detect_question_media("4453")
+    assert status.error == (str(error) or type(error).__name__)
+    assert "could not be extracted" in status.summary_text()
+    assert question_media._EXTRACT_RETRY_AFTER == {}
+    assert sorted(path.name for path in media_root.iterdir()) == ["4453.zip"]
+
+
+def test_import_retries_a_briefly_locked_move(
+    temp_dir: object, monkeypatch: object
+) -> None:
+    """Import should retry moving a file that is briefly locked."""
+    media_root = temp_dir / "question_media"
+    source_dir = temp_dir / "source"
+    source_dir.mkdir()
+    (source_dir / "0-0-0.png").write_bytes(b"png")
+    monkeypatch.setattr(question_media, "QUESTION_MEDIA", media_root)
+    sleeps = _lock_path_method(monkeypatch, "replace", failures=2)
+
+    destination = question_media.import_question_media(source_dir, "4453")
+
+    assert [path.name for path in destination.iterdir()] == ["0-0-0.png"]
+    assert len(sleeps) == 2
+    assert sorted(path.name for path in media_root.iterdir()) == ["4453"]
+
+
+def test_import_raises_when_a_move_stays_locked(
+    temp_dir: object, monkeypatch: object
+) -> None:
+    """Import should give up after the retries and clean up its staging folder."""
+    media_root = temp_dir / "question_media"
+    source_dir = temp_dir / "source"
+    source_dir.mkdir()
+    (source_dir / "0-0-0.png").write_bytes(b"png")
+    monkeypatch.setattr(question_media, "QUESTION_MEDIA", media_root)
+    sleeps = _lock_path_method(monkeypatch, "replace", failures=None)
+
+    with pytest.raises(PermissionError):
+        question_media.import_question_media(source_dir, "4453")
+
+    assert sleeps == list(question_media._MOVE_RETRY_DELAYS)
+    assert [path.name for path in media_root.iterdir()] == ["4453"]
+    assert list((media_root / "4453").iterdir()) == []

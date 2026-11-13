@@ -6,6 +6,9 @@ import logging
 import shutil
 import tempfile
 import threading
+import time
+import zlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
@@ -26,6 +29,30 @@ _EXTRACT_LOCK = threading.Lock()
 # Zip path -> (zip mtime_ns, zip size, error text) for zips that failed to
 # extract. A zip is retried only after it changes on disk.
 _EXTRACT_FAILURES: dict[str, tuple[int, int, str]] = {}
+# Errors that mean the zip itself is damaged or unsupported. Only these are
+# recorded in ``_EXTRACT_FAILURES``; file-system errors (for example a
+# Windows file lock) may clear up, so they are retried on the next load.
+_ZIP_CONTENT_ERRORS = (
+    BadZipFile,
+    EOFError,
+    NotImplementedError,
+    RuntimeError,
+    zlib.error,
+)
+# Pauses, in seconds, between attempts to move freshly written files. On
+# Windows, antivirus or the search indexer can briefly hold a handle on new
+# files, which makes a rename fail with ``PermissionError``. The worst case
+# adds 0.5 s before giving up.
+_MOVE_RETRY_DELAYS = (0.05, 0.1, 0.15, 0.2)
+# Zip path -> ``_monotonic()`` time before which extraction is not tried
+# again, for zips that hit a file-system error. The parser looks up media once
+# per clue, so without this a lasting error would make every clue extract the
+# whole zip and wait through the move retries. These failures are not shown to
+# the host, because they may clear up by the next load.
+_EXTRACT_RETRY_AFTER: dict[str, float] = {}
+# How long, in seconds, to skip a zip after a file-system error. This covers
+# one game parse but not a later load the host starts.
+_EXTRACT_RETRY_WINDOW = 5.0
 
 
 @dataclass(frozen=True)
@@ -133,10 +160,14 @@ def import_question_media(source_path: object, game_id: object) -> Path:
             stage(source, staging)
             destination.mkdir(parents=True, exist_ok=True)
             for staged_file in staging.iterdir():
-                staged_file.replace(destination / staged_file.name)
+                target = destination / staged_file.name
+                _retry_on_permission_error(
+                    lambda staged=staged_file, target=target: staged.replace(target)
+                )
         finally:
             shutil.rmtree(staging, ignore_errors=True)
         _EXTRACT_FAILURES.pop(str(question_media_zip(game_id)), None)
+        _EXTRACT_RETRY_AFTER.pop(str(question_media_zip(game_id)), None)
     return destination
 
 
@@ -146,25 +177,41 @@ def ensure_question_media_dir(game_id: object) -> Path | None:
     The zip is extracted into a temporary folder that is renamed into place
     only once extraction finishes, under a lock. Other workers therefore never
     see a half-extracted folder, and a damaged zip never leaves an empty
-    folder that would hide the problem on the next load. If the zip cannot be
-    extracted, the error is logged and recorded for ``detect_question_media``
-    so the host is told, and ``None`` is returned so parsing continues.
+    folder that would hide the problem on the next load. If the zip itself is
+    damaged, the error is logged and recorded for ``detect_question_media``
+    so the host is told, and ``None`` is returned so parsing continues. A
+    file-system error, such as a file briefly locked by antivirus, also
+    returns ``None`` and is not shown to the host. Lookups in the next
+    ``_EXTRACT_RETRY_WINDOW`` seconds skip the zip, so one parse does not try
+    again for every clue, and a later load tries again.
     """
     status = detect_question_media(game_id)
     if status.has_directory:
         return status.directory
     if not status.has_zip or status.error:
         return None
+    zip_key = str(status.zip_file)
     with _EXTRACT_LOCK:
         destination = question_media_dir(game_id)
         if destination.is_dir():
             return destination
+        if _monotonic() < _EXTRACT_RETRY_AFTER.get(zip_key, float("-inf")):
+            return None
         try:
             _extract_zip_into_place(status.zip_file, destination, game_id)
-        except (BadZipFile, OSError) as exc:
+        except _ZIP_CONTENT_ERRORS as exc:
             _record_extract_failure(status.zip_file, exc)
             return None
-        _EXTRACT_FAILURES.pop(str(status.zip_file), None)
+        except OSError:
+            logging.warning(
+                "Could not extract question media zip %s; will retry on the next load",
+                status.zip_file,
+                exc_info=True,
+            )
+            _EXTRACT_RETRY_AFTER[zip_key] = _monotonic() + _EXTRACT_RETRY_WINDOW
+            return None
+        _EXTRACT_FAILURES.pop(zip_key, None)
+        _EXTRACT_RETRY_AFTER.pop(zip_key, None)
     return destination
 
 
@@ -182,7 +229,7 @@ def _extract_zip_into_place(source: Path, destination: Path, game_id: object) ->
     try:
         _extract_media_zip(source, staging)
         try:
-            staging.rename(destination)
+            _retry_on_permission_error(lambda: staging.rename(destination))
         except OSError:
             # Another process may have finished the same extraction first.
             if not destination.is_dir():
@@ -190,6 +237,31 @@ def _extract_zip_into_place(source: Path, destination: Path, game_id: object) ->
     finally:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
+
+
+def _sleep(seconds: float) -> None:
+    """Pause between move attempts. Tests patch this to avoid waiting."""
+    time.sleep(seconds)
+
+
+def _monotonic() -> float:
+    """Return the current monotonic time. Tests patch this to move the clock."""
+    return time.monotonic()
+
+
+def _retry_on_permission_error(action: Callable[[], object]) -> None:
+    """Run a file move, retrying briefly while it raises ``PermissionError``.
+
+    The last ``PermissionError`` is re-raised if every attempt fails. Other
+    errors are raised at once.
+    """
+    for delay in _MOVE_RETRY_DELAYS:
+        try:
+            action()
+            return
+        except PermissionError:
+            _sleep(delay)
+    action()
 
 
 def _record_extract_failure(zip_file: Path, exc: Exception) -> None:
