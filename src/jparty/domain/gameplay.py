@@ -281,6 +281,9 @@ class ClueFlow:
         if self.game.active_question.dd:
             self.back_to_board()
         else:
+            # The early-buzz penalty only applies to the window a player
+            # jumped; the rebound is a fresh window for everyone left.
+            self.game.early_buzzes = set()
             self.open_responses()
             self.game.timer.resume()
 
