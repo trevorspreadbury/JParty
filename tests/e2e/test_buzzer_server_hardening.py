@@ -23,14 +23,16 @@ TornadoAsyncHTTPTestCase.__test__ = False
 
 
 class RecordingGame(SimpleNamespace):
-    """Stand-in game that records wagers and answers sent by phones."""
+    """Stand-in game that records buzzes, wagers and answers sent by phones."""
 
     def __init__(self) -> None:
         """Start with no players and nothing recorded."""
+        self.buzzes = []
         self.wagers = []
         self.answers = []
         super().__init__(
             players=[],
+            buzz_trigger=SimpleNamespace(emit=self.buzzes.append),
             wager_trigger=SimpleNamespace(
                 emit=lambda i_player, amount: self.wagers.append((i_player, amount))
             ),
@@ -282,4 +284,50 @@ class BuzzerServerHardeningTest(TornadoAsyncHTTPTestCase):
         ws.write_message(json.dumps({"message": "NAME", "text": "Late"}))
 
         assert json.loads(await ws.read_message())["message"] == "GAMEFULL"
+        ws.close()
+
+    @gen_test
+    async def test_buzz_frame_buzzes_the_player(self) -> None:
+        """The phone's ``BUZZ`` message buzzes in that player."""
+        ws_alice, _alice = await self.join("Alice")
+        ws_bob, _bob = await self.join("Bob")
+
+        ws_bob.write_message(json.dumps({"message": "BUZZ", "text": ""}))
+        await self.round_trip(ws_bob)
+
+        assert self.game.buzzes == [1]
+        ws_alice.close()
+        ws_bob.close()
+
+    @gen_test
+    async def test_name_containing_buzz_joins(self) -> None:
+        """A name with "BUZZ" in it joins instead of being read as a buzz."""
+        ws, player = await self.join("BUZZ Lightyear")
+
+        assert player.name == "BUZZ Lightyear"
+        assert self.game.buzzes == []
+        ws.close()
+
+    @gen_test
+    async def test_final_answer_containing_buzz_is_recorded(self) -> None:
+        """A Final answer with "BUZZ" in it is kept and does not buzz."""
+        ws, _player = await self.join("Alice")
+        self.controller.prompt_answers()
+        assert json.loads(await ws.read_message())["message"] == "PROMPTANSWER"
+
+        ws.write_message(json.dumps({"message": "ANSWER", "text": "WHAT IS A BUZZARD"}))
+        await self.round_trip(ws)
+
+        assert self.game.answers == [("Alice", "WHAT IS A BUZZARD")]
+        assert self.game.buzzes == []
+        ws.close()
+
+    @gen_test
+    async def test_buzz_before_joining_is_ignored(self) -> None:
+        """A ``BUZZ`` from a phone that never joined is ignored, not a crash."""
+        ws = await websocket_connect(self.ws_url("/buzzersocket"))
+        ws.write_message(json.dumps({"message": "BUZZ", "text": ""}))
+        await self.round_trip(ws)
+
+        assert self.game.buzzes == []
         ws.close()
