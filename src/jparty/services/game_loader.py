@@ -5,8 +5,10 @@ helpers. The actual implementations live in ``archive_client``, but re-exporting
 them here keeps service-oriented imports organized and backwards compatible.
 """
 
+import logging
 import random
 from collections import defaultdict
+from collections.abc import Callable
 
 from jparty.domain.models import FinalBoard, GameData, Question
 
@@ -28,6 +30,9 @@ FOUR_PLUS_STANDARD_BOARD_BASE_VALUE = 100
 STANDARD_CLUE_VALUE_COUNT = 5
 MAX_DAILY_DOUBLES_PER_BOARD = 6
 QUESTION_INDEX_PART_COUNT = 2
+# Most games Random tries before giving up, so a run of games that won't
+# parse can't keep hitting J-Archive and the Wayback Machine (#88).
+RANDOM_GAME_MAX_ATTEMPTS = 10
 ROW_ONE_TOTAL_WEIGHT = 0.12
 ROW_TWO_TOTAL_WEIGHT = 9.0
 ROW_THREE_AND_FIVE_TOTAL_WEIGHT = 54.0
@@ -462,12 +467,58 @@ def build_game_from_board_selection_configs(board_selections: object) -> object:
     return compose_game_from_resolved_board_selections(resolved_boards)
 
 
+def find_random_game(
+    accept: Callable[[object], bool],
+    max_attempts: int = RANDOM_GAME_MAX_ATTEMPTS,
+    is_cancelled: Callable[[], bool] = lambda: False,
+    pick_game_id: Callable[[], object] | None = None,
+    load_game: Callable[[object], object] | None = None,
+) -> tuple[str, object]:
+    """Try random J-Archive games until one is accepted.
+
+    Both Random buttons on the welcome screen use this. A failed fetch or
+    parse only costs that one try, so a network blip doesn't end the search,
+    and the search stops after ``max_attempts`` tries so a run of bad games
+    can't keep hitting the network.
+
+    Args:
+        accept: Returns whether a loaded game can be used. It is only called
+            with data that is not ``None``.
+        max_attempts: Most games to try.
+        is_cancelled: Checked before each try; once it returns ``True`` the
+            search stops.
+        pick_game_id: Returns a random game id. Defaults to
+            ``get_random_game``.
+        load_game: Loads one game id. Defaults to ``get_game``.
+
+    Returns:
+        ``(game_id, data)`` for the first accepted game, or ``("", None)``
+        when every try failed or the search was cancelled.
+    """
+    pick_game_id = pick_game_id or get_random_game
+    load_game = load_game or get_game
+    for _ in range(max_attempts):
+        if is_cancelled():
+            break
+        try:
+            game_id = str(pick_game_id())
+            logging.info(f"GAMEID {game_id}")
+            data = load_game(game_id)
+        except Exception as exc:
+            logging.error(exc)
+            continue
+        if data is not None and accept(data):
+            return game_id, data
+    return "", None
+
+
 __all__ = [
     "build_game_from_board_selection_configs",
     "compose_game_from_resolved_board_selections",
     "default_board_row_values",
     "original_board_row_values",
     "find_question_media",
+    "find_random_game",
     "get_Gsheet_game",
     "get_game",
     "get_game_html",

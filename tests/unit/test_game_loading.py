@@ -7,7 +7,9 @@ from bs4 import BeautifulSoup
 
 from jparty.domain.models import Board, FinalBoard, GameData, Question
 from jparty.services.game_loader import (
+    RANDOM_GAME_MAX_ATTEMPTS,
     build_game_from_board_selection_configs,
+    find_random_game,
     normalize_standard_board_daily_doubles,
     original_board_row_values,
     round_matches_board_type,
@@ -296,3 +298,64 @@ def test_has_missing_daily_double_uses_expected_counts() -> None:
     assert game.has_missing_daily_double() is True
     assert game.has_missing_daily_double([1, 2, 2]) is False
     assert game.has_missing_daily_double([1, 2, 3]) is True
+
+
+def test_find_random_game_returns_the_first_accepted_game() -> None:
+    """Random keeps trying until a game passes ``accept``."""
+    ids = iter([1, 2, 3])
+    games = {"1": None, "2": GameData([], "bad", ""), "3": GameData([], "good", "")}
+
+    game_id, data = find_random_game(
+        lambda candidate: candidate.date == "good",
+        pick_game_id=lambda: next(ids),
+        load_game=lambda game_id: games[game_id],
+    )
+
+    assert game_id == "3"
+    assert data is games["3"]
+
+
+def test_find_random_game_keeps_trying_after_an_error() -> None:
+    """One failed fetch costs one try instead of ending the search (#102)."""
+    good = GameData([], "good", "")
+    results = iter([ConnectionError("blip"), good])
+
+    def load(game_id: str) -> object:
+        result = next(results)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    assert find_random_game(
+        lambda candidate: True, pick_game_id=lambda: 7, load_game=load
+    ) == ("7", good)
+
+
+def test_find_random_game_stops_after_max_attempts() -> None:
+    """A run of games that won't parse can't keep hitting the network (#102)."""
+    calls = []
+
+    def load(game_id: str) -> None:
+        calls.append(game_id)
+        raise ValueError("unparseable")
+
+    assert find_random_game(
+        lambda candidate: True, pick_game_id=lambda: 9, load_game=load
+    ) == ("", None)
+    assert len(calls) == RANDOM_GAME_MAX_ATTEMPTS
+
+
+def test_find_random_game_stops_once_cancelled() -> None:
+    """A cancelled search stops before its next try."""
+    calls = []
+
+    def load(game_id: str) -> None:
+        calls.append(game_id)
+
+    assert find_random_game(
+        lambda candidate: True,
+        is_cancelled=lambda: len(calls) >= 2,
+        pick_game_id=lambda: 5,
+        load_game=load,
+    ) == ("", None)
+    assert calls == ["5", "5"]

@@ -43,6 +43,7 @@ from jparty.domain.state import (
     QUESTION_HISTORY_FILE_NAME,
     SCORE_CORRECTION_TYPE,
     HistoryFileError,
+    LoadedSave,
     classify_buzz_phases,
     clue_player_results,
     clue_score_effects,
@@ -395,12 +396,40 @@ class Game(QObject):
     def prepare_resume_from_dir(self, saved_game_dir: object) -> object:
         """Load enough metadata to resume a previously saved game session.
 
+        This is :meth:`read_saved_game` followed by
+        :meth:`apply_saved_game`. The welcome screen calls the two halves
+        separately so the slow read can run on a worker thread.
+
         Args:
             saved_game_dir: Filesystem path to a saved game directory containing
                 at least ``general.json`` and related session files.
 
         Returns:
             A dictionary describing the loaded resume state.
+
+        Raises:
+            FileNotFoundError: If the provided directory does not contain the
+                required metadata file.
+            ValueError: If the metadata cannot be loaded or points to an
+                invalid game.
+            HistoryFileError: If the saved clue history cannot be read.
+        """
+        return self.apply_saved_game(self.read_saved_game(saved_game_dir))
+
+    def read_saved_game(self, saved_game_dir: object) -> LoadedSave:
+        """Read and validate a saved game without changing this game.
+
+        This can fetch the game from J-Archive or Google Sheets, so it may be
+        slow. It never touches ``self``, so it is safe to run on a worker
+        thread. A save that fails any check raises here, before anything is
+        applied, so a failed Load Saved leaves the current game as it was.
+
+        Args:
+            saved_game_dir: Filesystem path to a saved game directory containing
+                at least ``general.json`` and related session files.
+
+        Returns:
+            The validated save, ready for :meth:`apply_saved_game`.
 
         Raises:
             FileNotFoundError: If the provided directory does not contain the
@@ -426,29 +455,50 @@ class Game(QObject):
         if not saved_players:
             raise ValueError("Saved game metadata is missing player information")
         # Check the history before fetching the game, which can hit the network,
-        # so a damaged save fails right away and leaves the game state untouched.
+        # so a damaged save fails right away.
         history_entries = read_history_file(
             saved_game_path / QUESTION_HISTORY_FILE_NAME
         )
         current_players = current_saved_players(saved_players, history_entries)
         saved_game = load_saved_game_data(general_state)
-        self.data = saved_game.data
-        self.set_board_selection_configs(saved_game.board_selection_configs)
-        self.set_selected_round_indices(saved_game.selected_round_indices)
+        if saved_game.data is None or not saved_game.data.rounds:
+            raise ValueError("Saved game points to an invalid or incomplete game")
+        return LoadedSave(
+            path=saved_game_path,
+            game_id=game_id,
+            general_state=general_state,
+            saved_game=saved_game,
+            current_players=current_players,
+        )
+
+    def apply_saved_game(self, loaded: LoadedSave) -> object:
+        """Make a save read by :meth:`read_saved_game` the game to resume.
+
+        Call this on the UI thread. It does no I/O and cannot fail on a
+        validated save.
+
+        Args:
+            loaded: Save returned by :meth:`read_saved_game`.
+
+        Returns:
+            A dictionary describing the loaded resume state.
+        """
+        general_state = loaded.general_state
+        self.data = loaded.saved_game.data
+        self.set_board_selection_configs(loaded.saved_game.board_selection_configs)
+        self.set_selected_round_indices(loaded.saved_game.selected_round_indices)
         self.set_reveal_answers_after_triple_stumper(
             general_state.get("reveal_answers_after_triple_stumper", False)
         )
-        self.set_session_game_id(general_state.get("game_id", game_id))
-        if not self.valid_game():
-            raise ValueError("Saved game points to an invalid or incomplete game")
+        self.set_session_game_id(general_state.get("game_id", loaded.game_id))
         self._resume_state = {
-            "path": saved_game_path,
-            "game_id": game_id,
+            "path": loaded.path,
+            "game_id": loaded.game_id,
             "general_state": general_state,
-            "player_count": len(saved_players),
+            "player_count": len(general_state.get("players", [])),
         }
         if self.buzzer_controller:
-            self.buzzer_controller.begin_saved_player_reclaim(current_players)
+            self.buzzer_controller.begin_saved_player_reclaim(loaded.current_players)
         return self._resume_state
 
     def begin(self) -> None:

@@ -892,6 +892,30 @@ class SavedGameData:
     board_selection_configs: list[dict] | None
 
 
+@dataclass
+class LoadedSave:
+    """A saved game read and checked by ``Game.read_saved_game``.
+
+    Nothing in it has been applied to a game yet, so a save can be read on a
+    worker thread and applied later on the UI thread.
+
+    Attributes:
+        path: Saved game directory.
+        game_id: Session game id from ``general.json``.
+        general_state: Decoded ``general.json`` contents.
+        saved_game: Game data and round mapping rebuilt from the save. Its
+            ``data`` is always a playable game.
+        current_players: Saved players with their current names, for the
+            lobby's reclaim flow.
+    """
+
+    path: Path
+    game_id: str
+    general_state: dict
+    saved_game: SavedGameData
+    current_players: list[dict]
+
+
 def load_saved_game_data(general_state: dict) -> SavedGameData:
     """Rebuild a save's game data and round mapping from ``general.json``.
 
