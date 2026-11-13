@@ -4,7 +4,6 @@ import asyncio
 import threading
 import time
 from dataclasses import dataclass
-from types import SimpleNamespace
 
 import pytest
 import tornado.httpserver
@@ -14,6 +13,7 @@ from playwright.sync_api import sync_playwright
 
 from jparty.domain.models import Player
 from jparty.web.app import Application
+from tests.server_fakes import FakeServerController
 
 pytestmark = pytest.mark.e2e
 
@@ -36,138 +36,11 @@ class FakeWaiter:
         return None
 
 
-class BrowserSmokeController:
-    """Test helper for browsersmokecontroller."""
-
-    def __init__(self) -> None:
-        """Test init."""
-        self.connected_players = []
-        self.accepting_players = True
-        self.lectern_connections = {}
-        self.active_buzzer_sockets = set()
-        self.saved_player_profiles = {}
-        self.resume_mode_active = False
-        self.buzzed_players = []
-        self.game = SimpleNamespace(
-            players=[],
-            buzz_trigger=SimpleNamespace(emit=lambda value: None),
-            wager_trigger=SimpleNamespace(emit=lambda player, amount: None),
-            new_player_trigger=SimpleNamespace(emit=lambda: None),
-        )
-
-    def new_player(self, player: object) -> None:
-        """Test new player."""
-        self.connected_players.append(player)
-        self.game.players.append(player)
-
-    def register_socket(self, socket_handler: object) -> None:
-        """Track an open buzzer websocket for the smoke test server."""
-        self.active_buzzer_sockets.add(socket_handler)
-
-    def unregister_socket(self, socket_handler: object) -> None:
-        """Stop tracking a buzzer websocket for the smoke test server."""
-        self.active_buzzer_sockets.discard(socket_handler)
-
-    def in_saved_player_reclaim_mode(self) -> bool:
-        """Report whether the smoke-test lobby is reclaiming saved players."""
-        return self.resume_mode_active
-
-    def saved_player_claims_complete(self) -> bool:
-        """Report whether all saved-player claims are complete."""
-        return bool(self.saved_player_profiles) and all(
-            profile.get("player") is not None
-            for profile in self.saved_player_profiles.values()
-        )
-
-    def saved_player_choices_payload(self) -> object:
-        """Build the saved-player chooser payload for smoke tests."""
-        players = []
-        for player_number, profile in sorted(self.saved_player_profiles.items()):
-            players.append(
-                {
-                    "name": profile["name"],
-                    "player_number": player_number,
-                    "claimed": profile.get("player") is not None,
-                }
-            )
-        return {
-            "players": players,
-            "claimed_count": sum(
-                1
-                for profile in self.saved_player_profiles.values()
-                if profile.get("player") is not None
-            ),
-            "total_count": len(self.saved_player_profiles),
-        }
-
-    def claim_saved_player(self, socket_handler: object, player_number: int) -> object:
-        """Claim a saved player profile for the smoke-test controller."""
-        profile = self.saved_player_profiles.get(player_number)
-        if profile is None:
-            return None
-        if (
-            profile.get("player") is not None
-            and profile["player"].waiter is not socket_handler
-        ):
-            socket_handler.send("PLAYER_TAKEN")
-            return None
-        player = profile.get("player")
-        if player is None:
-            player = Player(profile["name"], socket_handler, player_number)
-            profile["player"] = player
-            profile["token"] = player.token.hex()
-            self.connected_players.append(player)
-            self.game.players.append(player)
-        player.waiter = socket_handler
-        player.connected = True
-        return player
-
-    def buzz(self, player: object) -> None:
-        """Test buzz."""
-        self.buzzed_players.append(player.name)
-
-    def wager(self, player: object, amount: object) -> None:
-        """Test wager."""
-        return None
-
-    def answer(self, player: object, guess: object) -> None:
-        """Test answer."""
-        return None
-
-    def player_with_token(self, token: object) -> object:
-        """Test player with token."""
-        for player in self.connected_players:
-            if player.token.hex() == token:
-                return player
-        return None
-
-    def get_player_by_number(self, player_number: object) -> object:
-        """Test get player by number."""
-        if player_number < len(self.game.players):
-            return self.game.players[player_number]
-        return None
-
-    def get_player_state_dict(self, player: object) -> object:
-        """Test get player state dict."""
-        return {
-            "name": player.name,
-            "score": player.score,
-            "player_number": player.player_number,
-            "active": False,
-            "buzzed": False,
-            "finalanswer": player.finalanswer,
-        }
-
-    def broadcast_to_lecterns(self, player_number: object, state_dict: object) -> None:
-        """Test broadcast to lecterns."""
-        return None
-
-
 @dataclass
 class LiveBrowserServer:
     """Test helper for livebrowserserver."""
 
-    controller: BrowserSmokeController
+    controller: FakeServerController
     url: str
     loop: tornado.ioloop.IOLoop
     thread: threading.Thread
@@ -177,7 +50,7 @@ class LiveBrowserServer:
 @pytest.fixture
 def live_browser_server() -> object:
     """Test live browser server."""
-    controller = BrowserSmokeController()
+    controller = FakeServerController()
     app = Application(controller)
     sockets = tornado.netutil.bind_sockets(0, address="127.0.0.1")
     port = sockets[0].getsockname()[1]

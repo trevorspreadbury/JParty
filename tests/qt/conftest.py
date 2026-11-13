@@ -4,8 +4,9 @@ import json
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import QTimer, QUrl
 from PyQt6.QtGui import QColor, QPixmap
+from PyQt6.QtWidgets import QApplication
 
 from jparty.services import image_lookup
 
@@ -47,3 +48,20 @@ def local_image_lookup(monkeypatch: object, temp_dir: Path) -> Path:
     api_url = QUrl.fromLocalFile(str(api_path)).toString()
     monkeypatch.setattr(image_lookup, "WIKIMEDIA_API_URL", api_url)
     return thumbnail_path
+
+
+@pytest.fixture(autouse=True)
+def stop_widget_timers() -> object:
+    """Stop timers owned by widgets once a test ends.
+
+    pytest-qt closes test widgets but does not delete them, so a pending
+    timer (such as the welcome screen's 2-second game-id debounce) could fire
+    during a later test and start a real game download.
+    """
+    yield
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in app.topLevelWidgets():
+        for timer in widget.findChildren(QTimer):
+            timer.stop()

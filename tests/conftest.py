@@ -20,8 +20,10 @@ PROJECT_TEMP_ROOT.mkdir(exist_ok=True)
 TEST_TEMP_DIR = PROJECT_TEMP_ROOT / f"pytest-runtime-{os.getpid()}"
 TEST_TEMP_DIR.mkdir(exist_ok=True)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-os.environ.setdefault("DATA_DIR", str(TEST_TEMP_DIR / "user_data"))
-os.environ.setdefault("JPARTY_DATA_DIR", str(TEST_TEMP_DIR / "user_data"))
+# Always override, so a DATA_DIR from .env or the shell never points tests at
+# the real data folder.
+os.environ["DATA_DIR"] = str(TEST_TEMP_DIR / "user_data")
+os.environ["JPARTY_DATA_DIR"] = str(TEST_TEMP_DIR / "user_data")
 os.environ["TMP"] = str(TEST_TEMP_DIR)
 os.environ["TEMP"] = str(TEST_TEMP_DIR)
 os.environ["TMPDIR"] = str(TEST_TEMP_DIR)
@@ -37,9 +39,16 @@ def _cleanup_test_temp_dir() -> None:
         time.sleep(0.1)
 
 
+from jparty.app.paths import USER_DATA_ROOT
 from jparty.domain import Board, FinalBoard, Game, GameData, Player, Question
+from tests import network_guard
+
+assert TEST_TEMP_DIR.resolve() in USER_DATA_ROOT.resolve().parents, (
+    f"Tests must not use the real data folder: {USER_DATA_ROOT}"
+)
 
 atexit.register(_cleanup_test_temp_dir)
+network_guard.install()
 
 
 class FakeSongPlayer:
@@ -522,6 +531,16 @@ def build_game_data() -> object:
         date="January 1, 2026",
         comments="Fixture game",
     )
+
+
+@pytest.fixture(autouse=True)
+def no_network() -> object:
+    """Fail any test that tries to reach a remote host (see network_guard)."""
+    network_guard.take_violations()
+    yield
+    violations = network_guard.take_violations()
+    if violations:
+        pytest.fail(f"Test tried to use the network: {violations}")
 
 
 @pytest.fixture(scope="session")

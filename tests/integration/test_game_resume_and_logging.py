@@ -113,6 +113,47 @@ def test_prepare_and_resume_saved_game_restores_round_scores_and_questions(
     assert game.current_round.get_question(3, 0).complete is False
 
 
+def test_resume_with_real_controller_reclaims_signature_player(
+    game: object, monkeypatch: object, sample_saved_game_dir: object
+) -> None:
+    """Test a phone reclaims a drawn-signature player and keeps its score."""
+    from jparty.services import game_loader
+    from jparty.web import controller as controller_module
+    from jparty.web.controller import BuzzerController
+
+    signature = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAA+/x=="
+    general_file = sample_saved_game_dir / "general.json"
+    general = json.loads(general_file.read_text())
+    general["players"][1]["name"] = signature
+    general_file.write_text(json.dumps(general))
+    restored_data = game.data
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
+    monkeypatch.setattr(
+        controller_module.tornado.options, "parse_command_line", lambda: None
+    )
+    controller = BuzzerController(game)
+    game.buzzer_controller = controller
+
+    game.prepare_resume_from_dir(sample_saved_game_dir)
+    claimed = {}
+    for number in (1, 0):
+        socket = DummyWaiter()
+        controller.register_socket(socket)
+        claimed[number] = controller.claim_saved_player(socket, number)
+    assert game.resume_claims_complete()
+    # The signature player's phone reconnects with the token it was given.
+    assert controller.player_with_token(claimed[1].token.hex()) is claimed[1]
+    game.start_game()
+
+    assert [(player.name, player.score) for player in game.players] == [
+        ("Alice", 0),
+        (signature, 400),
+    ]
+    assert game.players[1] is claimed[1]
+    rewritten = json.loads(general_file.read_text())
+    assert [player["name"] for player in rewritten["players"]] == ["Alice", signature]
+
+
 def _resume_and_read_general_state(game: object, saved_dir: object) -> dict:
     """Resume ``saved_dir`` and return the ``general.json`` it writes back."""
     players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
@@ -831,8 +872,12 @@ def test_start_game_saves_html_when_play_begins(
     game: object, monkeypatch: object
 ) -> None:
     """Test test start game saves html when play begins."""
+    from jparty.domain import game_engine
     from jparty.services import archive_client
 
+    # Run the save inline so it finishes before the asserts, and never runs
+    # after the patched save_game_html has been restored.
+    monkeypatch.setattr(game_engine, "Thread", _InlineThread)
     saved_game_ids = []
     monkeypatch.setattr(
         archive_client, "save_game_html", lambda game_id: saved_game_ids.append(game_id)
