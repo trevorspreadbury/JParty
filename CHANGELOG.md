@@ -52,6 +52,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
   the Double Jeopardy! round on its own (#107).
 - Going to 4 or more advanced boards now gives every board the new point
   values in order. Only values the host typed are kept (#107).
+- The buzzer server checks what phones send. A name or Final answer that the
+  host can't show is rejected instead of stalling the lobby or judging. A
+  double-tap on "Play!" no longer adds a ghost player. A wager typed as `1e3`
+  is accepted, and an unreadable wager asks the phone again instead of
+  stalling Final. An old connection closing after a phone reconnects no
+  longer marks that player as disconnected (#110).
 - A player name or Final answer containing "BUZZ" (such as "What is a
   BUZZARD?") is no longer read as a buzz. Such names now join, such answers
   are recorded, and a buzz from a phone that has not joined is ignored

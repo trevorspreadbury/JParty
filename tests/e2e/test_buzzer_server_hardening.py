@@ -4,6 +4,7 @@ These tests drive a real ``BuzzerController`` through Tornado's test client.
 The game is a small stand-in that records wagers and answers.
 """
 
+import base64
 import json
 from types import SimpleNamespace
 
@@ -17,6 +18,7 @@ from jparty.app.config import MAXPLAYERS
 from jparty.domain.models import Player
 from jparty.web import controller as controller_module
 from jparty.web.controller import BuzzerController
+from jparty.web.handlers import MAX_ANSWER_LENGTH, MAX_NAME_LENGTH
 
 pytestmark = pytest.mark.e2e
 TornadoAsyncHTTPTestCase.__test__ = False
@@ -117,6 +119,8 @@ class BuzzerServerHardeningTest(TornadoAsyncHTTPTestCase):
         ws_low.write_message(json.dumps({"message": "WAGER", "text": "-5000"}))
         ws_high.write_message(json.dumps({"message": "WAGER", "text": "99999"}))
         ws_broke.write_message(json.dumps({"message": "WAGER", "text": "abc"}))
+        # A wager the server can't read opens the phone's wager box again.
+        assert json.loads(await ws_broke.read_message())["message"] == "PROMPTWAGER"
         ws_broke.write_message(json.dumps({"message": "WAGER", "text": "300"}))
         # A second wager from the same phone is ignored.
         ws_low.write_message(json.dumps({"message": "WAGER", "text": "500"}))
@@ -326,3 +330,166 @@ class BuzzerServerHardeningTest(TornadoAsyncHTTPTestCase):
 
         assert self.game.buzzes == []
         ws.close()
+
+    async def send(self, ws: object, msg: str, text: object) -> dict:
+        """Send one message on ``ws`` and return the server's reply."""
+        ws.write_message(json.dumps({"message": msg, "text": text}))
+        return json.loads(await ws.read_message())
+
+    async def wait_for_socket_count(self, count: int) -> None:
+        """Wait until the server has ``count`` buzzer sockets open."""
+        for _ in range(100):
+            if len(self.controller.active_buzzer_sockets) == count:
+                return
+            await gen.sleep(0.01)
+        raise AssertionError("socket did not close")
+
+    @gen_test
+    async def test_bad_names_send_the_phone_back_and_add_no_player(self) -> None:
+        """Names the host can't draw are rejected before a player exists (#99)."""
+        ws = await websocket_connect(self.ws_url("/buzzersocket"))
+        bad_names = [
+            123,
+            {"a": 1},
+            None,
+            ["x"],
+            "",
+            "   ",
+            "data:image/png;base64,abc",
+            "data:image/png;base64,",
+            "data:image/png;base64X",
+        ]
+        for name in bad_names:
+            reply = await self.send(ws, "NAME", name)
+            assert reply["message"] == "NEW", name
+
+        assert self.controller.connected_players == []
+        # The phone can still join after a rejected name.
+        assert (await self.send(ws, "NAME", "Alice"))["message"] == "TOKEN"
+        assert [p.name for p in self.controller.connected_players] == ["Alice"]
+        ws.close()
+
+    @gen_test
+    async def test_valid_signature_and_long_name_are_accepted(self) -> None:
+        """A drawn signature joins as is; a long typed name is shortened (#99)."""
+        signature = "data:image/png;base64," + base64.b64encode(b"\x89PNG").decode()
+        ws_sig, sig_player = await self.join(signature)
+        ws_long, long_player = await self.join("x" * (MAX_NAME_LENGTH + 50))
+
+        assert sig_player.name == signature
+        assert long_player.name == "x" * MAX_NAME_LENGTH
+        ws_sig.close()
+        ws_long.close()
+
+    @gen_test
+    async def test_answer_that_is_not_text_is_ignored(self) -> None:
+        """A dict sent as a Final answer is dropped; a real answer still counts."""
+        ws, _player = await self.join("Alice")
+        self.controller.prompt_answers()
+        assert json.loads(await ws.read_message())["message"] == "PROMPTANSWER"
+
+        for bad in ({"a": 1}, None, 5, ["x"]):
+            ws.write_message(json.dumps({"message": "ANSWER", "text": bad}))
+        await self.round_trip(ws)
+        assert self.game.answers == []
+
+        long_answer = "y" * (MAX_ANSWER_LENGTH + 5)
+        ws.write_message(json.dumps({"message": "ANSWER", "text": long_answer}))
+        await self.round_trip(ws)
+        assert self.game.answers == [("Alice", "y" * MAX_ANSWER_LENGTH)]
+        ws.close()
+
+    @gen_test
+    async def test_second_name_on_one_socket_adds_no_player(self) -> None:
+        """A double-tap on "Play!" gives back the same token, not a ghost (#99)."""
+        ws, player = await self.join("Alice")
+
+        reply = await self.send(ws, "NAME", "Alice")
+
+        assert reply == {"message": "TOKEN", "text": player.token.hex()}
+        assert self.controller.connected_players == [player]
+        ws.close()
+
+    @gen_test
+    async def test_one_socket_claims_only_one_saved_player(self) -> None:
+        """A phone that already claimed a saved player can't claim another (#99)."""
+        self.controller.begin_saved_player_reclaim(
+            [
+                {"player_number": 0, "name": "Alice"},
+                {"player_number": 1, "name": "Bob"},
+            ]
+        )
+        ws = await websocket_connect(self.ws_url("/buzzersocket"))
+        claimed = await self.send(ws, "CLAIM_PLAYER", "0")
+        assert claimed["message"] == "CLAIMED"
+        token = json.loads(claimed["text"])["token"]
+
+        again = await self.send(ws, "CLAIM_PLAYER", "1")
+        assert again["message"] == "CLAIMED"
+        assert json.loads(again["text"])["token"] == token
+        named = await self.send(ws, "NAME", "Ghost")
+        assert named == {"message": "TOKEN", "text": token}
+
+        assert [p.name for p in self.controller.connected_players] == ["Alice"]
+        assert self.controller.saved_player_profiles[1].player is None
+        ws.close()
+
+    @gen_test
+    async def test_claim_with_overflowing_number_shows_chooser(self) -> None:
+        """A player number too big for an int shows the chooser, not a crash."""
+        self.controller.begin_saved_player_reclaim(
+            [{"player_number": 0, "name": "Alice"}]
+        )
+        ws = await websocket_connect(self.ws_url("/buzzersocket"))
+        ws.write_message('{"message": "CLAIM_PLAYER", "text": 1e400}')
+
+        assert json.loads(await ws.read_message())["message"] == "SHOW_CHOOSER"
+        ws.close()
+
+    @gen_test
+    async def test_exponent_and_overflow_wagers_do_not_stall_final(self) -> None:
+        """``1e3`` is a wager of 1000; ``1e400`` prompts the phone again (#99)."""
+        ws_exp, exp = await self.join("Exp")
+        ws_big, big = await self.join("Big")
+        exp.score, big.score = 5000, 800
+        self.controller.open_wagers()
+        for ws in (ws_exp, ws_big):
+            assert json.loads(await ws.read_message())["message"] == "PROMPTWAGER"
+
+        ws_exp.write_message(json.dumps({"message": "WAGER", "text": "1e3"}))
+        await self.round_trip(ws_exp)
+        for bad in ("1e400", "nan", "-inf"):
+            reply = await self.send(ws_big, "WAGER", bad)
+            assert reply == {"message": "PROMPTWAGER", "text": "800"}, bad
+        assert big.page == "wager"
+        ws_big.write_message(json.dumps({"message": "WAGER", "text": "250.9"}))
+        await self.round_trip(ws_big)
+
+        assert self.game.wagers == [(0, 1000), (1, 250)]
+        assert exp.page == big.page == "null"
+        ws_exp.close()
+        ws_big.close()
+
+    @gen_test
+    async def test_old_socket_closing_after_reconnect_keeps_player_connected(
+        self,
+    ) -> None:
+        """A stale socket closing late does not drop the late answer (#99)."""
+        old_ws, player = await self.join("Alice")
+        self.controller.prompt_answers()
+        assert json.loads(await old_ws.read_message())["message"] == "PROMPTANSWER"
+        new_ws = await websocket_connect(self.ws_url("/buzzersocket"))
+        exists = await self.send(new_ws, "CHECK_IF_EXISTS", player.token.hex())
+        assert exists["message"] == "EXISTS"
+
+        old_ws.close()
+        await self.wait_for_socket_count(1)
+        assert player.connected is True
+
+        self.controller.toolate()
+        assert json.loads(await new_ws.read_message())["message"] == "TOOLATE"
+        new_ws.write_message(json.dumps({"message": "ANSWER", "text": "Lincoln"}))
+        await self.round_trip(new_ws)
+
+        assert self.game.answers == [("Alice", "Lincoln")]
+        new_ws.close()
