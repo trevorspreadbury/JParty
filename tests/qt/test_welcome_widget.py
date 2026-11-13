@@ -1565,6 +1565,159 @@ def test_random_result_is_dropped_after_typing(
     assert game.data is None
 
 
+def test_random_keeps_round_choices_after_the_debounce(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Round choices made after Random survive the debounce window (#66)."""
+    picked = _fixture_source_game("Random game")
+    widget, game = _loading_widget(
+        qtbot, monkeypatch, ImmediateLoader(), {"4321": picked}
+    )
+    calls = []
+
+    def counting_get_game(game_id: object) -> object:
+        calls.append(str(game_id))
+        return picked
+
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_game", counting_get_game)
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 4321)
+
+    widget.random(False)
+    widget.round_checkboxes[1].setChecked(False)
+    qtbot.wait(2200)
+
+    assert calls == ["4321"]
+    assert [checkbox.isChecked() for checkbox in widget.round_checkboxes] == [
+        True,
+        False,
+        True,
+    ]
+    assert game.selected_round_indices() == [0, 2]
+
+
+def test_regular_start_reuses_the_loaded_game(
+    qtbot: object,
+    game_with_players: object,
+    fixture_dir: object,
+    temp_dir: object,
+    monkeypatch: object,
+) -> None:
+    """Start in regular mode composes from the loaded game, not a new fetch (#66)."""
+    game = game_with_players
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    source = GameParser().process_game_board_from_html(html, "4453")
+    assert source is not None
+    calls = []
+
+    def counting_get_game(game_id: object) -> object:
+        calls.append(str(game_id))
+        return deepcopy(source)
+
+    for target in (
+        "jparty.services.game_loader.get_game",
+        "jparty.ui.widgets.welcome.get_game",
+    ):
+        monkeypatch.setattr(target, counting_get_game)
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+    monkeypatch.setattr("jparty.services.question_media.QUESTION_MEDIA", temp_dir)
+    monkeypatch.setattr(game, "_save_played_game_html", lambda: None)
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+
+    _type_game_id(widget, "4453")
+    widget.round_checkboxes[1].setChecked(False)
+    widget.on_start_clicked()
+
+    assert calls == ["4453"]
+    assert len(game.data.rounds) == 2
+    assert game.current_round is game.data.rounds[0]
+    assert game.data.rounds[0].categories == source.rounds[0].categories
+    assert isinstance(game.data.rounds[1], FinalBoard)
+
+
+def test_media_import_reloads_the_loaded_regular_game(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> None:
+    """Importing media reparses the loaded game and keeps round choices (#66)."""
+    first = _fixture_source_game("Game 111")
+    reparsed = _fixture_source_game("Game 111 with media")
+    games = {"111": first}
+    widget, game = _loading_widget(qtbot, monkeypatch, ImmediateLoader(), games)
+    source_dir = temp_dir / "source"
+    source_dir.mkdir()
+    (source_dir / "0-0-0.png").write_bytes(b"png")
+    monkeypatch.setattr(
+        "jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media"
+    )
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: str(source_dir))
+    _type_game_id(widget, "111")
+    widget.round_checkboxes[0].setChecked(False)
+    games["111"] = reparsed
+
+    widget.load_question_media()
+
+    assert game.data is reparsed
+    assert game.selected_round_indices() == [1, 2]
+    assert widget.start_button.isEnabled() is True
+
+
+def test_failed_media_reload_keeps_the_loaded_regular_game(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> None:
+    """A failed reload after a media import keeps the game startable (#66)."""
+    first = _fixture_source_game("Game abcdefg")
+    games = {"abcdefg": first}
+    widget, game = _loading_widget(qtbot, monkeypatch, ImmediateLoader(), games)
+    source_dir = temp_dir / "source"
+    source_dir.mkdir()
+    (source_dir / "0-0-0.png").write_bytes(b"png")
+    monkeypatch.setattr(
+        "jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media"
+    )
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: str(source_dir))
+    _type_game_id(widget, "abcdefg")
+    widget.round_checkboxes[0].setChecked(False)
+    games["abcdefg"] = RuntimeError("sheets failed")
+
+    widget.load_question_media()
+
+    assert game.data is first
+    assert game.selected_round_indices() == [1, 2]
+    assert widget.start_button.isEnabled() is True
+    assert "could not be reloaded" in widget.summary_label.text()
+    assert not widget.summary_label.text().startswith("Cannot get game")
+
+    # Rebuilding the summary on a round toggle keeps the warning.
+    widget.round_checkboxes[0].setChecked(True)
+    assert "could not be reloaded" in widget.summary_label.text()
+
+
+def test_failed_typed_load_after_media_reload_still_clears_the_game(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> None:
+    """Only the media reload keeps the old game; a normal failed load clears it."""
+    games = {"111": _fixture_source_game("Game 111"), "222": RuntimeError("down")}
+    widget, game = _loading_widget(qtbot, monkeypatch, ImmediateLoader(), games)
+    source_dir = temp_dir / "source"
+    source_dir.mkdir()
+    monkeypatch.setattr(
+        "jparty.services.question_media.QUESTION_MEDIA", temp_dir / "question_media"
+    )
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: str(source_dir))
+    _type_game_id(widget, "111")
+    widget.load_question_media()
+
+    _type_game_id(widget, "222")
+
+    assert game.data is None
+    assert widget.summary_label.text().startswith("Cannot get game")
+    assert widget.start_button.isEnabled() is False
+
+
 def test_load_saved_drops_a_load_in_flight(qtbot: object, monkeypatch: object) -> None:
     """A load that finishes after Load Saved must not clear the prepared resume."""
     loader = DeferredLoader()
