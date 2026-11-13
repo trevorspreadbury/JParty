@@ -51,6 +51,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Starting the same game twice within one minute no longer writes into the
   first save, which made both saves fail to load. The second save gets its
   own folder with a `-2` (`-3`, ...) suffix (#96).
+- `jparty --debug` no longer crashes on startup. The buzzer server stopped
+  reading the command line, so it no longer rejects JParty's own flags or
+  changes the app's logging setup (#97).
 - The app reports its real version (3.0.0) instead of 2.0.2, including
   packaged builds (#75, #83).
 - Moving or removing players in the resume lobby keeps each player's score

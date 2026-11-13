@@ -118,7 +118,6 @@ def test_resume_with_real_controller_reclaims_signature_player(
 ) -> None:
     """Test a phone reclaims a drawn-signature player and keeps its score."""
     from jparty.services import game_loader
-    from jparty.web import controller as controller_module
     from jparty.web.controller import BuzzerController
 
     signature = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAA+/x=="
@@ -128,9 +127,6 @@ def test_resume_with_real_controller_reclaims_signature_player(
     general_file.write_text(json.dumps(general))
     restored_data = game.data
     monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
-    monkeypatch.setattr(
-        controller_module.tornado.options, "parse_command_line", lambda: None
-    )
     controller = BuzzerController(game)
     game.buzzer_controller = controller
 

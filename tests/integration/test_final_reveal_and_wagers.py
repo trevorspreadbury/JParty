@@ -29,11 +29,8 @@ class RecordingLectern:
 
 
 @pytest.fixture
-def real_controller(game_with_players: object, monkeypatch: object) -> object:
+def real_controller(game_with_players: object) -> object:
     """Attach a real controller, with no server loop, to the test game."""
-    monkeypatch.setattr(
-        controller_module.tornado.options, "parse_command_line", lambda: None
-    )
     controller = BuzzerController(game_with_players)
     controller.connected_players = list(game_with_players.players)
     game_with_players.buzzer_controller = controller
