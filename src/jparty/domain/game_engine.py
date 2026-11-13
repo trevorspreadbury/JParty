@@ -807,7 +807,12 @@ class Game(QObject):
             return None
 
     def _initialize_game_state_dir(self) -> None:
-        """Create the save directory for the current game session if possible.
+        """Create a new, empty save directory for the current game session.
+
+        Every fresh session gets its own folder. When a folder for the same
+        game id and minute already exists (for example a second Start within
+        the same minute), a ``-2``, ``-3``, ... suffix is added instead of
+        reusing it, so one session never writes into another's save.
 
         Returns:
             ``None``.
@@ -815,8 +820,19 @@ class Game(QObject):
         game_id = self.current_game_id()
         if not game_id:
             return
-        self._game_state_dir = GAME_STATES_DIR / self._game_state_dir_name(game_id)
-        self._game_state_dir.mkdir(parents=True, exist_ok=True)
+        base_name = self._game_state_dir_name(game_id)
+        GAME_STATES_DIR.mkdir(parents=True, exist_ok=True)
+        suffix = 1
+        while True:
+            name = base_name if suffix == 1 else f"{base_name}-{suffix}"
+            candidate = GAME_STATES_DIR / name
+            try:
+                candidate.mkdir(exist_ok=False)
+            except FileExistsError:
+                suffix += 1
+                continue
+            break
+        self._game_state_dir = candidate
         self._clear_pending_history()
 
     def _game_state_dir_name(self, game_id: object) -> str:

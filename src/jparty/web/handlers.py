@@ -144,13 +144,12 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         Returns:
             ``None``.
         """
-        if "BUZZ" in message:
-            self.buzz()
-            return
         parsed = tornado.escape.json_decode(message)
         msg = parsed["message"]
         text = parsed["text"]
-        if msg == "NAME":
+        if msg == "BUZZ":
+            self.buzz()
+        elif msg == "NAME":
             self.init_player(text)
         elif msg == "CHECK_IF_EXISTS":
             self.check_if_exists(text)

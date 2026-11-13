@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, TypedDict
 
 import tornado.escape
 import tornado.ioloop
-from tornado.options import define, options
 
 from jparty.app.config import PORT
 from jparty.domain.input import index_to_key
@@ -28,8 +27,6 @@ from jparty.web.app import Application
 if TYPE_CHECKING:
     from jparty.domain.game_engine import Game
     from jparty.web.handlers import BuzzerSocketHandler, LecternSocketHandler
-
-define("port", default=PORT, help="run on the given port", type=int)
 
 MAX_PORT_TRIES = 10
 DEFAULT_HTTP_PORT = 80
@@ -112,9 +109,11 @@ class BuzzerController:
         self.loop = None
         self._loop_thread_id: int | None = None
         self.game = game
-        tornado.options.parse_command_line()
+        # The port comes from config, not ``tornado.options``. Parsing
+        # Tornado's options would read ``sys.argv`` (and reject JParty's own
+        # flags such as ``--debug``) and reconfigure root logging.
         self.app = Application(self)
-        self.port = options.port
+        self.port = PORT
         self.connected_players = []
         self.accepting_players = True
         self.lectern_connections = {}
@@ -587,11 +586,16 @@ class BuzzerController:
         """Forward a player's buzz event into the game engine.
 
         Args:
-            player: Player object that initiated the buzz.
+            player: Player object that initiated the buzz, or ``None`` for a
+                socket that never joined.
 
         Returns:
             ``None``.
+
+        A buzz from a socket with no player is ignored.
         """
+        if player is None:
+            return
         if self.game:
             i_player = self.game.players.index(player)
             self.game.buzz_trigger.emit(i_player)
@@ -697,7 +701,7 @@ class BuzzerController:
             String IP address used by clients on the local network.
         """
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", options.port))
+        s.connect(("8.8.8.8", PORT))
         return s.getsockname()[0]
 
     def host(self) -> str:

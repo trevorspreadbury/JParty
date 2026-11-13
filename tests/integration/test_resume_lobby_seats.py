@@ -7,7 +7,6 @@ import pytest
 
 from jparty.domain.input import index_to_key
 from jparty.domain.state import read_history_file
-from jparty.web import controller as controller_module
 from jparty.web.controller import BuzzerController
 
 pytestmark = pytest.mark.integration
@@ -91,9 +90,6 @@ def lobby(game: object, monkeypatch: object, saved_dir: Path) -> object:
     """Load the save into ``game`` with a real controller in reclaim mode."""
     from jparty.services import game_loader
 
-    monkeypatch.setattr(
-        controller_module.tornado.options, "parse_command_line", lambda: None
-    )
     monkeypatch.setattr(game_loader, "get_game", lambda game_id: game.data)
     monkeypatch.setattr(game, "_update_all_lecterns", lambda: None)
     monkeypatch.setattr(game, "_update_lectern_for_player", lambda *args, **kw: None)

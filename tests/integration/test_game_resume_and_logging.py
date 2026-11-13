@@ -118,7 +118,6 @@ def test_resume_with_real_controller_reclaims_signature_player(
 ) -> None:
     """Test a phone reclaims a drawn-signature player and keeps its score."""
     from jparty.services import game_loader
-    from jparty.web import controller as controller_module
     from jparty.web.controller import BuzzerController
 
     signature = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAA+/x=="
@@ -128,9 +127,6 @@ def test_resume_with_real_controller_reclaims_signature_player(
     general_file.write_text(json.dumps(general))
     restored_data = game.data
     monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
-    monkeypatch.setattr(
-        controller_module.tornado.options, "parse_command_line", lambda: None
-    )
     controller = BuzzerController(game)
     game.buzzer_controller = controller
 
@@ -178,6 +174,129 @@ def test_new_game_records_history_format_and_version(
     saved = json.loads((game._game_state_dir / "general.json").read_text())
     assert saved["history_format"] == HISTORY_FORMAT
     assert saved["jparty_version"] == __version__
+
+
+def _freeze_save_folder_clock(monkeypatch: object, stamp: str) -> None:
+    """Make every new save folder use the local timestamp ``stamp``."""
+
+    class FrozenNow:
+        """A ``datetime.now()`` result that always formats as ``stamp``."""
+
+        def astimezone(self) -> object:
+            """Return this frozen time unchanged."""
+            return self
+
+        def strftime(self, fmt: object) -> str:
+            """Return ``stamp`` for the save-folder format."""
+            assert fmt == "%Y%m%dT%H%M"
+            return stamp
+
+    class FrozenDatetime:
+        """Stand-in for ``datetime`` whose clock never moves."""
+
+        @classmethod
+        def now(cls) -> object:
+            """Return the frozen time."""
+            return FrozenNow()
+
+    monkeypatch.setattr("jparty.domain.game_engine.datetime", FrozenDatetime)
+
+
+def _start_fresh_game(game: object, players: list, data: object) -> object:
+    """Start a fresh session of game 4453 on ``data``; return its save folder."""
+    game.data = data
+    game.set_session_game_id("4453")
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+    game.start_game()
+    return game._game_state_dir
+
+
+def test_fresh_starts_in_the_same_minute_get_separate_save_folders(
+    game: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """A second Start in the same minute must not write into the first save."""
+    from jparty.domain import game_engine
+    from jparty.domain.state import read_history_file
+    from jparty.services import archive_client
+
+    monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
+    monkeypatch.setattr(game_engine, "GAME_STATES_DIR", temp_dir / "game_states")
+    _freeze_save_folder_clock(monkeypatch, "20260418T1435")
+    data = game.data
+
+    first_players = [
+        Player("Alice", DummyWaiter(), 0),
+        Player("Bob", DummyWaiter(), 1),
+    ]
+    first_dir = _start_fresh_game(game, first_players, data)
+    _answer_correctly(game, _first_plain_clue(game.current_round), 0)
+    first_general = (first_dir / "general.json").read_text()
+    first_history = (first_dir / "question_history.jsonl").read_text()
+    game.close_game()
+
+    second_players = [
+        Player("Carol", DummyWaiter(), 0),
+        Player("Dave", DummyWaiter(), 1),
+    ]
+    second_dir = _start_fresh_game(game, second_players, data)
+    _answer_correctly(game, _first_plain_clue(game.current_round), 1)
+
+    assert first_dir.name == "4453-20260418T1435"
+    assert second_dir.name == "4453-20260418T1435-2"
+    assert (first_dir / "general.json").read_text() == first_general
+    assert (first_dir / "question_history.jsonl").read_text() == first_history
+    assert len(read_history_file(first_dir / "question_history.jsonl")) == 1
+    assert len(read_history_file(second_dir / "question_history.jsonl")) == 1
+    second_general = json.loads((second_dir / "general.json").read_text())
+    assert [player["name"] for player in second_general["players"]] == [
+        "Carol",
+        "Dave",
+    ]
+
+    game.close_game()
+    third_dir = _start_fresh_game(game, second_players, data)
+    assert third_dir.name == "4453-20260418T1435-3"
+
+
+def test_resume_keeps_writing_to_an_old_style_save_folder(
+    game: object,
+    monkeypatch: object,
+    temp_dir: object,
+    sample_saved_game_dir: object,
+) -> None:
+    """An existing ``<id>-<minute>`` save resumes in place, not in a new folder."""
+    import shutil
+
+    from jparty.domain import game_engine
+    from jparty.services import archive_client, game_loader
+
+    monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
+    restored_data = game.data
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
+    states_dir = temp_dir / "game_states"
+    monkeypatch.setattr(game_engine, "GAME_STATES_DIR", states_dir)
+    _freeze_save_folder_clock(monkeypatch, "20260422T2130")
+    old_dir = states_dir / "4453-20260422T2130"
+    states_dir.mkdir()
+    shutil.copytree(sample_saved_game_dir, old_dir)
+
+    saved = _resume_and_read_general_state(game, old_dir)
+
+    assert game._game_state_dir == old_dir
+    assert saved["game_id"] == "4453"
+    assert [path.name for path in states_dir.iterdir()] == ["4453-20260422T2130"]
+    game.close_game()
+    game.clear_resume_state()
+
+    fresh_dir = _start_fresh_game(
+        game,
+        [Player("Carol", DummyWaiter(), 0), Player("Dave", DummyWaiter(), 1)],
+        restored_data,
+    )
+    assert fresh_dir.name == "4453-20260422T2130-2"
+    assert json.loads((old_dir / "general.json").read_text()) == saved
 
 
 def test_resume_keeps_the_recorded_format_and_version(
