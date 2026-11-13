@@ -1231,3 +1231,196 @@ def test_start_game_keeps_saving_after_one_source_fails(
     assert sorted(attempted) == ["4453", "5000", "6001"]
     assert sorted(saved) == ["4453", "6001"]
     assert game.current_round is game.data.rounds[0]
+
+
+def _two_final_game_data(game: object) -> object:
+    """Return game data with one board followed by two Final boards."""
+    from jparty.domain import GameData, Question
+
+    return GameData(
+        rounds=[
+            game.data.rounds[0],
+            FinalBoard(
+                "First Final",
+                Question((0, 0), "First clue", "First response", "First Final"),
+            ),
+            FinalBoard(
+                "Second Final",
+                Question((0, 0), "Second clue", "Second response", "Second Final"),
+            ),
+        ],
+        date="January 1, 2026",
+        comments="Two Finals",
+    )
+
+
+def _play_final(game: object, wagers: list[int], rulings: list[bool]) -> None:
+    """Play the current Final: wagers, answers, then judge lowest score first."""
+    for index, amount in enumerate(wagers):
+        game.wager(index, amount)
+    game.open_final()
+    game.final_open_responses()
+    for player in game.players:
+        game.answer(player, f"{player.name} answer")
+    game.final_jeopardy_flow.finished_song()
+    for is_correct in rulings:
+        game.final_next_player()
+        game.final_show_answer()
+        if is_correct:
+            game.final_correct_answer()
+        else:
+            game.final_incorrect_answer()
+    game.final_next_player()
+
+
+def test_two_final_boards_are_both_played_in_order(
+    game_with_players: object,
+) -> None:
+    """With two Final boards, judging the first Final opens the second."""
+    from jparty.domain.state import build_end_game_summary
+
+    game = game_with_players
+    game.data = _two_final_game_data(game)
+    game.set_selected_round_indices([0, 1, 2])
+    first_final, second_final = game.data.rounds[1], game.data.rounds[2]
+    for player, score in zip(game.players, [1000, 800, 600], strict=True):
+        game.score_recorder.apply_manual_score_override(player, score)
+    game.current_round = game.data.rounds[0]
+    for question in game.current_round.questions:
+        question.complete = True
+    game.question_number = 31
+
+    game.next_round()
+    assert game.current_round is first_final
+    _play_final(game, [200, 300, 100], [False, True, False])
+
+    # The first Final's history is saved and the second Final begins with
+    # fresh wagers and answers instead of the game ending.
+    assert game.current_round is second_final
+    assert game.dc.unloaded_finals == 1
+    assert game.dc.loaded_finals == [first_final.question, second_final.question]
+    assert len(game.buzzer_controller.open_wagers_calls) == 2
+    assert all(player.wager is None for player in game.players)
+    assert all(player.finalanswer == "" for player in game.players)
+    assert first_final.question.complete is True
+    assert [player.score for player in game.players] == [800, 1100, 500]
+    events = game.keystroke_manager._KeystrokeManager__events
+    assert events["GENERATE_GRAPHS"].active is False
+
+    # Judged lowest score first: Cara right, Alice right, Bob wrong.
+    _play_final(game, [0, 1100, 500], [True, True, False])
+    assert events["GENERATE_GRAPHS"].active is True
+    assert [player.score for player in game.players] == [800, 0, 1000]
+    assert game.dc.final_window.winner is game.players[2]
+
+    history_file = game._game_state_dir / "question_history.jsonl"
+    entries = [
+        entry
+        for entry in map(json.loads, history_file.read_text().splitlines())
+        if "round_index" in entry
+    ]
+    assert [(entry["round_index"], entry["question_number"]) for entry in entries] == [
+        (1, 31),
+        (2, 32),
+    ]
+    summary = build_end_game_summary(game)
+    assert [player.final_score for player in summary.current_players] == [
+        800,
+        0,
+        1000,
+    ]
+    # Coryat leaves out both Finals.
+    assert [player.coryat for player in summary.current_players] == [0, 0, 0]
+
+
+def _write_two_final_save(
+    saved_dir: object, game_data: object, judged_finals: int
+) -> None:
+    """Write a save for a one-board, two-Final game with some Finals judged."""
+    saved_dir.mkdir()
+    (saved_dir / "general.json").write_text(
+        json.dumps(
+            {
+                "game_id": "4453",
+                "players": [
+                    {"name": "Alice", "player_number": 0},
+                    {"name": "Bob", "player_number": 1},
+                ],
+            }
+        )
+    )
+    lines = []
+    for round_index in range(1 + judged_finals):
+        for question in game_data.rounds[round_index].questions:
+            lines.append(
+                json.dumps(
+                    {
+                        "question_index": [round_index, list(question.index)],
+                        "question_number": len(lines) + 1,
+                        "round_index": round_index,
+                        "category": question.category,
+                        "value": question.value,
+                        "is_daily_double": question.dd,
+                        "buzz_phases": [],
+                        "answer_attempts": [],
+                        "completed_at": 1700000000.0 + len(lines),
+                    }
+                )
+            )
+    (saved_dir / "question_history.jsonl").write_text("\n".join(lines) + "\n")
+
+
+@pytest.mark.parametrize(
+    ("judged_finals", "expect_wagers"),
+    [(1, True), (2, False)],
+    ids=["first-final-judged", "both-finals-judged"],
+)
+def test_resume_with_two_finals_picks_first_unjudged_final(
+    game: object,
+    monkeypatch: object,
+    temp_dir: object,
+    judged_finals: int,
+    expect_wagers: bool,
+) -> None:
+    """Resume opens the next unjudged Final, or the end of game when none."""
+    from jparty.services import game_loader
+
+    restored_data = _two_final_game_data(game)
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
+    saved_dir = temp_dir / f"saved-two-finals-{judged_finals}"
+    _write_two_final_save(saved_dir, restored_data, judged_finals)
+
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(saved_dir)
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+    game.start_game()
+
+    assert game.current_round is restored_data.rounds[2]
+    assert bool(game.buzzer_controller.open_wagers_calls) is expect_wagers
+    assert game.dc.loaded_final_judgement == (0 if expect_wagers else 1)
+    events = game.keystroke_manager._KeystrokeManager__events
+    assert events["GENERATE_GRAPHS"].active is not expect_wagers
+
+
+def test_resume_with_two_finals_before_any_final_opens_the_first(
+    game: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """With the board done and no Final judged, resume opens the first Final."""
+    from jparty.services import game_loader
+
+    restored_data = _two_final_game_data(game)
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
+    saved_dir = temp_dir / "saved-two-finals-0"
+    _write_two_final_save(saved_dir, restored_data, 0)
+
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(saved_dir)
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+    game.start_game()
+
+    assert game.current_round is restored_data.rounds[1]
+    assert game.buzzer_controller.open_wagers_calls

@@ -670,12 +670,15 @@ class Game(QObject):
         playable_round_indices = self._playable_round_indices()
         if not playable_round_indices:
             return self.data.rounds[-1]
-        for round_index in playable_round_indices:
-            round_data = self.data.rounds[round_index]
-            if isinstance(round_data, FinalBoard):
-                continue
-            if not self._round_is_complete(round_data):
-                return round_data
+        # Standard boards come first, then Finals in order, so a save with
+        # several Finals resumes at the first one not yet judged.
+        for want_final in (False, True):
+            for round_index in playable_round_indices:
+                round_data = self.data.rounds[round_index]
+                if isinstance(round_data, FinalBoard) != want_final:
+                    continue
+                if not self._round_is_complete(round_data):
+                    return round_data
         return self.data.rounds[playable_round_indices[-1]]
 
     def _playable_round_indices(self) -> list[int]:
@@ -1461,6 +1464,17 @@ class Game(QObject):
         self.active_question.image_url = None
         self.load_question(self.active_question)
 
+    def has_later_round(self) -> bool:
+        """Return whether a selected round comes after the current one.
+
+        Returns:
+            ``True`` when another playable round follows ``current_round``.
+        """
+        if not self.data or self.current_round not in self.data.rounds:
+            return False
+        i = self.data.rounds.index(self.current_round)
+        return any(index > i for index in self._playable_round_indices())
+
     def next_round(self) -> None:
         """Advance from the current round to the next round in the game.
 
@@ -1475,8 +1489,9 @@ class Game(QObject):
             round_index for round_index in playable_round_indices if round_index > i
         ]
         if not future_round_indices:
-            # Only reached from a regular board: a Final round ends through
-            # FinalJeopardyFlow, so no final window exists yet.
+            # Only reached from a regular board: a Final round with no later
+            # round ends through FinalJeopardyFlow, so no final window exists
+            # yet.
             self.dc.load_final_judgement()
             self.end_game()
             return

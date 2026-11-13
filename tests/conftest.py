@@ -294,6 +294,7 @@ class FakeDisplay:
         self.loaded_finals = []
         self.removed_cards = []
         self.loaded_final_judgement = 0
+        self.unloaded_finals = 0
         self.loaded_final_graphs = 0
         self.loaded_end_game_summaries = []
         self.restart_calls = 0
@@ -320,6 +321,11 @@ class FakeDisplay:
         """Test load final judgement."""
         self.loaded_final_judgement += 1
         self.final_window = FakeFinalWindow()
+
+    def unload_final(self) -> None:
+        """Test unload final."""
+        self.unloaded_finals += 1
+        self.final_window = None
 
     def load_final_graphs(self) -> None:
         """Test load final graphs."""

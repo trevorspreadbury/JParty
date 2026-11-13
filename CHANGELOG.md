@@ -44,6 +44,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `environment.yml` installs from `pyproject.toml` (#75, #83).
 
 ### Fixed
+- An advanced-mode game with more than one Final Jeopardy board now plays
+  every Final in order, with fresh wagers and answers for each. Before, the
+  game ended after the first Final. Load Saved resumes at the first Final not
+  yet judged.
 - The app reports its real version (3.0.0) instead of 2.0.2, including
   packaged builds (#75, #83).
 - Moving or removing players in the resume lobby keeps each player's score

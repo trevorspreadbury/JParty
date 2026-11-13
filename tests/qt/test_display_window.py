@@ -196,6 +196,39 @@ def test_game_with_final_jeopardy_still_shows_summary_and_closes(
     _assert_back_in_lobby(board_window, host_window)
 
 
+def test_second_final_replaces_first_final_on_both_screens(
+    qtbot: object, game_with_players: object, monkeypatch: object
+) -> None:
+    """After one Final is judged, the next Final's clue takes the board slot."""
+    from jparty.domain import FinalBoard, Question
+
+    game = game_with_players
+    board_window, host_window = _game_with_real_windows(qtbot, game, monkeypatch)
+    second_final = FinalBoard(
+        "Second Final",
+        Question((0, 0), "Second clue", "Second response", "Second Final"),
+    )
+    game.data.rounds.append(second_final)
+    game.start_game()
+    game.current_round = game.data.rounds[2]
+    game.active_question = game.current_round.question
+    game.dc.load_final(game.active_question)
+    game.dc.load_final_judgement()
+    first_final_displays = [board_window.final_display, host_window.final_display]
+    game._judgement_round = len(game.players)
+    game.final_next_player()
+
+    assert game.current_round is second_final
+    for window, first_display in zip(
+        (board_window, host_window), first_final_displays, strict=True
+    ):
+        assert not first_display.isVisible()
+        assert window.final_display is None
+        assert window.final_window is None
+        assert _board_slot_widget(window) is window.question_widget
+    assert not game.keystroke_manager._events["GENERATE_GRAPHS"].active
+
+
 def test_hide_question_without_a_question_is_a_no_op(qtbot: object) -> None:
     """Test returning to the board twice does not raise."""
     board_window = StubDisplayWindow(_stub_game())
