@@ -1952,6 +1952,7 @@ def test_importing_media_during_a_load_keeps_start_off(
     assert widget.start_button.isEnabled() is False
     assert game._session_game_id == "111"
     assert "Game 111" not in widget.summary_label.text()
+    assert widget.summary_label.text().startswith("Loading...")
     loader.pending.pop()()
     assert game.data is new
     assert game._session_game_id == "222"

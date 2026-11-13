@@ -2049,9 +2049,13 @@ QCheckBox {{
             # ``set_summary`` would end the loading state and let Start play
             # the previous game under this id (#72). The pending load detects
             # the media again when it finishes.
-            media_text = self.question_media_summary_text(game_id)
-            self._base_summary_text = media_text
-            self.summary_label.setText(media_text)
+            loading_text = "\n\n".join(
+                text
+                for text in ["Loading...", self.question_media_summary_text(game_id)]
+                if text
+            )
+            self._base_summary_text = loading_text
+            self.summary_label.setText(loading_text)
             self.check_start()
             return
         if (
