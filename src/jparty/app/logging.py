@@ -1,40 +1,59 @@
-"""Configure logging and present crash reporting prompts.
+"""Configure logging and present crash dialogs.
 
 This module exposes ``install_crash_reporting``, which initializes the
-application's log file and installs a Qt-aware uncaught exception hook so
-unexpected crashes can be logged and surfaced to the user gracefully, plus
-helpers for opening prefilled error-report emails.
+application's log file and installs Qt-aware uncaught exception hooks for the
+main thread and worker threads, so unexpected crashes are logged and surfaced
+to the user gracefully. The previous launch's log is kept next to the current
+one so a hard crash still leaves evidence behind.
 """
 
 import logging
-import platform
 import sys
+import threading
 import traceback
-import webbrowser
-from urllib.parse import quote
+from pathlib import Path
 
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from jparty import __version__
 from jparty.app.paths import LOG_FILE
 
 log = logging.getLogger(__name__)
 _installed_hook = None
 
 
-def mailto(recipients: object, subject: object, body: object) -> None:
-    """Open the user's mail client with a prefilled message.
+def previous_log_path(log_file: Path) -> Path:
+    """Return where the previous launch's log is kept.
 
     Args:
-        recipients: Comma-separated recipient email addresses without spaces.
-        subject: Email subject line to URL-encode into the mailto link.
-        body: Email body text to URL-encode into the mailto link.
+        log_file: Path of the current log file, e.g. ``latest.log``.
 
     Returns:
-        ``None``.
+        The sibling path with ``.1`` appended, e.g. ``latest.log.1``.
     """
-    webbrowser.open(f"mailto:{recipients}?subject={quote(subject)}&body={quote(body)}")
+    return log_file.with_name(log_file.name + ".1")
+
+
+def rotate_log_file(log_file: Path) -> bool:
+    """Move the existing log aside so this launch starts a fresh one.
+
+    Only one previous log is kept; an older ``.1`` file is replaced.
+
+    Args:
+        log_file: Path of the current log file.
+
+    Returns:
+        ``True`` if the log was rotated (or there was nothing to rotate),
+        ``False`` if the old log could not be moved, for example because
+        another running JParty still has it open on Windows.
+    """
+    if not log_file.exists() or log_file.stat().st_size == 0:
+        return True
+    try:
+        log_file.replace(previous_log_path(log_file))
+    except OSError:
+        return False
+    return True
 
 
 def show_exception_box(log_msg: object) -> None:
@@ -42,7 +61,7 @@ def show_exception_box(log_msg: object) -> None:
 
     Args:
         log_msg: Formatted exception summary string for the crash that was
-            logged.
+            logged. The last line (the exception itself) is shown to the user.
 
     Returns:
         ``None``.
@@ -51,18 +70,14 @@ def show_exception_box(log_msg: object) -> None:
     dialog could not be shown instead of attempting to display it.
     """
     if QApplication.instance() is not None:
-        button = QMessageBox.critical(
+        summary = str(log_msg).strip().splitlines()[-1:] or [""]
+        QMessageBox.critical(
             None,
             "Crashed!",
-            "It looks like JParty ran into a problem. Do you want to send a report? (I would really appreciate it!)",
-            buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            defaultButton=QMessageBox.StandardButton.Yes,
+            "It looks like JParty ran into a problem.\n\n"
+            f"{summary[0]}\n\n"
+            f"Details were written to the log file:\n{LOG_FILE}",
         )
-        if button is QMessageBox.StandardButton.Yes:
-            with LOG_FILE.open(encoding="utf-8", errors="replace") as f:
-                logdata = f.read()
-            message = f"JPARTY ERROR REPORT:\n\nVersion: {__version__}\nPlatform: {platform.platform()}\n\n===LOGS===\n\n\n{logdata}\n"
-            mailto("me@stuartthomas.us", "JParty Error Report", message)
     else:
         log.debug("No QApplication instance available.")
 
@@ -71,7 +86,10 @@ class UncaughtHook(QObject):
     """Install a Qt-compatible handler for otherwise uncaught exceptions.
 
     The hook forwards crash information to the application logger and emits a
-    Qt signal so the UI thread can present a crash dialog safely.
+    Qt signal so the UI thread can present a crash dialog safely. It covers
+    both the main thread (``sys.excepthook``) and worker threads
+    (``threading.excepthook``); a signal emitted from a worker thread is
+    queued onto the UI thread by Qt.
     """
 
     _exception_caught = pyqtSignal(object)
@@ -88,6 +106,7 @@ class UncaughtHook(QObject):
         """
         super().__init__(*args, **kwargs)
         sys.excepthook = self.exception_hook
+        threading.excepthook = self.thread_exception_hook
         self._exception_caught.connect(show_exception_box)
 
     def exception_hook(
@@ -118,6 +137,21 @@ class UncaughtHook(QObject):
             log.critical(f"Uncaught exception:\n {log_msg}", exc_info=exc_info)
             self._exception_caught.emit(log_msg)
 
+    def thread_exception_hook(self, args: threading.ExceptHookArgs) -> None:
+        """Handle an exception that escaped a ``threading.Thread``.
+
+        Args:
+            args: Exception details supplied by ``threading.excepthook``.
+
+        Returns:
+            ``None``.
+        """
+        if args.exc_type is SystemExit:
+            return
+        thread_name = args.thread.name if args.thread is not None else "unknown"
+        log.error("Uncaught exception in thread %s", thread_name)
+        self.exception_hook(args.exc_type, args.exc_value, args.exc_traceback)
+
 
 def install_crash_reporting() -> "UncaughtHook":
     """Initialize the log file and install the uncaught exception hook.
@@ -133,14 +167,17 @@ def install_crash_reporting() -> "UncaughtHook":
     if _installed_hook is not None:
         return _installed_hook
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    LOG_FILE.touch(exist_ok=True)
+    rotated = rotate_log_file(LOG_FILE)
+    # Append rather than truncate: if rotation failed, the old log survives.
     logging.basicConfig(
         filename=LOG_FILE,
         encoding="utf-8",
         level=logging.DEBUG,
-        filemode="w",
+        filemode="a",
         force=True,
     )
     log.info("Logging initialized at %s", LOG_FILE)
+    if not rotated:
+        log.warning("Could not move the previous log aside; appending to it")
     _installed_hook = UncaughtHook()
     return _installed_hook

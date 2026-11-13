@@ -21,7 +21,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 - `jparty self-check [--report FILE]` checks an installed or packaged app's
-  metadata, assets, sound, QR codes and graphs without opening a window (#83).
+  metadata, assets, sound and QR codes without opening a window (#83).
 - New saves record `history_format` and `jparty_version` in `general.json`
   (#60).
 

@@ -217,7 +217,7 @@ dist/JParty.exe self-check --report self-check.txt
 On macOS the app is `dist/JParty.app/Contents/MacOS/JParty`.
 
 `self-check` checks the package version, bundled assets, the game sounds
-(through Qt Multimedia), the buzzer QR code, and chart rendering. It also
+(through Qt Multimedia), and the buzzer QR code. It also
 works on a source install: `uv run jparty self-check`.
 
 To build and check the app in one step, run the opt-in build smoke test. It
