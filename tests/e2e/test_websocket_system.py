@@ -9,6 +9,7 @@ from tornado.testing import AsyncHTTPTestCase as TornadoAsyncHTTPTestCase
 from tornado.testing import gen_test
 from tornado.websocket import websocket_connect
 
+from jparty.app.config import MAXPLAYERS
 from jparty.domain.models import Player
 from jparty.web.app import Application
 
@@ -177,6 +178,34 @@ class TestBuzzerSocketSystem(TornadoAsyncHTTPTestCase):
         reconnect_message = json.loads(await ws2.read_message())
         assert reconnect_message["message"] == "EXISTS"
         ws2.close()
+
+    @gen_test(timeout=10)
+    async def test_players_can_join_up_to_maxplayers(self) -> None:
+        """Every seat up to MAXPLAYERS joins, and the next phone is told it's full."""
+        sockets = []
+        for player_index in range(MAXPLAYERS):
+            ws = await websocket_connect(
+                self.get_url("/buzzersocket").replace("http", "ws")
+            )
+            sockets.append(ws)
+            ws.write_message(
+                json.dumps({"message": "NAME", "text": f"Player {player_index}"})
+            )
+            message = json.loads(await ws.read_message())
+            assert message["message"] == "TOKEN"
+        assert [player.player_number for player in self.controller.game.players] == (
+            list(range(MAXPLAYERS))
+        )
+        extra = await websocket_connect(
+            self.get_url("/buzzersocket").replace("http", "ws")
+        )
+        sockets.append(extra)
+        extra.write_message(json.dumps({"message": "NAME", "text": "One too many"}))
+        message = json.loads(await extra.read_message())
+        # #86 renames the server message to GAMEFULL; accept either until both land.
+        assert message["message"] in {"FULL", "GAMEFULL"}
+        for ws in sockets:
+            ws.close()
 
     @gen_test(timeout=10)
     async def test_server_keeps_socket_open_when_pongs_are_late(self) -> None:

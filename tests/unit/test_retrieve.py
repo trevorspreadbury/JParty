@@ -256,6 +256,45 @@ def test_get_game_parses_cached_html_without_network(
     assert len(game.rounds) == 3
 
 
+def test_get_game_reparses_html_fetched_this_session_without_network(
+    temp_dir: object, monkeypatch: object, fixture_dir: object
+) -> None:
+    """An unsaved game fetched earlier is reparsed from memory, not refetched (#66)."""
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", temp_dir / "missing")
+    monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {"4453": html})
+    _block_network(monkeypatch)
+
+    game = retrieve.get_game("4453")
+
+    assert game is not None
+    assert len(game.rounds) == 3
+
+
+def test_get_game_fetches_when_html_in_memory_is_not_a_game(
+    temp_dir: object, monkeypatch: object, fixture_dir: object
+) -> None:
+    """A non-game page held in memory falls back to a network fetch."""
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    calls = []
+
+    def fake_wayback(game_id: object) -> str:
+        calls.append(game_id)
+        return html
+
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", temp_dir / "missing")
+    monkeypatch.setattr(
+        retrieve, "_LOADED_GAME_HTML_CACHE", {"4453": "<html>rate limited</html>"}
+    )
+    monkeypatch.setattr(retrieve, "get_wayback_game_html", fake_wayback)
+
+    game = retrieve.get_game("4453")
+
+    assert calls == ["4453"]
+    assert game is not None
+    assert retrieve._LOADED_GAME_HTML_CACHE["4453"] == html
+
+
 def test_get_game_returns_none_for_unparseable_remote_html(
     temp_dir: object, monkeypatch: object, fixture_dir: object
 ) -> None:

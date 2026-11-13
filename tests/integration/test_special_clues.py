@@ -51,6 +51,73 @@ def test_daily_double_load_and_wager_flow(
     )
 
 
+def _capture_dd_wager_cap(game: object, monkeypatch: object, player: object) -> int:
+    """Open the Daily Double wager prompt and return its maximum."""
+    captured = {}
+
+    def fake_get_int(*args: object, **kwargs: object) -> tuple[int, bool]:
+        captured["max"] = kwargs["max"]
+        return (5, True)
+
+    monkeypatch.setattr("jparty.domain.game_engine.QInputDialog.getInt", fake_get_int)
+    question = game.current_round.get_question(0, 0)
+    question.dd = True
+    game.active_question = question
+    game.get_dd_wager(player)
+    return captured["max"]
+
+
+def test_daily_double_cap_uses_board_top_value_when_game_starts_in_dj(
+    game_with_players: object, monkeypatch: object
+) -> None:
+    """A Double Jeopardy + Final game caps Daily Doubles at the board's top value."""
+    game = game_with_players
+    game.data.rounds = game.data.rounds[1:]
+    game.current_round = game.data.rounds[0]
+    game.players[0].score = 0
+
+    assert _capture_dd_wager_cap(game, monkeypatch, game.players[0]) == 2000
+
+
+def test_daily_double_cap_ignores_played_daily_double_wagers(
+    game_with_players: object, monkeypatch: object
+) -> None:
+    """A played Daily Double's wager does not raise the board's top value."""
+    game = game_with_players
+    played_dd = game.current_round.get_question(1, 0)
+    played_dd.dd = True
+    played_dd.complete = True
+    played_dd.value = 5000
+    game.players[0].score = 0
+
+    assert _capture_dd_wager_cap(game, monkeypatch, game.players[0]) == 1000
+
+
+def test_daily_double_cap_counts_unplayed_daily_doubles_in_the_top_row(
+    game_with_players: object, monkeypatch: object
+) -> None:
+    """Unplayed Daily Doubles still set the cap when they fill the top row."""
+    game = game_with_players
+    questions = game.current_round.questions
+    top_value = max(question.value for question in questions)
+    for question in questions:
+        if question.value == top_value:
+            question.dd = True
+    game.players[0].score = 0
+
+    assert _capture_dd_wager_cap(game, monkeypatch, game.players[0]) == top_value
+
+
+def test_daily_double_cap_uses_score_when_higher_than_board(
+    game_with_players: object, monkeypatch: object
+) -> None:
+    """A player with more than the top clue value can wager their score."""
+    game = game_with_players
+    game.players[0].score = 3400
+
+    assert _capture_dd_wager_cap(game, monkeypatch, game.players[0]) == 3400
+
+
 def test_daily_double_incorrect_returns_to_board(game_with_players: object) -> None:
     """Test test daily double incorrect returns to board."""
     game = game_with_players

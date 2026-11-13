@@ -220,6 +220,20 @@ class Player:
         """
         return int.from_bytes(self.token, sys.byteorder)
 
+    def clamp_final_wager(self, amount: int) -> int:
+        """Limit a Final Jeopardy wager to what this player may bet.
+
+        Wagers come from phones, so they are not trusted. A negative wager
+        would turn a wrong answer into a gain.
+
+        Args:
+            amount: Requested wager.
+
+        Returns:
+            ``amount`` clamped to ``0..max(score, 0)``.
+        """
+        return max(0, min(int(amount), max(self.score, 0)))
+
     def state(self) -> object:
         """Return a minimal serializable view of the player's current state.
 

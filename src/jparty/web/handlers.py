@@ -159,7 +159,7 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         elif msg == "WAGER":
             self.wager(text)
         elif msg == "ANSWER":
-            self.application.controller.answer(self.player, text)
+            self.application.controller.answer(self.player, text, self)
         else:
             raise Exception("Unknown message")
 
@@ -187,7 +187,7 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
             self.send("GAMESTARTED")
             return
         if len(self.controller.connected_players) >= MAXPLAYERS:
-            self.send("FULL")
+            self.send("GAMEFULL")
             return
         player_index = len(self.controller.connected_players)
         self.player = Player(name, self, player_index)
@@ -245,9 +245,16 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
 
         Returns:
             ``None``.
+
+        Text that is not a whole number is ignored. The controller checks the
+        phase and clamps the amount.
         """
-        self.application.controller.wager(self.player, int(text))
-        self.player.page = "null"
+        try:
+            amount = int(text)
+        except (TypeError, ValueError):
+            logging.warning("Ignoring invalid wager %r from %s", text, self.player)
+            return
+        self.application.controller.wager(self.player, amount)
 
     def toolate(self) -> None:
         """Send a too-late notification to this player client.
@@ -275,10 +282,21 @@ class LecternHandler(tornado.web.RequestHandler):
     def get(self) -> None:
         """Render the lectern page for the requested player slot.
 
+        The player number is written into a script on the page, so anything
+        other than a valid slot number is rejected.
+
         Returns:
             ``None``.
+
+        Raises:
+            tornado.web.HTTPError: 400 when ``player`` is not a valid slot.
         """
-        player_number = self.get_argument("player", "0")
+        try:
+            player_number = int(self.get_argument("player", "0"))
+        except ValueError:
+            raise tornado.web.HTTPError(400, "Invalid player number") from None
+        if not 0 <= player_number < MAXPLAYERS:
+            raise tornado.web.HTTPError(400, "Player number out of range")
         self.render("lectern.html", player_number=player_number)
 
 
