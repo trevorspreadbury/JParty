@@ -2168,6 +2168,9 @@ QCheckBox {{
             self.show_summary()
             return
         self._loading_summary = False
+        # The save replaced the game the textbox named, so it no longer
+        # counts as loaded (a failed Random must not "keep" it as that id).
+        self._loaded_summary_game_id = ""
         self.resume_path = selected_dir
         self.presenter.set_resume_path(selected_dir)
         self.start_button.setText("Resume!")

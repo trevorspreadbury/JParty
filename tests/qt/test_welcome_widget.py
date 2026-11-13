@@ -2055,6 +2055,35 @@ def test_failed_random_keeps_the_loaded_game(
     assert widget.start_button.isEnabled() is True
 
 
+def test_failed_random_after_load_saved_does_not_keep_the_save_as_typed_game(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A failed Random after Load Saved must not offer the save as the typed game.
+
+    Load Saved replaces the game the textbox named, so "Kept game 111." would
+    start the save's game as a new game under id 111.
+    """
+    widget, game = _loading_widget(
+        qtbot,
+        monkeypatch,
+        ImmediateLoader(),
+        {"111": _fixture_source_game("Game 111"), "333": None},
+    )
+    _type_game_id(widget, "111")
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved"
+    )
+    widget.load_saved_game()
+    game.data = _fixture_source_game("Saved game")
+    assert widget.start_button.text() == "Resume!"
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 333)
+
+    widget.random(False)
+
+    assert "Kept game" not in widget.summary_label.text()
+    assert widget.start_button.isEnabled() is False
+
+
 def test_enabling_advanced_clears_a_prepared_resume(
     qtbot: object, monkeypatch: object
 ) -> None:
