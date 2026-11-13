@@ -58,6 +58,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   every Final in order, with fresh wagers and answers for each. Before, the
   game ended after the first Final. Load Saved resumes at the first Final not
   yet judged (#98).
+- Each launch keeps the previous log as `latest.log.1` instead of wiping it,
+  so a crash still leaves a log behind. Errors in background threads are now
+  logged and show the crash dialog too (#109).
 - The app reports its real version (3.0.0) instead of 2.0.2, including
   packaged builds (#75, #83).
 - Moving or removing players in the resume lobby keeps each player's score
@@ -97,6 +100,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Crash reporting is installed at startup again, so unhandled errors show a
   dialog and reach the log (#50).
 - Tests stay offline and catch more real bugs (#84, #89).
+
+### Removed
+- The crash dialog no longer offers to email a report. It shows the error and
+  where the log file is instead (#109).
+- The unused matplotlib score graph, the `game_scores` folder and the
+  matplotlib dependency. The end-of-game summary is unchanged (#109).
 
 ## [3.0.0-rc.1] - 2026-05-02
 
