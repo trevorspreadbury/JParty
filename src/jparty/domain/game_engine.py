@@ -113,6 +113,8 @@ class Game(QObject):
         self.soliciting_player = False
         self.early_buzzes = set()
         self.responses_open_time = None
+        # True only between start_final and the Final clue being shown.
+        self.final_wagers_open = False
         self.song_player = SongPlayer()
         self._judgement_round = 0
         self._sorted_players = None
@@ -1532,6 +1534,7 @@ class Game(QObject):
         logging.info("start final")
         for player in self.players:
             self.dc.player_widget(player).set_lights(True)
+        self.final_wagers_open = True
         self.buzzer_controller.open_wagers()
         # Lets the host open Final without waiting on a missing wager.
         self.keystroke_manager.activate("FORCE_OPEN_FINAL")
@@ -1547,8 +1550,15 @@ class Game(QObject):
 
         Returns:
             ``None``.
+
+        A wager that arrives after the clue is shown is ignored. The server
+        can accept a wager just before the host presses Enter, and its signal
+        reaches this thread just after, when the forced 0 must stand.
         """
         player = self.players[i_player]
+        if not self.final_wagers_open:
+            logging.info(f"Ignoring {player}'s wager; the Final clue is open")
+            return
         amount = player.clamp_final_wager(amount)
         player.wager = amount
         self.dc.player_widget(player).set_lights(False)
@@ -1924,6 +1934,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
+        self.final_wagers_open = False
         self.dc.question_widget.show_question()
         self.keystroke_manager.activate("FINAL_OPEN_RESPONSES")
 
