@@ -4,12 +4,10 @@ This module renders player nameplates, scores, podium backgrounds, and the
 host-only controls used to remove or reorder players during the lobby.
 """
 
-import time
 from base64 import urlsafe_b64decode
 from functools import partial
-from threading import Thread
 
-from PyQt6.QtCore import QPoint, QSize, Qt
+from PyQt6.QtCore import QPoint, QSize, Qt, QTimer
 from PyQt6.QtGui import QColor, QIcon, QImage, QPainter, QPalette, QPixmap
 from PyQt6.QtWidgets import QHBoxLayout, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
@@ -17,6 +15,9 @@ from jparty.domain.state import HistoryFileError
 from jparty.ui.styles import MyLabel
 from jparty.ui.widgets.common import resource_path
 from jparty.ui.widgets.score_correction import ScoreCorrectionDialog
+
+BUZZ_HINT_MS = 250
+LIGHTS_STEP_MS = 1000
 
 
 class NameLabel(MyLabel):
@@ -93,9 +94,16 @@ class PlayerWidget(QWidget):
         super().__init__(parent)
         self.player = player
         self.game = game
-        self.__buzz_hint_thread = None
-        self.__flash_thread = None
-        self.__light_thread = None
+        # Animations run on GUI-thread timers owned by this widget, so they
+        # stop with it and never touch widgets from another thread.
+        self.__buzz_hint_timer = QTimer(self)
+        self.__buzz_hint_timer.setSingleShot(True)
+        self.__buzz_hint_timer.setInterval(BUZZ_HINT_MS)
+        self.__buzz_hint_timer.timeout.connect(lambda: self.set_lights(False))
+        self.__light_step = 0
+        self.__light_timer = QTimer(self)
+        self.__light_timer.setInterval(LIGHTS_STEP_MS)
+        self.__light_timer.timeout.connect(self.__next_light)
         self.name_label = NameLabel(player.name, self)
         self.score_label = MyLabel("$0", self.startScoreFontSize, self)
         self.update_score()
@@ -166,20 +174,14 @@ class PlayerWidget(QWidget):
         self.background = self.active_background if val else self.main_background
         self.update()
 
-    def __buzz_hint(self) -> None:
-        """Return buzz hint."""
-        self.set_lights(True)
-        time.sleep(0.25)
-        self.set_lights(False)
-
     def buzz_hint(self) -> None:
-        """Flash the podium briefly as a buzz feedback hint.
+        """Light the podium for 250 ms as buzz feedback.
 
         Returns:
             ``None``.
         """
-        self.__buzz_hint_thread = Thread(target=self.__buzz_hint, name="buzz_hint")
-        self.__buzz_hint_thread.start()
+        self.set_lights(True)
+        self.__buzz_hint_timer.start()
 
     def update_score(self) -> None:
         """Refresh the displayed score text and color.
@@ -199,11 +201,15 @@ class PlayerWidget(QWidget):
     def run_lights(self) -> None:
         """Start the animated buzz-winning light sequence.
 
+        Each countdown image shows for one second, then the podium stays lit
+        until ``stop_lights`` is called.
+
         Returns:
             ``None``.
         """
-        self.__light_thread = Thread(target=self.__lights, name="lights")
-        self.__light_thread.start()
+        self.__light_step = 0
+        self.__show_light_step()
+        self.__light_timer.start()
 
     def stop_lights(self) -> None:
         """Stop any running light animation and restore the base state.
@@ -211,20 +217,22 @@ class PlayerWidget(QWidget):
         Returns:
             ``None``.
         """
-        self.__light_thread = None
+        self.__light_timer.stop()
         self.set_lights(False)
+
+    def __show_light_step(self) -> None:
+        """Show the countdown image for the current light step."""
+        self.background = self.lights_backgrounds[self.__light_step]
         self.update()
 
-    def __lights(self) -> None:
-        """Return lights."""
-        for img in self.lights_backgrounds:
-            self.background = img
-            self.update()
-            time.sleep(1.0)
-            if self.__light_thread is None:
-                return None
-        self.set_lights(True)
-        self.update()
+    def __next_light(self) -> None:
+        """Advance the light countdown, leaving the podium lit at the end."""
+        self.__light_step += 1
+        if self.__light_step < len(self.lights_backgrounds):
+            self.__show_light_step()
+        else:
+            self.__light_timer.stop()
+            self.set_lights(True)
 
     def mousePressEvent(self, event: object) -> None:
         """Handle host clicks for score edits or Daily Double player choice.

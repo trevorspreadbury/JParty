@@ -3,16 +3,19 @@
 This module contains the illuminated border panels shown beside the board on
 the host and audience displays. The host variants can also flash keyboard hint
 graphics to guide game control.
+
+Every animation is driven by a ``QTimer`` on the Qt GUI thread. Widgets must
+not be touched from Python threads, which hang or crash the app on quit.
 """
 
-import time
-from threading import Thread, current_thread
-
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QSize, Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QPainter, QPixmap
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from jparty.ui.widgets.common import resource_path
+
+FLASH_STEP_MS = 200
+HINT_BLINK_MS = 500
 
 
 class Borders:
@@ -30,6 +33,12 @@ class Borders:
         super().__init__()
         self.left = self.create_widget(parent, -1)
         self.right = self.create_widget(parent, 1)
+        # Parenting the timer to a border widget means it can never fire after
+        # the widgets are destroyed.
+        self._flash_steps = []
+        self._flash_timer = QTimer(self.left)
+        self._flash_timer.setInterval(FLASH_STEP_MS)
+        self._flash_timer.timeout.connect(self._next_flash_step)
 
     def __iter__(self) -> object:
         """Iterate over the left and right border widgets.
@@ -51,26 +60,28 @@ class Borders:
         """
         return BorderWidget(parent, d)
 
-    def __flash(self) -> None:
-        """Blink the borders briefly to draw attention.
+    def _next_flash_step(self) -> None:
+        """Apply the next on/off state of a running flash.
 
         Returns:
             ``None``.
         """
-        self.lights(False)
-        time.sleep(0.2)
-        self.lights(True)
-        time.sleep(0.2)
-        self.lights(False)
+        if not self._flash_steps:
+            self._flash_timer.stop()
+            return
+        self.lights(self._flash_steps.pop(0))
+        if not self._flash_steps:
+            self._flash_timer.stop()
 
     def flash(self) -> None:
-        """Start a background thread that flashes both border widgets.
+        """Blink both borders off, on, then off, 200 ms apart.
 
         Returns:
             ``None``.
         """
-        self.__flash_thread = Thread(target=self.__flash, name="flash")
-        self.__flash_thread.start()
+        self.lights(False)
+        self._flash_steps = [True, False]
+        self._flash_timer.start()
 
     def lights(self, val: object) -> None:
         """Turn both border widgets on or off.
@@ -84,12 +95,21 @@ class Borders:
         for b in self:
             b.lights(val)
 
+    def stop(self) -> None:
+        """Stop any running border animation.
+
+        Returns:
+            ``None``.
+        """
+        self._flash_steps = []
+        self._flash_timer.stop()
+
 
 class HostBorders(Borders):
     """Extend borders with flashing keyboard hint support for the host."""
 
     def __init__(self, parent: object) -> None:
-        """Initialize host borders and hint-thread state.
+        """Initialize host borders and the hint blink timer.
 
         Args:
             parent: Parent host display widget.
@@ -98,7 +118,11 @@ class HostBorders(Borders):
             ``None``.
         """
         super().__init__(parent)
-        self.__active_thread = None
+        self._hint_key = None
+        self._hint_shown = False
+        self._hint_timer = QTimer(self.left)
+        self._hint_timer.setInterval(HINT_BLINK_MS)
+        self._hint_timer.timeout.connect(self._toggle_hints)
 
     def create_widget(self, parent: object, d: object) -> object:
         """Create a host-specific border widget.
@@ -112,8 +136,32 @@ class HostBorders(Borders):
         """
         return HostBorderWidget(parent, d)
 
-    def __flash_hints(self, key: object) -> None:
-        """Blink the requested hint graphic on both borders.
+    def _set_hints_shown(self, shown: bool) -> None:
+        """Show or hide the active hint graphic on both borders.
+
+        Args:
+            shown: Whether the hint graphic should be visible.
+
+        Returns:
+            ``None``.
+        """
+        self._hint_shown = shown
+        for b in self:
+            if shown:
+                b.show_hints(self._hint_key)
+            else:
+                b.hide_hints(self._hint_key)
+
+    def _toggle_hints(self) -> None:
+        """Flip the active hint graphic for the next half-second blink.
+
+        Returns:
+            ``None``.
+        """
+        self._set_hints_shown(not self._hint_shown)
+
+    def _start_hints(self, key: str) -> None:
+        """Start blinking a hint graphic, replacing any other hint.
 
         Args:
             key: Hint key identifier, such as ``"arrow"`` or ``"space"``.
@@ -121,22 +169,24 @@ class HostBorders(Borders):
         Returns:
             ``None``.
         """
-        while self.__active_thread == current_thread():
-            for b in self:
-                b.show_hints(key)
-            time.sleep(0.5)
-            for b in self:
-                b.hide_hints(key)
-            time.sleep(0.5)
+        self._hint_key = key
+        self._set_hints_shown(True)
+        self._hint_timer.start()
 
-    def buzz_hint(self) -> None:
-        """Start the background buzz-hint animation thread.
+    def _stop_hints(self, key: str) -> None:
+        """Stop blinking hints and clear the hint graphic.
+
+        Args:
+            key: Hint key identifier being cleared.
 
         Returns:
             ``None``.
         """
-        self.__buzz_hint_thread = Thread(target=self.__buzz_hint, name="buzz_hint")
-        self.__buzz_hint_thread.start()
+        self._hint_timer.stop()
+        self._hint_key = None
+        self._hint_shown = False
+        for b in self:
+            b.hide_hints(key)
 
     def arrowhints(self, val: object) -> None:
         """Show or hide flashing arrow-key hints.
@@ -151,14 +201,9 @@ class HostBorders(Borders):
             b.colors = val
             b.update()
         if val:
-            self.__active_thread = Thread(
-                target=self.__flash_hints, args=("arrow",), name="arrow_hints"
-            )
-            self.__active_thread.start()
+            self._start_hints("arrow")
         else:
-            self.__active_thread = None
-            for b in self:
-                b.hide_hints("arrow")
+            self._stop_hints("arrow")
 
     def spacehints(self, val: object) -> None:
         """Show or hide flashing space-bar hints.
@@ -170,26 +215,18 @@ class HostBorders(Borders):
             ``None``.
         """
         if val:
-            self.__active_thread = Thread(
-                target=self.__flash_hints, args=("space",), name="space_hints"
-            )
-            self.__active_thread.start()
+            self._start_hints("space")
         else:
-            self.__active_thread = None
-            for b in self:
-                b.hide_hints("space")
+            self._stop_hints("space")
 
-    def closeEvent(self, event: object) -> None:
-        """Stop hint activity when the host border widget closes.
-
-        Args:
-            event: Qt close event object.
+    def stop(self) -> None:
+        """Stop the border flash and any blinking hints.
 
         Returns:
             ``None``.
         """
-        super().closeEvent(event)
-        self.__active_hint = None
+        super().stop()
+        self._hint_timer.stop()
 
 
 class BorderWidget(QWidget):

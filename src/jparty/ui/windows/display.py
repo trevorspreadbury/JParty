@@ -281,7 +281,7 @@ class DisplayWindow(QMainWindow):
             self.board_layout.replaceWidget(current_widget, self.graph_display)
 
     def closeEvent(self, event: object) -> None:
-        """Close the game when the window is closed.
+        """Stop border animations and close the game when the window closes.
 
         Args:
             event: Qt close event object.
@@ -290,6 +290,7 @@ class DisplayWindow(QMainWindow):
             ``None``.
         """
         super().closeEvent(event)
+        self.borders.stop()
         self.game.close()
 
     def player_widget(self, player: object) -> object:
