@@ -1149,21 +1149,6 @@ def test_get_game_does_not_write_the_game_id_to_the_environment(
     assert "JPARTY_GAME_ID" not in os.environ
 
 
-def _clue_line(round_index: int, question: object, question_number: int) -> dict:
-    """Return a clue history line for ``question`` numbered ``round_index``."""
-    return {
-        "question_index": [round_index, list(question.index)],
-        "question_number": question_number,
-        "round_index": round_index,
-        "category": question.category,
-        "value": question.value,
-        "is_daily_double": question.dd,
-        "buzz_phases": [],
-        "answer_attempts": [],
-        "completed_at": float(question_number),
-    }
-
-
 def _game_with_distinct_rounds() -> GameData:
     """Return Jeopardy, Double Jeopardy and Final boards with different categories."""
     rounds = []
