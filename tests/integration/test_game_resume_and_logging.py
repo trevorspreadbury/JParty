@@ -131,7 +131,7 @@ def test_new_game_records_history_format_and_version(
     from jparty.services import archive_client
 
     monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
-    monkeypatch.setenv("JPARTY_GAME_ID", "4453")
+    game.set_session_game_id("4453")
     game.start_game()
 
     saved = json.loads((game._game_state_dir / "general.json").read_text())
@@ -284,6 +284,74 @@ def test_resume_finished_board_without_final_can_end_game(
     assert events["NEXT_ROUND"].active is True
     game.keystroke_manager.call(Qt.Key.Key_Space)
     assert events["GENERATE_GRAPHS"].active is True
+
+
+def test_resume_after_final_goes_to_end_of_game(
+    game: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """Resuming a save whose Final was judged must not reopen wagering."""
+    from jparty.services import game_loader
+
+    restored_data = game.data
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
+    saved_dir = temp_dir / "saved-after-final"
+    saved_dir.mkdir()
+    with (saved_dir / "general.json").open("w") as f:
+        json.dump(
+            {
+                "game_id": "4453",
+                "players": [
+                    {"name": "Alice", "player_number": 0},
+                    {"name": "Bob", "player_number": 1},
+                ],
+            },
+            f,
+        )
+    history_entries = []
+    for round_index, round_data in enumerate(restored_data.rounds):
+        for question in round_data.questions:
+            history_entries.append(
+                {
+                    "question_index": [round_index, list(question.index)],
+                    "question_number": len(history_entries) + 1,
+                    "round_index": round_index,
+                    "category": question.category,
+                    "value": question.value,
+                    "is_daily_double": question.dd,
+                    "buzz_phases": [],
+                    "answer_attempts": [],
+                    "completed_at": 1700000000.0 + len(history_entries),
+                }
+            )
+    # Bob wagered 300 on Final and got it right.
+    history_entries[-1]["answer_attempts"] = [
+        {
+            "player_index": 1,
+            "answer_correct": True,
+            "score_before": 0,
+            "score_after": 300,
+        }
+    ]
+    with (saved_dir / "question_history.jsonl").open("w") as f:
+        for entry in history_entries:
+            json.dump(entry, f)
+            f.write("\n")
+
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(saved_dir)
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+    game.start_game()
+
+    assert isinstance(game.current_round, FinalBoard)
+    assert not game.buzzer_controller.open_wagers_calls
+    assert game.dc.loaded_final_judgement == 1
+    assert game.dc.final_window.winner is players[1]
+    events = game.keystroke_manager._KeystrokeManager__events
+    assert events["GENERATE_GRAPHS"].active is True
+    history_lines = (saved_dir / "question_history.jsonl").read_text().splitlines()
+    assert len(history_lines) == len(history_entries)
 
 
 def test_resume_skips_deselected_rounds_when_advancing(
@@ -769,7 +837,7 @@ def test_start_game_saves_html_when_play_begins(
     monkeypatch.setattr(
         archive_client, "save_game_html", lambda game_id: saved_game_ids.append(game_id)
     )
-    monkeypatch.setenv("JPARTY_GAME_ID", "4453")
+    game.set_session_game_id("4453")
     game.start_game()
     assert saved_game_ids == ["4453"]
     assert game.current_round is game.data.rounds[0]
@@ -783,7 +851,7 @@ def test_start_game_filters_rounds_to_selected_indices(
     from jparty.services import archive_client
 
     monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
-    monkeypatch.setenv("JPARTY_GAME_ID", "4453")
+    game.set_session_game_id("4453")
     game.set_selected_round_indices([0, 2])
     original_final_round = game.data.rounds[2]
     game.start_game()
@@ -799,7 +867,7 @@ def test_next_round_ends_game_when_no_later_round_is_selected(
 
     game = game_with_players
     monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
-    monkeypatch.setenv("JPARTY_GAME_ID", "4453")
+    game.set_session_game_id("4453")
     game.set_selected_round_indices([0])
     game.dc.final_window = None
     game.start_game()

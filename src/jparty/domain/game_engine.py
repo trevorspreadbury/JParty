@@ -64,9 +64,7 @@ from jparty.services.game_loader import build_game_from_board_selection_configs
 from jparty.ui.widgets.common import CompoundObject, SongPlayer
 
 QUESTION_INDEX_PART_COUNT = 2
-DEFAULT_RESUME_ROUND_INDEX = 1
-DEFAULT_DAILY_DOUBLE_J_ROUND_WAGER = 1000
-DEFAULT_DAILY_DOUBLE_DJ_ROUND_WAGER = 2000
+DEFAULT_DAILY_DOUBLE_WAGER_CAP = 1000
 
 
 def _ends_with_newline(path: Path) -> bool:
@@ -758,7 +756,14 @@ class Game(QObject):
         if isinstance(self.current_round, FinalBoard):
             self.dc.load_final(self.current_round.question)
             self.active_question = self.current_round.question
-            self.start_final()
+            if self.current_round.question.complete:
+                # Final was judged before the app closed, so its wagers and
+                # rulings are already in the history. Go to the end of the
+                # game instead of opening wagers again.
+                self.dc.load_final_judgement()
+                self.end_game()
+            else:
+                self.start_final()
         else:
             self.dc.board_widget.load_round(self.current_round)
             # Space is normally enabled by back_to_board after the last clue, so
@@ -839,12 +844,15 @@ class Game(QObject):
         return f"{game_id}-{timestamp}"
 
     def current_game_id(self) -> object:
-        """Return the current game id from the process environment.
+        """Return the id of the game being set up or played.
+
+        For a Frankenstein game this is the composed session id, not the id of
+        any one source game.
 
         Returns:
-            The current ``JPARTY_GAME_ID`` value, or an empty string.
+            The session game id, or an empty string when none is set.
         """
-        return self._session_game_id or os.environ.get("JPARTY_GAME_ID", "")
+        return self._session_game_id
 
     def _get_current_game_state(self) -> object:
         """Return the serializable high-level state for this session.
@@ -1710,7 +1718,7 @@ class Game(QObject):
         if not data:
             logging.warning(f"No score data found for player set: {players}")
             return
-        game_id = os.environ.get("JPARTY_GAME_ID", "unknown")
+        game_id = self.current_game_id() or "unknown"
         fig = None
         try:
             (fig, ax) = plt.subplots(figsize=(10, 6))
@@ -1791,6 +1799,29 @@ class Game(QObject):
         self.begin()
         self._refresh_score_edit_controls()
 
+    def _board_top_clue_value(self) -> int:
+        """Return the highest clue value on the current board.
+
+        Played Daily Doubles are skipped, because their value is replaced by
+        the wager. Unplayed ones (including the one being wagered on) still
+        hold their row value and count, so a board whose top row is all
+        Daily Doubles still caps at that row. The cap comes from the board
+        itself, not from the round's position, since a game can start with
+        any selected round.
+
+        Returns:
+            The highest clue value, or the standard first-round cap when the
+            board has no usable values.
+        """
+        values = [
+            question.value
+            for question in getattr(self.current_round, "questions", [])
+            if not (question.dd and question.complete)
+            and question.value
+            and question.value > 0
+        ]
+        return max(values, default=DEFAULT_DAILY_DOUBLE_WAGER_CAP)
+
     def get_dd_wager(self, player: object) -> bool | None:
         """Prompt the active player for a Daily Double wager.
 
@@ -1804,18 +1835,7 @@ class Game(QObject):
         self.answering_player = player
         self.soliciting_player = False
         self._refresh_score_edit_controls()
-        try:
-            logging.info(f"Current round is: {self.current_round}")
-            logging.info(f"Rounds are {self.data.rounds}")
-            round_index = self.data.rounds.index(self.current_round)
-        except (AttributeError, ValueError):
-            round_index = DEFAULT_RESUME_ROUND_INDEX
-        max_wager = max(
-            self.answering_player.score,
-            DEFAULT_DAILY_DOUBLE_J_ROUND_WAGER
-            if round_index == 0
-            else DEFAULT_DAILY_DOUBLE_DJ_ROUND_WAGER,
-        )
+        max_wager = max(self.answering_player.score, self._board_top_clue_value())
         wager_res = QInputDialog.getInt(
             self.host_display,
             "Wager",

@@ -10,7 +10,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.mark.parametrize(
     "module",
-    ["jparty.services", "jparty.domain", "jparty.domain.models"],
+    ["jparty.services", "jparty.domain", "jparty.domain.models", "jparty.app.config"],
 )
 def test_package_imports_first_in_fresh_interpreter(module: str) -> None:
     """Each package should import cleanly as the very first import."""

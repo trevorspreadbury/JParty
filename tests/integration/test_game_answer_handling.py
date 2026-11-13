@@ -10,6 +10,18 @@ from PyQt6.QtWidgets import QApplication
 pytestmark = pytest.mark.integration
 
 
+def test_every_seat_up_to_maxplayers_has_a_buzzer_key(game: object) -> None:
+    """Each allowed seat gets a player key and a host keyboard buzz event."""
+    from jparty.app.config import MAXPLAYERS
+    from jparty.domain.models import Player
+
+    events = game.keystroke_manager._KeystrokeManager__events
+    players = [Player(f"P{i}", None, i) for i in range(MAXPLAYERS)]
+    assert len({player.key for player in players}) == MAXPLAYERS
+    for player in players:
+        assert events[f"BUZZED_{player.player_number}"].key == player.key
+
+
 def test_incorrect_answer_subtracts_logs_and_reopens_for_other_players(
     game_with_players: object,
 ) -> None:
