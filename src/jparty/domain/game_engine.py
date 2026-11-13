@@ -144,6 +144,9 @@ class Game(QObject):
             "OPEN_FINAL", Qt.Key.Key_Space, self.open_final, self.spacehints
         )
         self.keystroke_manager.addEvent(
+            "FORCE_OPEN_FINAL", Qt.Key.Key_Return, self.force_open_final
+        )
+        self.keystroke_manager.addEvent(
             "CLOSE_GAME", Qt.Key.Key_Space, self.close_game, self.spacehints
         )
         self.keystroke_manager.addEvent(
@@ -1530,6 +1533,8 @@ class Game(QObject):
         for player in self.players:
             self.dc.player_widget(player).set_lights(True)
         self.buzzer_controller.open_wagers()
+        # Lets the host open Final without waiting on a missing wager.
+        self.keystroke_manager.activate("FORCE_OPEN_FINAL")
         self._refresh_score_edit_controls()
 
     def wager(self, i_player: object, amount: object) -> None:
@@ -1552,7 +1557,28 @@ class Game(QObject):
             self.host_display.question_widget.hint_label.setText(
                 "Press space to show clue!"
             )
+            self.keystroke_manager.deactivate("FORCE_OPEN_FINAL")
             self.keystroke_manager.activate("OPEN_FINAL")
+
+    def force_open_final(self) -> None:
+        """Open the Final clue now, counting any missing wager as 0.
+
+        Bound to the host's Enter key while Final wagers are open. It covers
+        players who cannot wager (a dead phone, someone who left), so the game
+        is never stuck waiting. Their wager prompts are closed so a late wager
+        from their phone is ignored.
+
+        Returns:
+            ``None``.
+        """
+        for player in self.players:
+            if player.wager is None:
+                player.wager = 0
+                self.dc.player_widget(player).set_lights(False)
+                logging.info(f"{player} did not wager; host counted it as 0")
+        self.buzzer_controller.close_wagers()
+        self.keystroke_manager.deactivate("OPEN_FINAL")
+        self.open_final()
 
     def answer(self, player: object, guess: object) -> None:
         """Store a player's Final Jeopardy response text.
