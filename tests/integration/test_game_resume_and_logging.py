@@ -503,77 +503,289 @@ def test_resume_subset_save_uses_original_round_indices(
     assert history_file.read_bytes() == history_before
 
 
-def test_resume_same_game_subset_board_selections_keep_original_round_list(
-    game: object, monkeypatch: object, temp_dir: object
-) -> None:
-    """Same-game subset saves should resume against the full original round list."""
-    from jparty.services import game_loader
+class _ImmediateLoader:
+    """Welcome-screen loader that runs each load inline."""
 
-    restored_data = deepcopy(game.data)
-    monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
-    saved_dir = temp_dir / "saved-board-subset"
-    saved_dir.mkdir()
-    with (saved_dir / "general.json").open("w") as file_obj:
-        json.dump(
-            {
-                "game_id": "4453",
-                "players": [
-                    {"name": "Alice", "player_number": 0},
-                    {"name": "Bob", "player_number": 1},
-                ],
-                "selected_round_indices": [1, 2],
-                "board_selections": [
-                    {
-                        "game_id": "4453",
-                        "source_round_index": 1,
-                        "source_round_label": "Double Jeopardy!",
-                        "board_type": "standard",
-                        "row_values": [400, 800, 1200, 1600, 2000],
-                    },
-                    {
-                        "game_id": "4453",
-                        "source_round_index": 2,
-                        "source_round_label": "Final Jeopardy!",
-                        "board_type": "final",
-                        "row_values": [],
-                    },
-                ],
-                "history_round_indices_original": False,
-            },
-            file_obj,
-        )
-    with (saved_dir / "question_history.jsonl").open("w") as file_obj:
-        json.dump(
-            {
-                "question_index": [1, [0, 0]],
-                "question_number": 1,
-                "round_index": 1,
-                "category": restored_data.rounds[1].questions[0].category,
-                "value": 400,
-                "is_daily_double": False,
-                "buzz_phases": [],
-                "answer_attempts": [],
-                "completed_at": 2.0,
-            },
-            file_obj,
-        )
-        file_obj.write("\n")
+    def run_async(self, target: object) -> None:
+        """Run the load right away."""
+        target()
 
-    history_file = saved_dir / "question_history.jsonl"
-    history_before = history_file.read_bytes()
-    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+
+def _fixture_game(fixture_dir: object) -> object:
+    """Return game 4453 parsed from the saved J-Archive page.
+
+    Its Jeopardy, Double Jeopardy and Final boards all have different
+    categories, unlike ``build_game_data``.
+    """
+    from jparty.services.game_parser import GameParser
+
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    source = GameParser().process_game_board_from_html(html, "4453")
+    assert source is not None
+    return source
+
+
+def _start_regular_game(
+    qtbot: object,
+    game: object,
+    monkeypatch: object,
+    temp_dir: object,
+    source: object,
+    ticked: list[int],
+) -> object:
+    """Start ``source`` in regular mode with only the ``ticked`` rounds.
+
+    Goes through the real welcome screen: type the game id, tick rounds,
+    press Start. Saves go to ``temp_dir``; nothing is fetched.
+
+    Returns:
+        The save folder the game writes to.
+    """
+    from jparty.domain import game_engine
+    from jparty.services.question_media import QuestionMediaStatus
+    from jparty.ui.widgets.welcome import Welcome
+
+    for target in (
+        "jparty.services.game_loader.get_game",
+        "jparty.ui.widgets.welcome.get_game",
+    ):
+        monkeypatch.setattr(target, lambda game_id: deepcopy(source))
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+    monkeypatch.setattr("jparty.services.question_media.QUESTION_MEDIA", temp_dir)
+    monkeypatch.setattr(game_engine, "GAME_STATES_DIR", temp_dir / "game_states")
+    monkeypatch.setattr(game, "_save_played_game_html", lambda: None)
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = _ImmediateLoader()
+    widget.textbox.setText("4453")
+    widget.show_summary()
+    for index, checkbox in enumerate(widget.round_checkboxes):
+        checkbox.setChecked(index in ticked)
+    assert game.selected_round_indices() == ticked
+    widget.on_start_clicked()
+    return game._game_state_dir
+
+
+def _answer_correctly(game: object, question: object, player_index: int) -> None:
+    """Play ``question`` on the current board; ``player_index`` gets it right."""
+    assert not question.dd
+    game.load_question(question)
+    game.open_responses()
+    game.buzz(player_index)
+    game.correct_answer()
+
+
+def _resume(game: object, saved_dir: object) -> None:
+    """Close the running game and resume ``saved_dir`` with the same players."""
+    players = list(game.players)
+    game.close_game()
     game.prepare_resume_from_dir(saved_dir)
     game.buzzer_controller.connected_players = players
+    for player in players:
+        player.score = 0
     game.players = players
     game.dc.scoreboard.refresh_players()
     game.start_game()
 
+
+def _played_clues(game: object) -> list[tuple[str, tuple]]:
+    """Return ``(category, index)`` for every clue marked played."""
+    return [
+        (question.category, question.index)
+        for round_data in game.data.rounds
+        for question in round_data.questions
+        if question.complete
+    ]
+
+
+def _first_plain_clue(round_data: object) -> object:
+    """Return the first clue on ``round_data`` that is not a Daily Double."""
+    return next(question for question in round_data.questions if not question.dd)
+
+
+def _downgrade_general_state(
+    saved_dir: object, source_rounds: list, shape: str
+) -> None:
+    """Rewrite ``general.json`` the way an older JParty saved it.
+
+    Older versions saved the ticked rounds' numbers in the source game as
+    ``selected_round_indices``. ``"rc1"`` is v3.0.0-rc.1 (no format fields,
+    plus ``history_round_indices_original``); ``"dev"`` is the code after it
+    (``history_format`` 2 and ``jparty_version``).
+    """
+    general_file = saved_dir / "general.json"
+    general_state = json.loads(general_file.read_text())
+    general_state["selected_round_indices"] = source_rounds
+    if shape == "rc1":
+        general_state.pop("history_format", None)
+        general_state.pop("jparty_version", None)
+        general_state["history_round_indices_original"] = False
+    else:
+        general_state["history_format"] = 2
+        general_state["jparty_version"] = "3.0.0"
+    general_file.write_text(json.dumps(general_state, indent=2))
+
+
+def test_regular_jeopardy_and_final_plays_final_after_jeopardy(
+    qtbot: object,
+    game_with_players: object,
+    monkeypatch: object,
+    temp_dir: object,
+    fixture_dir: object,
+) -> None:
+    """Skipping Double Jeopardy in regular mode still reaches Final (#93)."""
+    game = game_with_players
+    source = _fixture_game(fixture_dir)
+    saved_dir = _start_regular_game(qtbot, game, monkeypatch, temp_dir, source, [0, 2])
+
+    assert len(game.data.rounds) == 2
+    assert game.selected_round_indices() == [0, 1]
+    general_state = json.loads((saved_dir / "general.json").read_text())
+    assert general_state["selected_round_indices"] == [0, 1]
+    assert [
+        selection["source_round_index"]
+        for selection in general_state["board_selections"]
+    ] == [0, 2]
+
+    game.next_round()
+
+    assert isinstance(game.current_round, FinalBoard)
+    assert game.current_round.category == source.rounds[2].category
+    assert game.buzzer_controller.open_wagers_calls
+    assert game.dc.loaded_final_judgement == 0
+
+
+@pytest.mark.parametrize(
+    ("ticked", "played_round"),
+    [([1, 2], 1), ([0, 1, 2], 1), ([0, 1, 2], 0)],
+    ids=["double-and-final", "all-rounds-double", "all-rounds-jeopardy"],
+)
+def test_regular_round_subset_resume_marks_the_played_clue(
+    qtbot: object,
+    game_with_players: object,
+    monkeypatch: object,
+    temp_dir: object,
+    fixture_dir: object,
+    ticked: list[int],
+    played_round: int,
+) -> None:
+    """Resume and ``jparty summary`` read history against the played boards (#93)."""
+    from jparty.app import bootstrap
+    from jparty.domain.state import build_end_game_summary
+
+    game = game_with_players
+    source = _fixture_game(fixture_dir)
+    saved_dir = _start_regular_game(qtbot, game, monkeypatch, temp_dir, source, ticked)
+    board = game.data.rounds[ticked.index(played_round)]
+    if board is not game.current_round:
+        game.current_round = board
+        game.dc.board_widget.load_round(board)
+    clue = _first_plain_clue(board)
+    _answer_correctly(game, clue, 1)
+    played = [(clue.category, clue.index)]
+    assert clue.category in source.rounds[played_round].categories
+    in_app_summary = build_end_game_summary(game)
+
+    assert bootstrap.load_summary_from_game_state_directory(saved_dir) == (
+        in_app_summary
+    )
+
+    _resume(game, saved_dir)
+
+    assert _played_clues(game) == played
+    assert [player.score for player in game.players] == [0, clue.value, 0]
+    # The first ticked round still has unplayed clues, so play resumes there.
+    assert game.current_round.categories == source.rounds[ticked[0]].categories
+    assert build_end_game_summary(game) == in_app_summary
+    assert bootstrap.load_summary_from_game_state_directory(saved_dir) == (
+        in_app_summary
+    )
+
+
+@pytest.mark.parametrize("shape", ["rc1", "dev"])
+def test_resume_same_game_subset_board_selections_keep_original_round_list(
+    qtbot: object,
+    game_with_players: object,
+    monkeypatch: object,
+    temp_dir: object,
+    fixture_dir: object,
+    shape: str,
+) -> None:
+    """Older regular-mode subset saves resume onto the full original game.
+
+    Their ``selected_round_indices`` are source-game numbers, but the history
+    the game wrote counts rounds by position in the boards that were played.
+    """
+    game = game_with_players
+    source = _fixture_game(fixture_dir)
+    saved_dir = _start_regular_game(qtbot, game, monkeypatch, temp_dir, source, [1, 2])
+    clue = _first_plain_clue(game.current_round)
+    _answer_correctly(game, clue, 0)
+    history_file = saved_dir / "question_history.jsonl"
+    assert json.loads(history_file.read_text().splitlines()[0])["round_index"] == 0
+    _downgrade_general_state(saved_dir, [1, 2], shape)
+    history_before = history_file.read_bytes()
+
+    _resume(game, saved_dir)
+
     assert len(game.data.rounds) == 3
     assert game.selected_round_indices() == [1, 2]
     assert game.current_round is game.data.rounds[1]
-    assert game.data.rounds[1].get_question(0, 0).complete is True
-    assert game.data.rounds[0].get_question(0, 0).complete is False
+    assert _played_clues(game) == [(clue.category, clue.index)]
+    assert game.data.rounds[1].get_question(*clue.index).complete is True
+    assert [player.score for player in game.players] == [clue.value, 0, 0]
     assert history_file.read_bytes() == history_before
+    general_state = json.loads((saved_dir / "general.json").read_text())
+    assert general_state["selected_round_indices"] == [1, 2]
+
+
+def test_older_subset_save_resumed_twice_keeps_both_numberings(
+    qtbot: object,
+    game_with_players: object,
+    monkeypatch: object,
+    temp_dir: object,
+    fixture_dir: object,
+) -> None:
+    """An older save with clues from before and after a resume reads both right.
+
+    Lines from the first session count rounds by position; lines written
+    after resuming onto the full original game use source numbers.
+    """
+    from jparty.app import bootstrap
+    from jparty.domain.state import build_end_game_summary
+
+    game = game_with_players
+    source = _fixture_game(fixture_dir)
+    saved_dir = _start_regular_game(qtbot, game, monkeypatch, temp_dir, source, [1, 2])
+    first = _first_plain_clue(game.current_round)
+    _answer_correctly(game, first, 0)
+    _downgrade_general_state(saved_dir, [1, 2], "dev")
+    _resume(game, saved_dir)
+    second = next(
+        question
+        for question in game.current_round.questions
+        if not question.dd and not question.complete
+    )
+    _answer_correctly(game, second, 2)
+    history_file = saved_dir / "question_history.jsonl"
+    assert [
+        json.loads(line)["round_index"]
+        for line in history_file.read_text().splitlines()
+    ] == [0, 1]
+
+    _resume(game, saved_dir)
+
+    assert _played_clues(game) == [
+        (first.category, first.index),
+        (second.category, second.index),
+    ]
+    assert [player.score for player in game.players] == [first.value, 0, second.value]
+    assert bootstrap.load_summary_from_game_state_directory(saved_dir) == (
+        build_end_game_summary(game)
+    )
 
 
 def test_resume_preserves_frankenstein_board_selections_and_round_sources(
@@ -889,19 +1101,28 @@ def test_start_game_saves_html_when_play_begins(
     assert game.dc.hidden_welcome == 1
 
 
-def test_start_game_filters_rounds_to_selected_indices(
+def test_start_game_without_board_selections_plays_only_selected_rounds(
     game: object, monkeypatch: object
 ) -> None:
-    """Test test start game filters rounds to selected indices."""
+    """Without board selections the whole game stays loaded and is resumable.
+
+    Selected indices and history both keep pointing into the full game, which
+    is what resume loads for a save without ``board_selections``.
+    """
     from jparty.services import archive_client
 
     monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
     game.set_session_game_id("4453")
-    game.set_selected_round_indices([0, 2])
-    original_final_round = game.data.rounds[2]
+    game.set_selected_round_indices([1, 2])
+    double_jeopardy, final = game.data.rounds[1], game.data.rounds[2]
     game.start_game()
-    assert len(game.data.rounds) == 2
-    assert game.data.rounds[1] is original_final_round
+
+    assert len(game.data.rounds) == 3
+    assert game.current_round is double_jeopardy
+    saved = json.loads((game._game_state_dir / "general.json").read_text())
+    assert saved["selected_round_indices"] == [1, 2]
+    game.next_round()
+    assert game.current_round is final
 
 
 def test_next_round_ends_game_when_no_later_round_is_selected(
@@ -942,7 +1163,7 @@ SUBSET_BOARD_SELECTIONS = [
 @pytest.mark.parametrize(
     "board_selections",
     [None, SUBSET_BOARD_SELECTIONS],
-    ids=["regular-mode", "advanced-same-game-subset"],
+    ids=["no-board-selections", "older-regular-subset"],
 )
 def test_cli_summary_matches_in_app_summary_for_round_subset(
     game: object, monkeypatch: object, temp_dir: object, board_selections: object

@@ -2072,11 +2072,10 @@ QCheckBox {{
                 )
             )
         )
+        # Use the indices the game loaded, which point into its rounds. An
+        # older save rebuilt from board selections recorded source numbers.
         self.configure_round_selector(
-            selected_indices=resume_state["general_state"].get(
-                "selected_round_indices"
-            ),
-            enabled=True,
+            selected_indices=self.game.selected_round_indices(), enabled=True
         )
         self._base_summary_text = "\n".join(
             [
@@ -2179,9 +2178,15 @@ QCheckBox {{
         rounds_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         rounds_label.setStyleSheet(ROUNDS_LABEL_STYLE)
         self.rounds_layout.addWidget(rounds_label)
+        saved_labels = self.resumed_board_labels()
         for index, round_data in enumerate(self.game.data.rounds):
             checkbox = QCheckBox("", self.rounds_widget)
-            checkbox.setProperty("round_label", self.describe_round(round_data, index))
+            checkbox.setProperty(
+                "round_label",
+                saved_labels[index]
+                if saved_labels
+                else self.describe_round(round_data, index),
+            )
             checkbox.setStyleSheet(ROUND_CHECKBOX_STYLE)
             checkbox.setChecked(index in selected_indices)
             checkbox.setEnabled(enabled)
@@ -2202,6 +2207,33 @@ QCheckBox {{
             Human-readable round label for the checkbox UI.
         """
         return self.describe_round_for_data(self.game.data, round_data, index)
+
+    def resumed_board_labels(self) -> list[str] | None:
+        """Return source-round labels for a resumed regular-mode subset save.
+
+        Such a save resumes on the game built from its ticked rounds, so
+        position labels would call a Double Jeopardy board "Jeopardy!" when
+        Jeopardy was skipped. Each saved board selection records the label
+        of the source round it came from.
+
+        Returns:
+            One label per loaded round when resuming a save whose board
+            selections are the loaded rounds, all from the saved game, or
+            ``None`` to label rounds by position.
+        """
+        if self.resume_path is None or not getattr(self.game, "data", None):
+            return None
+        selections = getattr(self.game, "board_selection_configs", lambda: [])()
+        if not selections or len(selections) != len(self.game.data.rounds):
+            return None
+        game_id = str(getattr(self.game, "current_game_id", lambda: "")()).strip()
+        labels = []
+        for selection in selections:
+            label = selection.get("source_round_label")
+            if not label or str(selection.get("game_id", "")).strip() != game_id:
+                return None
+            labels.append(str(label))
+        return labels
 
     def update_selected_rounds(self) -> None:
         """Push the current checkbox selection into the game object.

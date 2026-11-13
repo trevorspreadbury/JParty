@@ -1,5 +1,6 @@
 """Test welcome widget module."""
 
+import json
 from copy import deepcopy
 from types import SimpleNamespace
 from typing import NoReturn
@@ -1657,6 +1658,83 @@ def test_regular_start_reuses_the_loaded_game(
     assert game.current_round is game.data.rounds[0]
     assert game.data.rounds[0].categories == source.rounds[0].categories
     assert isinstance(game.data.rounds[1], FinalBoard)
+
+
+@pytest.mark.parametrize("older_save", [False, True], ids=["current", "older"])
+def test_resumed_regular_subset_shows_the_played_rounds(
+    qtbot: object,
+    game_with_players: object,
+    fixture_dir: object,
+    temp_dir: object,
+    monkeypatch: object,
+    older_save: bool,
+) -> None:
+    """Load Saved lists the rounds the save resumes on, with source labels (#93).
+
+    Before Start the checkboxes use the source game's round numbers; once the
+    game starts, they become positions in the game built from the ticked
+    rounds. An older save, which recorded source numbers, still resumes on
+    the full source game.
+    """
+    from jparty.domain import game_engine
+
+    game = game_with_players
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    source = GameParser().process_game_board_from_html(html, "4453")
+    assert source is not None
+    for target in (
+        "jparty.services.game_loader.get_game",
+        "jparty.ui.widgets.welcome.get_game",
+    ):
+        monkeypatch.setattr(target, lambda game_id: deepcopy(source))
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.detect_question_media",
+        lambda game_id: QuestionMediaStatus(directory=None, zip_file=None),
+    )
+    monkeypatch.setattr("jparty.services.question_media.QUESTION_MEDIA", temp_dir)
+    monkeypatch.setattr(game_engine, "GAME_STATES_DIR", temp_dir / "game_states")
+    monkeypatch.setattr(game, "_save_played_game_html", lambda: None)
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.loader = ImmediateLoader()
+    _type_game_id(widget, "4453")
+    widget.round_checkboxes[0].setChecked(False)
+    assert game.selected_round_indices() == [1, 2]
+    widget.on_start_clicked()
+    assert game.selected_round_indices() == [0, 1]
+    saved_dir = game._game_state_dir
+    if older_save:
+        general_file = saved_dir / "general.json"
+        general_state = json.loads(general_file.read_text())
+        general_state["selected_round_indices"] = [1, 2]
+        general_file.write_text(json.dumps(general_state))
+    players = list(game.players)
+    game.close_game()
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(saved_dir)
+    )
+    resume_widget = Welcome(game)
+    qtbot.addWidget(resume_widget)
+
+    resume_widget.load_saved_game()
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    resume_widget.on_start_clicked()
+
+    if older_save:
+        assert [checkbox.text() for checkbox in resume_widget.round_checkboxes] == [
+            "[ ] Jeopardy!",
+            "[x] Double Jeopardy!",
+            "[x] Final Jeopardy!",
+        ]
+        assert game.selected_round_indices() == [1, 2]
+    else:
+        assert [checkbox.text() for checkbox in resume_widget.round_checkboxes] == [
+            "[x] Double Jeopardy!",
+            "[x] Final Jeopardy!",
+        ]
+        assert game.selected_round_indices() == [0, 1]
+    assert game.current_round.categories == source.rounds[1].categories
 
 
 def test_media_import_reloads_the_loaded_regular_game(

@@ -329,14 +329,15 @@ def load_summary_from_game_state_directory(game_state_directory: object) -> obje
 
     # Load the game exactly as resume does, so history round indices point at
     # the same boards as in the app.
-    data = load_saved_game_data(general_state).data
-    if data is None:
+    saved_game = load_saved_game_data(general_state)
+    if saved_game.data is None:
         raise ValueError("Saved game points to an invalid or incomplete game")
 
     summary_game = SimpleNamespace(
         _game_state_dir=game_state_path,
-        data=data,
+        data=saved_game.data,
         players=[],
+        _legacy_history_rounds=saved_game.legacy_history_rounds,
     )
     score_history = reconstruct_score_history(summary_game)
     saved_players = current_saved_players(

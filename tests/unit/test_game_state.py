@@ -1147,3 +1147,192 @@ def test_get_game_does_not_write_the_game_id_to_the_environment(
     archive_client.get_game("4453")
 
     assert "JPARTY_GAME_ID" not in os.environ
+
+
+def _clue_line(round_index: int, question: object, question_number: int) -> dict:
+    """Return a clue history line for ``question`` numbered ``round_index``."""
+    return {
+        "question_index": [round_index, list(question.index)],
+        "question_number": question_number,
+        "round_index": round_index,
+        "category": question.category,
+        "value": question.value,
+        "is_daily_double": question.dd,
+        "buzz_phases": [],
+        "answer_attempts": [],
+        "completed_at": float(question_number),
+    }
+
+
+def _game_with_distinct_rounds() -> GameData:
+    """Return Jeopardy, Double Jeopardy and Final boards with different categories."""
+    rounds = []
+    for multiplier, prefix in ((1, "J"), (2, "DJ")):
+        categories = [f"{prefix} {col}" for col in range(6)]
+        questions = [
+            Question(
+                (col, row),
+                "clue",
+                "response",
+                categories[col],
+                (row + 1) * 200 * multiplier,
+            )
+            for col in range(6)
+            for row in range(5)
+        ]
+        rounds.append(Board(categories, questions, dj=multiplier == 2))
+    final = FinalBoard("Final", Question((0, 0), "clue", "response", "Final"))
+    return GameData([*rounds, final], "January 1, 2026", "Fixture game")
+
+
+def test_translate_legacy_history_rounds_reads_positions_and_source_numbers() -> None:
+    """Older subset saves can mix position-numbered and source-numbered lines."""
+    from jparty.domain.state import translate_legacy_history_rounds
+
+    data = _game_with_distinct_rounds()
+    double_jeopardy, final = data.rounds[1], data.rounds[2]
+    entries = [
+        # First session, played on the built [Double Jeopardy, Final] game.
+        _clue_line(0, double_jeopardy.get_question(0, 0), 1),
+        # After resuming onto the full game on an older version.
+        _clue_line(1, double_jeopardy.get_question(1, 0), 2),
+        _clue_line(2, final.question, 3),
+        {"type": "manual_score_adjustment", "player_index": 0, "new_score": 5},
+    ]
+
+    translated = translate_legacy_history_rounds(entries, data, [1, 2])
+
+    assert [entry.get("round_index") for entry in translated] == [1, 1, 2, None]
+    assert translated[0]["question_index"] == [1, [0, 0]]
+    assert translated[3] is entries[3]
+    assert entries[0]["round_index"] == 0
+
+
+def test_translate_legacy_history_rounds_reads_final_by_position() -> None:
+    """Final saved as position 1 of a Jeopardy + Final game is the Final board."""
+    from jparty.domain.state import translate_legacy_history_rounds
+
+    data = _game_with_distinct_rounds()
+    jeopardy, final = data.rounds[0], data.rounds[2]
+    entries = [
+        _clue_line(0, jeopardy.get_question(0, 0), 1),
+        _clue_line(1, final.question, 2),
+    ]
+
+    translated = translate_legacy_history_rounds(entries, data, [0, 2])
+
+    assert [entry["round_index"] for entry in translated] == [0, 2]
+    assert translated[0] is entries[0]
+
+
+def test_translate_legacy_history_rounds_limit_for_identical_boards() -> None:
+    """A line that fits both boards equally is read like the line before it.
+
+    This is the documented limit. With two identical boards (same categories
+    and values), the first line written after resuming an older save on an
+    older version can't be told apart from a position-numbered line, so it
+    is read by position and marks the clue on the other board.
+    """
+    from jparty.domain.state import translate_legacy_history_rounds
+
+    data = _game_with_distinct_rounds()
+    double_jeopardy = data.rounds[1]
+    triple_jeopardy = Board(
+        list(double_jeopardy.categories),
+        [
+            Question(q.index, q.text, q.answer, q.category, q.value)
+            for q in double_jeopardy.questions
+        ],
+        dj=True,
+    )
+    data.rounds.insert(2, triple_jeopardy)
+    entries = [
+        _clue_line(0, double_jeopardy.get_question(0, 0), 1),
+        # Really a source-numbered Double Jeopardy line, but position 1
+        # (Triple Jeopardy) has a clue with the same category and value.
+        _clue_line(1, double_jeopardy.get_question(1, 0), 2),
+    ]
+
+    translated = translate_legacy_history_rounds(entries, data, [1, 2, 3])
+
+    assert [entry["round_index"] for entry in translated] == [1, 2]
+
+
+DJ_AND_FINAL_SELECTIONS = [
+    {
+        "game_id": "4453",
+        "source_round_index": 1,
+        "source_round_label": "Double Jeopardy!",
+        "board_type": "standard",
+        "row_values": [400, 800, 1200, 1600, 2000],
+        "daily_double_count": 0,
+        "daily_double_indices": [],
+    },
+    {
+        "game_id": "4453",
+        "source_round_index": 2,
+        "source_round_label": "Final Jeopardy!",
+        "board_type": "final",
+        "row_values": [],
+    },
+]
+
+
+@pytest.mark.parametrize(
+    ("general_state", "expected_rounds", "expected_selected", "expected_legacy"),
+    [
+        ({"selected_round_indices": [0, 1]}, ["J 0", "DJ 0", "Final"], [0, 1], None),
+        (
+            {"selected_round_indices": [1, 2]},
+            ["J 0", "DJ 0", "Final"],
+            [1, 2],
+            [1, 2],
+        ),
+        (
+            {
+                "selected_round_indices": [1, 2],
+                "board_selections": DJ_AND_FINAL_SELECTIONS,
+            },
+            ["J 0", "DJ 0", "Final"],
+            [1, 2],
+            [1, 2],
+        ),
+        (
+            {
+                "selected_round_indices": [0, 1],
+                "board_selections": DJ_AND_FINAL_SELECTIONS,
+            },
+            ["DJ 0", "Final"],
+            [0, 1],
+            None,
+        ),
+    ],
+    ids=[
+        "no-selections-prefix",
+        "no-selections-skipped-round",
+        "older-regular-subset",
+        "current-regular-subset",
+    ],
+)
+def test_load_saved_game_data_layouts(
+    monkeypatch: object,
+    general_state: dict,
+    expected_rounds: list,
+    expected_selected: list,
+    expected_legacy: object,
+) -> None:
+    """Each save layout loads the boards its history numbers point at (#93)."""
+    from jparty.domain.state import load_saved_game_data
+    from jparty.services import game_loader
+
+    monkeypatch.setattr(
+        game_loader, "get_game", lambda game_id: _game_with_distinct_rounds()
+    )
+
+    saved = load_saved_game_data({"game_id": "4453", **general_state})
+
+    assert [
+        round_data.categories[0] for round_data in saved.data.rounds
+    ] == expected_rounds
+    assert saved.selected_round_indices == expected_selected
+    assert saved.legacy_history_rounds == expected_legacy

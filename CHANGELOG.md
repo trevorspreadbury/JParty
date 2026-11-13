@@ -65,6 +65,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   on a finished board can move on with Space (#57).
 - End-of-game stats and `jparty summary` are correct for games that play
   only some rounds (#74).
+- Regular-mode games that skip a round now play Final Jeopardy (for example
+  Jeopardy + Final), and resuming them or running `jparty summary` marks
+  clues on the right board. `selected_round_indices` in new saves counts the
+  rounds that were played (`0, 1, ...`); older saves with a skipped round
+  still resume (#93).
 - The welcome screen only applies the latest game load, a failed load can't
   start the previous game, and starting a different game never overwrites a
   prepared save (#72).

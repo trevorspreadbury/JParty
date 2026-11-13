@@ -35,7 +35,7 @@ from jparty.domain.input import (
     QuestionTimer,
     index_to_key,
 )
-from jparty.domain.models import FinalBoard, GameData
+from jparty.domain.models import FinalBoard
 from jparty.domain.state import (
     HISTORY_FORMAT,
     NO_ANSWER_RESULT,
@@ -217,6 +217,8 @@ class Game(QObject):
         self._starting_roster = None
         self._resume_state = None
         self._selected_round_indices = None
+        # Set when resuming an older save; see SavedGameData.
+        self._legacy_history_rounds = None
         self._board_selection_configs = None
         self._composed_board_selection_configs = None
         self._composed_game_data = None
@@ -264,6 +266,7 @@ class Game(QObject):
         """
         self._resume_state = None
         self._selected_round_indices = None
+        self._legacy_history_rounds = None
         self._board_selection_configs = None
         self._composed_board_selection_configs = None
         self._composed_game_data = None
@@ -295,7 +298,11 @@ class Game(QObject):
         return self.buzzer_controller.saved_player_claims_complete()
 
     def set_selected_round_indices(self, indices: object) -> None:
-        """Store the original round indices selected for play.
+        """Store the round indices selected for play.
+
+        The indices point into ``data.rounds``. Before Start in regular mode
+        that is the loaded source game, so they are its round numbers; see
+        :meth:`selected_round_indices` for what Start changes.
 
         Args:
             indices: Iterable of zero-based round indices to include when the
@@ -371,7 +378,13 @@ class Game(QObject):
         return self._reveal_answers_after_triple_stumper
 
     def selected_round_indices(self) -> list[int]:
-        """Return the configured original round indices for this session.
+        """Return the selected round indices for this session.
+
+        These always point into ``data.rounds``, the same numbering that
+        history ``round_index`` values use. When a game starts from board
+        selections, ``data`` becomes the built game holding only the chosen
+        boards and every one of its rounds is selected (``0..n-1``), in
+        regular and advanced mode alike.
 
         Returns:
             Selected zero-based round indices, or all currently loaded rounds
@@ -382,21 +395,6 @@ class Game(QObject):
         if self.data is None:
             return []
         return list(range(len(self.data.rounds)))
-
-    def _apply_selected_rounds_to_data(self) -> None:
-        """Filter loaded game data down to the currently selected rounds.
-
-        Returns:
-            ``None``.
-        """
-        if self.data is None:
-            return
-        selected_rounds = [
-            self.data.rounds[index]
-            for index in self.selected_round_indices()
-            if 0 <= index < len(self.data.rounds)
-        ]
-        self.data = GameData(selected_rounds, self.data.date, self.data.comments)
 
     def prepare_resume_from_dir(self, saved_game_dir: object) -> object:
         """Load enough metadata to resume a previously saved game session.
@@ -441,6 +439,7 @@ class Game(QObject):
         self.data = saved_game.data
         self.set_board_selection_configs(saved_game.board_selection_configs)
         self.set_selected_round_indices(saved_game.selected_round_indices)
+        self._legacy_history_rounds = saved_game.legacy_history_rounds
         self.set_reveal_answers_after_triple_stumper(
             general_state.get("reveal_answers_after_triple_stumper", False)
         )
@@ -503,6 +502,8 @@ class Game(QObject):
         if self._resume_state:
             self._start_resumed_game()
             return
+        # A fresh game writes history that matches its own rounds.
+        self._legacy_history_rounds = None
         if self._board_selection_configs:
             self.data = self.matching_composed_game_data(self._board_selection_configs)
             if self.data is None:
@@ -510,12 +511,18 @@ class Game(QObject):
                     self._board_selection_configs
                 )
                 self.set_composed_game_data(self._board_selection_configs, self.data)
-        else:
-            self._apply_selected_rounds_to_data()
-        if not self.data or not self.data.rounds:
+            # The built game holds only the chosen boards. Number its rounds
+            # by position, as history round_index values do, so every round
+            # is played (Final included) and resume rebuilds the same game.
+            if self.data:
+                self._selected_round_indices = list(range(len(self.data.rounds)))
+        # Without board selections the whole game stays loaded and the
+        # selected indices already point into it.
+        playable_round_indices = self._playable_round_indices()
+        if not playable_round_indices:
             logging.warning("No rounds selected for play")
             return
-        self.current_round = self.data.rounds[0]
+        self.current_round = self.data.rounds[playable_round_indices[0]]
         self.dc.hide_welcome_widgets()
         self.buzzer_controller.accepting_players = False
         self.song_player.stop()
