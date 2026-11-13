@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from PyQt6 import sip
 from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QObject, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPixmap
+from PyQt6.QtGui import QColor, QPalette, QPixmap
 from PyQt6.QtNetwork import QNetworkReply
 
 from jparty.domain.models import Question
@@ -287,3 +287,24 @@ def test_first_reply_arriving_last_does_not_replace_newer_image(
     saved = QPixmap(widget.question.image_url)
     assert temp_dir in Path(widget.question.image_url).parents
     assert saved.toImage().pixelColor(0, 0) == QColor("blue")
+
+
+def test_image_review_text_is_light_on_the_black_host_display(
+    qtbot: object, offline_image_lookup: None
+) -> None:
+    """The clue, answer and image status must be readable on black."""
+    question = Question(
+        index=(0, 0),
+        text="Identify this person",
+        answer="Who is Ada Lovelace?",
+        category="History",
+        value=400,
+    )
+    game = SimpleNamespace(active_question=question)
+    widget = HostImageQuestionWidget(game)
+    qtbot.addWidget(widget)
+
+    for label in (widget.question_label, widget.answer_label, widget.image_label):
+        label.ensurePolished()
+        text_color = label.palette().color(QPalette.ColorRole.WindowText)
+        assert text_color.lightness() > 200, label.text()
