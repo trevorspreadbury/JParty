@@ -54,6 +54,7 @@ from jparty.domain.state import (
     load_general_state,
     load_question_history,
     load_saved_game_data,
+    question_for_history_entry,
     read_history_file,
     reconstruct_score_history,
     ruling_score_effect,
@@ -62,7 +63,6 @@ from jparty.domain.state import (
 from jparty.services.game_loader import build_game_from_board_selection_configs
 from jparty.ui.widgets.common import CompoundObject, SongPlayer
 
-QUESTION_INDEX_PART_COUNT = 2
 DEFAULT_DAILY_DOUBLE_WAGER_CAP = 1000
 
 
@@ -571,22 +571,7 @@ class Game(QObject):
             ``None``.
         """
         for entry in question_history:
-            round_index = entry.get("round_index")
-            question_index = entry.get("question_index")
-            if (
-                round_index is None
-                or question_index is None
-                or len(question_index) < QUESTION_INDEX_PART_COUNT
-                or (round_index >= len(self.data.rounds))
-            ):
-                continue
-            question_coords = question_index[1]
-            if (
-                not isinstance(question_coords, list | tuple)
-                or len(question_coords) != QUESTION_INDEX_PART_COUNT
-            ):
-                continue
-            question = self.data.rounds[round_index].get_question(*question_coords)
+            question = question_for_history_entry(self.data, entry)
             if question is not None:
                 question.complete = True
 
@@ -1061,23 +1046,7 @@ class Game(QObject):
         Returns:
             Matching question object, or ``None`` when unavailable.
         """
-        question_index = entry.get("question_index")
-        round_index = entry.get("round_index")
-        if (
-            not self.data
-            or question_index is None
-            or round_index is None
-            or len(question_index) < QUESTION_INDEX_PART_COUNT
-            or round_index >= len(self.data.rounds)
-        ):
-            return None
-        question_coords = question_index[1]
-        if (
-            not isinstance(question_coords, list | tuple)
-            or len(question_coords) != QUESTION_INDEX_PART_COUNT
-        ):
-            return None
-        return self.data.rounds[round_index].get_question(*question_coords)
+        return question_for_history_entry(self.data, entry)
 
     def get_recent_score_corrections(self, limit: int = 5) -> list[dict]:
         """Return recent standard-clue history entries for the score editor.
@@ -2022,10 +1991,19 @@ class Game(QObject):
             self.apply_manual_score_override(player, new_score)
 
     def close(self) -> None:
-        """Stop audio playback and shut down the Qt application.
+        """Save queued history, stop timers and audio, and quit the app.
+
+        Like ``close_game``, this makes a last attempt to write any clue
+        history lines that earlier failed to save, and warns the host if they
+        are still unsaved. A running clue or Final Jeopardy timer is
+        cancelled so its thread does not keep the process alive.
 
         Returns:
             ``None``.
         """
+        self._finish_pending_history()
+        if self.timer:
+            self.timer.cancel()
+        self.timer = None
         self.song_player.stop()
         QApplication.quit()

@@ -10,6 +10,7 @@ from jparty.domain.state import (
     build_end_game_summary,
     load_general_state,
     load_question_history,
+    question_for_history_entry,
 )
 
 pytestmark = pytest.mark.unit
@@ -1230,3 +1231,45 @@ def test_load_saved_game_data_layouts(
         round_data.categories[0] for round_data in saved.data.rounds
     ] == expected_rounds
     assert saved.selected_round_indices == expected_selected
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"round_index": -1, "question_index": [0, [0, 0]]},
+        {"round_index": -3, "question_index": [0, [0, 0]]},
+        {"round_index": 3, "question_index": [0, [0, 0]]},
+        {"round_index": "0", "question_index": [0, [0, 0]]},
+        {"round_index": True, "question_index": [0, [0, 0]]},
+        {"round_index": None, "question_index": [0, [0, 0]]},
+        {"round_index": 0, "question_index": None},
+        {"round_index": 0, "question_index": 7},
+        {"round_index": 0, "question_index": [0]},
+        {"round_index": 0, "question_index": [0, [0]]},
+        {"round_index": 0, "question_index": [0, "00"]},
+    ],
+)
+def test_question_for_history_entry_rejects_damaged_entries(
+    game: object, entry: dict
+) -> None:
+    """A damaged line never resolves to a clue, even by wrapping around."""
+    assert question_for_history_entry(game.data, entry) is None
+
+
+def test_question_for_history_entry_finds_the_saved_clue(game: object) -> None:
+    """A valid line resolves to the clue at its round and board position."""
+    data = game.data
+    entry = {"round_index": 1, "question_index": [1, [2, 3]]}
+    assert question_for_history_entry(data, entry) is data.rounds[1].get_question(2, 3)
+    assert question_for_history_entry(None, entry) is None
+
+
+def test_negative_round_index_does_not_mark_or_show_another_clue(
+    game_with_players: object,
+) -> None:
+    """A ``round_index`` of -1 must not wrap around to the Final clue."""
+    game = game_with_players
+    entry = {"round_index": -1, "question_index": [1, [0, 0]]}
+    game._mark_completed_questions([entry])
+    assert game.data.rounds[-1].question.complete is False
+    assert game._question_from_history_entry(entry) is None
