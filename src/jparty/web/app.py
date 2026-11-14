@@ -13,7 +13,6 @@ import tornado.web
 
 from jparty.app.paths import web_asset_path
 from jparty.web.handlers import (
-    BuzzerHandler,
     BuzzerSocketHandler,
     LecternHandler,
     LecternSocketHandler,
@@ -43,13 +42,11 @@ class Application(tornado.web.Application):
         """
         handlers = [
             ("/", WelcomeHandler),
-            ("/play", BuzzerHandler),
             ("/buzzersocket", BuzzerSocketHandler),
             ("/lectern", LecternHandler),
             ("/lecternsocket", LecternSocketHandler),
         ]
         settings = {
-            "cookie_secret": "",
             "template_path": str(web_asset_path("templates")),
             "static_path": str(web_asset_path("static")),
             "xsrf_cookies": False,

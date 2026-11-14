@@ -152,8 +152,7 @@ class BuzzerController:
             return
         self.loop = tornado.ioloop.IOLoop.current()
         if threaded:
-            self.thread = Thread(target=self.loop.start)
-            self.thread.setDaemon(True)
+            self.thread = Thread(target=self.loop.start, daemon=True)
             self.thread.start()
             self._loop_thread_id = self.thread.ident
         else:
@@ -596,12 +595,8 @@ class BuzzerController:
         """
         if player is None:
             return
-        if self.game:
-            i_player = self.game.players.index(player)
-            self.game.buzz_trigger.emit(i_player)
-        else:
-            i_player = self.connected_players.index(player)
-            self.game.buzz_hint_trigger.emit(i_player)
+        i_player = self.game.players.index(player)
+        self.game.buzz_trigger.emit(i_player)
 
     def wager(self, player: Player | None, amount: int) -> None:
         """Forward a player's Final Jeopardy wager into the game engine.
@@ -660,7 +655,9 @@ class BuzzerController:
             return
         self.late_answer_players.pop(player, None)
         player.page = "null"
-        self.game.answer(player, guess)
+        # This runs on the Tornado thread. The signal hands the answer to the
+        # Qt thread, as buzzes and wagers are.
+        self.game.answer_trigger.emit(player, guess)
 
     def _is_late_answer(
         self, player: Player, source: BuzzerSocketHandler | None

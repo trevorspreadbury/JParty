@@ -18,7 +18,11 @@ from jparty.app.config import MAXPLAYERS
 from jparty.domain.models import Player
 from jparty.web import controller as controller_module
 from jparty.web.controller import BuzzerController
-from jparty.web.handlers import MAX_ANSWER_LENGTH, MAX_NAME_LENGTH
+from jparty.web.handlers import (
+    LECTERN_REPLACED_CLOSE_CODE,
+    MAX_ANSWER_LENGTH,
+    MAX_NAME_LENGTH,
+)
 
 pytestmark = pytest.mark.e2e
 TornadoAsyncHTTPTestCase.__test__ = False
@@ -38,6 +42,7 @@ class RecordingGame(SimpleNamespace):
             wager_trigger=SimpleNamespace(
                 emit=lambda i_player, amount: self.wagers.append((i_player, amount))
             ),
+            answer_trigger=SimpleNamespace(emit=self.answer),
             new_player_trigger=SimpleNamespace(emit=lambda: None),
         )
 
@@ -493,3 +498,103 @@ class BuzzerServerHardeningTest(TornadoAsyncHTTPTestCase):
 
         assert self.game.answers == [("Alice", "Lincoln")]
         new_ws.close()
+
+    async def wait_until(self, condition: object) -> None:
+        """Wait up to a second for ``condition`` to become true."""
+        for _ in range(100):
+            if condition():
+                return
+            await gen.sleep(0.01)
+        raise AssertionError("condition was not met in time")
+
+    @gen_test
+    async def test_old_lectern_closing_keeps_the_new_lectern(self) -> None:
+        """A second lectern on a slot replaces the first, and the first closing is harmless."""
+        first = await websocket_connect(self.ws_url("/lecternsocket?player=0"))
+        assert json.loads(await first.read_message())["message"] == "NO_PLAYER"
+        first_handler = self.controller.lectern_connections[0]
+
+        second = await websocket_connect(self.ws_url("/lecternsocket?player=0"))
+        assert json.loads(await second.read_message())["message"] == "NO_PLAYER"
+        second_handler = self.controller.lectern_connections[0]
+        assert second_handler is not first_handler
+
+        # The old lectern closing must leave the live lectern in place.
+        first.close()
+        await self.wait_until(lambda: first_handler.ws_connection is None)
+        assert self.controller.lectern_connections.get(0) is second_handler
+
+        self.controller.broadcast_to_lecterns(0, {"name": "Alice"})
+        assert json.loads(await second.read_message())["message"] == "PLAYER_STATE"
+        second.close()
+
+    @gen_test
+    async def test_new_lectern_closes_the_one_it_replaces(self) -> None:
+        """The server closes a lectern socket once another takes its slot."""
+        first = await websocket_connect(self.ws_url("/lecternsocket?player=0"))
+        assert json.loads(await first.read_message())["message"] == "NO_PLAYER"
+        second = await websocket_connect(self.ws_url("/lecternsocket?player=0"))
+        assert json.loads(await second.read_message())["message"] == "NO_PLAYER"
+
+        assert await first.read_message() is None
+        assert first.close_code == LECTERN_REPLACED_CLOSE_CODE
+        second.close()
+
+    async def assert_lectern_rejected(self, player: str) -> None:
+        """Check a lectern socket for ``player`` is closed and not stored."""
+        ws = await websocket_connect(self.ws_url(f"/lecternsocket?player={player}"))
+        assert await ws.read_message() is None
+        assert self.controller.lectern_connections == {}
+
+    @gen_test
+    async def test_lectern_socket_rejects_player_past_the_last_slot(self) -> None:
+        """``player=6`` is one past the last slot, so the socket is closed."""
+        await self.assert_lectern_rejected(str(MAXPLAYERS))
+
+    @gen_test
+    async def test_lectern_socket_rejects_negative_player(self) -> None:
+        """``player=-1`` is not a slot, so the socket is closed."""
+        await self.assert_lectern_rejected("-1")
+
+    @gen_test
+    async def test_lectern_socket_rejects_non_number_player(self) -> None:
+        """``player=abc`` is not a number, so the socket is closed."""
+        await self.assert_lectern_rejected("abc")
+
+    @gen_test
+    async def test_reconnect_closes_and_unbinds_the_old_socket(self) -> None:
+        """When a phone reconnects, its old socket no longer acts for the player."""
+        old_ws, player = await self.join("Alice")
+        old_handler = player.waiter
+
+        new_ws = await websocket_connect(self.ws_url("/buzzersocket"))
+        exists = await self.send(new_ws, "CHECK_IF_EXISTS", player.token.hex())
+        assert exists["message"] == "EXISTS"
+
+        assert old_handler.player is None
+        assert await old_ws.read_message() is None
+        await self.wait_for_socket_count(1)
+        assert player.waiter is not old_handler
+        assert player.connected is True
+        new_ws.close()
+
+    @gen_test
+    async def test_malformed_messages_are_ignored(self) -> None:
+        """Bad frames are logged and ignored, and the socket stays open."""
+        ws, _player = await self.join("Alice")
+        for bad in (
+            "not json",
+            "[]",
+            '"BUZZ"',
+            "null",
+            '{"text": "x"}',
+            '{"message": "WHAT", "text": ""}',
+            '{"message": 5}',
+        ):
+            ws.write_message(bad)
+        # A frame without "text" still works.
+        ws.write_message('{"message": "BUZZ"}')
+        await self.round_trip(ws)
+
+        assert self.game.buzzes == [0]
+        ws.close()

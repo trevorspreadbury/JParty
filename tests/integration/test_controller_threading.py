@@ -136,3 +136,28 @@ def test_sends_run_directly_when_no_loop_has_started(game: object) -> None:
     controller.toolate()
 
     assert socket.sent == [("TOOLATE", threading.main_thread())]
+
+
+def test_answer_from_loop_thread_is_stored_on_qt_thread(
+    controller: BuzzerController, running_loop: object, game: object, qtbot: object
+) -> None:
+    """Test a Final answer from a phone is handed to the Qt thread.
+
+    The answer arrives on the Tornado thread. It must not be stored until the
+    Qt event loop runs, just like buzzes and wagers.
+    """
+    loop, _ = running_loop
+    player = Player("Alice", ThreadRecordingSocket(), 0)
+    player.page = "answer"
+    game.players.append(player)
+    done = threading.Event()
+
+    def answer_on_loop() -> None:
+        controller.answer(player, "Lincoln")
+        done.set()
+
+    loop.add_callback(answer_on_loop)
+    assert done.wait(5)
+
+    assert player.finalanswer == ""
+    qtbot.waitUntil(lambda: player.finalanswer == "Lincoln", timeout=5000)

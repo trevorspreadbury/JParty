@@ -100,3 +100,88 @@ def test_double_tap_on_play_sends_one_name(
     )
 
     assert sent == {"names": 1, "disabled": True}
+
+
+COUNT_NEW_SOCKETS = """() => {
+    window.__opened = 0;
+    const RealWebSocket = window.WebSocket;
+    window.WebSocket = function(url) {
+        window.__opened++;
+        return new RealWebSocket(url);
+    };
+    Object.assign(window.WebSocket, {CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3});
+}"""
+
+
+def open_lectern(page: object, url: str) -> None:
+    """Open the lectern page for slot 0, wait for its socket, and count new ones."""
+    page.goto(f"{url}/lectern?player=0")
+    page.wait_for_function(
+        "window.updater && updater.socket && updater.socket.readyState === 1"
+    )
+    page.evaluate(COUNT_NEW_SOCKETS)
+
+
+def test_lectern_waits_for_its_reconnect_timer_when_shown(
+    live_browser_server: object,  # noqa: F811
+    browser_page: object,  # noqa: F811
+) -> None:
+    """Showing the page while a reconnect is waiting opens no extra socket."""
+    open_lectern(browser_page, live_browser_server.url)
+    browser_page.evaluate("updater.reconnectDelay = 300; updater.socket.close()")
+    browser_page.wait_for_function("updater.socket.readyState === 3")
+    browser_page.wait_for_timeout(50)
+
+    browser_page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+    assert browser_page.evaluate("window.__opened") == 0
+
+    browser_page.wait_for_function("updater.socket.readyState === 1")
+    browser_page.wait_for_timeout(500)
+    assert browser_page.evaluate("window.__opened") == 1
+
+
+def test_lectern_opens_no_second_socket_while_connecting(
+    live_browser_server: object,  # noqa: F811
+    browser_page: object,  # noqa: F811
+) -> None:
+    """Showing the page while its socket is still connecting opens no other."""
+    open_lectern(browser_page, live_browser_server.url)
+
+    opened = browser_page.evaluate(
+        """() => {
+            updater.socket.onclose = null;
+            updater.socket.close();
+            updater.start();
+            document.dispatchEvent(new Event('visibilitychange'));
+            return window.__opened;
+        }"""
+    )
+
+    assert opened == 1
+
+
+def test_replaced_lectern_stops_reconnecting(
+    live_browser_server: object,  # noqa: F811
+    browser_page: object,  # noqa: F811
+) -> None:
+    """A lectern page whose slot is taken by another page stays closed."""
+    open_lectern(browser_page, live_browser_server.url)
+    browser_page.evaluate(
+        """() => {
+            updater.reconnectDelay = 100;
+            window.__other = new WebSocket(
+                "ws://" + location.host + "/lecternsocket?player=0"
+            );
+        }"""
+    )
+    browser_page.wait_for_function("updater.socket.readyState === 3")
+    browser_page.wait_for_timeout(500)
+
+    # Only the second page's socket was opened; the replaced page did not
+    # reconnect and take the slot back.
+    assert browser_page.evaluate("window.__opened") == 1
+    assert browser_page.evaluate("window.__other.readyState") == 1
+    assert (
+        browser_page.locator("#player-name").text_content()
+        == "Opened on another screen"
+    )
