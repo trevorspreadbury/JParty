@@ -229,3 +229,16 @@ def test_race_winner_survives_a_correction_to_no_answer(
     assert stats[0].race_wins == 1
     assert stats[1].race_wins == 1
     assert stats[1].race_opportunities == 2
+
+
+def test_buzz_attempt_records_the_player_number(game_with_players: object) -> None:
+    """Buzzes are saved under the player's number, like answer attempts."""
+    game = game_with_players
+    game.players[0].player_number, game.players[1].player_number = 1, 0
+    question = game.current_round.get_question(0, 0)
+    game.load_question(question)
+    game.open_responses()
+
+    game.buzz(0)
+
+    assert game._all_buzz_attempts[-1].player_index == 1

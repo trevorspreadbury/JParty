@@ -211,7 +211,7 @@ class ClueFlow:
             self.game._successful_buzz_times.append(current_time)
         self.game._all_buzz_attempts.append(
             BuzzAttempt(
-                player_index=i_player,
+                player_index=player.player_number,
                 question_index=question_index,
                 timestamp=current_time,
                 is_early=early_buzz,
