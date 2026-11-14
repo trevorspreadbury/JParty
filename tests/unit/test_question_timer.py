@@ -36,3 +36,19 @@ def test_cancelled_timer_does_not_fire() -> None:
     timer.cancel()
 
     assert not fired.wait(0.4)
+
+
+def test_timer_thread_cannot_keep_the_app_alive() -> None:
+    """The timer's thread is a daemon, so a cancelled timer doesn't block exit.
+
+    A cancelled timer's thread sleeps out its full interval (up to 31 s in
+    Final). As a normal thread it kept the process, and the buzzer server's
+    port, alive after the host closed the windows.
+    """
+    timer = QuestionTimer(30, lambda: None)
+
+    timer.start()
+    thread = timer._thread
+    timer.cancel()
+
+    assert thread.daemon is True

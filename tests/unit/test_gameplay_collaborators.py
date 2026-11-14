@@ -46,7 +46,9 @@ def test_clue_flow_incorrect_answer_reopens_standard_clue(
 
     assert players[0].score == -question.value
     assert game.active_question is question
-    assert timer.resume_calls == 1
+    # Restarted once for the rebound; a second restart started an extra
+    # sleeping timer thread.
+    assert timer.start_calls + timer.resume_calls == 2
     assert game.accepting_responses is True
 
 
