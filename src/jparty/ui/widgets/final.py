@@ -470,6 +470,9 @@ class FinalAnswerWidget(QWidget):
         self.main_layout = QVBoxLayout()
         self.guess_label = MyLabel("", self.startFontSize, self)
         self.wager_label = MyLabel("", self.startFontSize, self)
+        # The guess label shows answers typed on phones, so never read it as
+        # rich text.
+        self.guess_label.setTextFormat(Qt.TextFormat.PlainText)
         self.main_layout.addStretch(1)
         self.main_layout.addWidget(self.guess_label, 5)
         self.main_layout.addWidget(self.wager_label, 5)

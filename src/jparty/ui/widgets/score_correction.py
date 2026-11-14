@@ -191,6 +191,7 @@ class ScoreCorrectionDialog(QDialog):
                     )
                 )
                 return player_label
+        player_label.setTextFormat(Qt.TextFormat.PlainText)
         player_label.setText(f"{player.name}:")
         player_label.setStyleSheet("color: white; font-weight: 700;")
         return player_label

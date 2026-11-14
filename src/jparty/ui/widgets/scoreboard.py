@@ -37,6 +37,9 @@ class NameLabel(MyLabel):
         """
         self.signature = None
         super().__init__("", self.startNameFontSize, parent)
+        # Names come from phones. Rich text would let a name load remote
+        # images on the host, so always draw the name as typed.
+        self.setTextFormat(Qt.TextFormat.PlainText)
         if name[:21] == "data:image/png;base64":
             i = QImage()
             i.loadFromData(urlsafe_b64decode(name[22:]), "PNG")
