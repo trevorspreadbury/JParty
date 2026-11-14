@@ -9,7 +9,6 @@ buzzing, adjudication, and navigation through a match.
 import logging
 import threading
 import time
-from collections.abc import Iterable
 from dataclasses import dataclass
 
 from PyQt6.QtCore import Qt
@@ -228,11 +227,8 @@ class KeystrokeManager:
         Returns:
             ``None``.
         """
-        if isinstance(idents, Iterable):
-            for ident in idents:
-                self._activate(ident)
-        else:
-            self._activate(idents)
+        for ident in idents:
+            self._activate(ident)
 
     def deactivate(self, *idents: object) -> None:
         """Deactivate one or more registered events.
@@ -243,8 +239,5 @@ class KeystrokeManager:
         Returns:
             ``None``.
         """
-        if isinstance(idents, Iterable):
-            for ident in idents:
-                self._deactivate(ident)
-        else:
-            self._deactivate(idents)
+        for ident in idents:
+            self._deactivate(ident)

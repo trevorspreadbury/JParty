@@ -181,11 +181,7 @@ def get_history_entry_type(entry: dict) -> str:
         The entry type. Clue lines have no ``type`` field and read as
         ``"question"``.
     """
-    if entry.get("type"):
-        return entry["type"]
-    if entry.get("question_index") is not None:
-        return QUESTION_HISTORY_ENTRY_TYPE
-    return QUESTION_HISTORY_ENTRY_TYPE
+    return entry.get("type") or QUESTION_HISTORY_ENTRY_TYPE
 
 
 def is_question_history_entry(entry: dict) -> bool:
@@ -446,22 +442,46 @@ def _check_score_chain(path: Path, numbered_entries: list[tuple]) -> None:
             match that player's previous ``score_after``. Every player starts
             at ``0``.
     """
-    last_scores = {}
-    for line_number, entry in numbered_entries:
+    entries = [entry for _, entry in numbered_entries]
+    for position, player_index, score_before, previous in _replay_score_ledger(
+        entries, {}
+    ):
+        if score_before is not None and score_before != previous:
+            raise HistoryFileError(
+                path,
+                numbered_entries[position][0],
+                f"player {player_index}'s score starts at {score_before}, "
+                f"but their previous score was {previous}, so a line may "
+                "be missing or edited",
+            )
+
+
+def _replay_score_ledger(entries: list[dict], totals: dict[int, int]) -> object:
+    """Walk every score change in the ledger, keeping ``totals`` up to date.
+
+    Args:
+        entries: History entries in file order.
+        totals: Running totals by player index, updated in place with each
+            change's ``score_after``. Players start at ``0``.
+
+    Yields:
+        ``(position, player_index, score_before, previous_total)`` for each
+        score change, where ``position`` is the entry's index in
+        ``entries`` and ``previous_total`` is the player's total before the
+        change. ``totals`` is updated after each yield.
+    """
+    for position, entry in enumerate(entries):
         for player_index, score_before, score_after in history_score_events(entry):
             if player_index is None:
                 continue
-            previous = last_scores.get(player_index, INITIAL_SCORE)
-            if score_before is not None and score_before != previous:
-                raise HistoryFileError(
-                    path,
-                    line_number,
-                    f"player {player_index}'s score starts at {score_before}, "
-                    f"but their previous score was {previous}, so a line may "
-                    "be missing or edited",
-                )
+            yield (
+                position,
+                player_index,
+                score_before,
+                totals.get(player_index, INITIAL_SCORE),
+            )
             if score_after is not None:
-                last_scores[player_index] = score_after
+                totals[player_index] = score_after
 
 
 def history_score_totals(entries: list[dict]) -> dict[int, int]:
@@ -475,10 +495,8 @@ def history_score_totals(entries: list[dict]) -> dict[int, int]:
         ``score_after``.
     """
     totals = {}
-    for entry in entries:
-        for player_index, _, score_after in history_score_events(entry):
-            if player_index is not None and score_after is not None:
-                totals[player_index] = score_after
+    for _ in _replay_score_ledger(entries, totals):
+        pass
     return totals
 
 
@@ -562,6 +580,24 @@ def clue_score_effects(entry: dict) -> dict[int, int]:
     return effects
 
 
+def _add_to_score(
+    scores: dict[int, int], player_index: int, change: int
+) -> tuple[int, int]:
+    """Add ``change`` to one player's running total, in place.
+
+    Args:
+        scores: Running totals by player index. Players start at ``0``.
+        player_index: Player whose total changes.
+        change: Amount to add.
+
+    Returns:
+        The player's ``(score_before, score_after)``.
+    """
+    score_before = scores.get(player_index, INITIAL_SCORE)
+    scores[player_index] = score_before + change
+    return score_before, scores[player_index]
+
+
 def ruling_score_effect(result: str, value: int) -> int:
     """Return the score change caused by ruling ``result`` on a clue worth ``value``."""
     if result == CORRECT_RESULT:
@@ -617,14 +653,16 @@ def corrected_history_entries(entries: list[dict]) -> list[dict]:
             player_index = corrected_entry.get("player_index")
             if player_index is None:
                 continue
-            score_before = scores.get(player_index, INITIAL_SCORE)
-            recorded_after = corrected_entry.get("score_after", score_before)
-            recorded_before = corrected_entry.get("score_before", score_before)
-            score_after = score_before + recorded_after - recorded_before
+            previous = scores.get(player_index, INITIAL_SCORE)
+            recorded_change = corrected_entry.get(
+                "score_after", previous
+            ) - corrected_entry.get("score_before", previous)
+            score_before, score_after = _add_to_score(
+                scores, player_index, recorded_change
+            )
             corrected_entry["score_before"] = score_before
             corrected_entry["score_after"] = score_after
             corrected_entry["new_score"] = score_after
-            scores[player_index] = score_after
             continue
         if not is_question_history_entry(corrected_entry):
             continue
@@ -635,11 +673,9 @@ def corrected_history_entries(entries: list[dict]) -> list[dict]:
                 player_index = attempt.get("player_index")
                 if player_index is None:
                     continue
-                score_before = scores.get(player_index, INITIAL_SCORE)
-                score_after = score_before + _attempt_score_change(attempt, value)
-                attempt["score_before"] = score_before
-                attempt["score_after"] = score_after
-                scores[player_index] = score_after
+                attempt["score_before"], attempt["score_after"] = _add_to_score(
+                    scores, player_index, _attempt_score_change(attempt, value)
+                )
             continue
         if corrected_entry.get("is_daily_double") and "value" in correction:
             value = int(correction["value"])
@@ -656,9 +692,10 @@ def corrected_history_entries(entries: list[dict]) -> list[dict]:
         rebuilt_attempts = []
         for player_index in clue_attempt_order(entry, player_results):
             original_attempt = attempts_by_player.get(player_index, {})
-            score_before = scores.get(player_index, INITIAL_SCORE)
-            score_after = score_before + ruling_score_effect(
-                player_results[player_index], value
+            score_before, score_after = _add_to_score(
+                scores,
+                player_index,
+                ruling_score_effect(player_results[player_index], value),
             )
             rebuilt_attempts.append(
                 {
@@ -672,9 +709,98 @@ def corrected_history_entries(entries: list[dict]) -> list[dict]:
                     "score_after": score_after,
                 }
             )
-            scores[player_index] = score_after
         corrected_entry["answer_attempts"] = rebuilt_attempts
     return corrected_entries
+
+
+def build_score_correction_lines(
+    raw_entries: list[dict],
+    corrections: list[dict],
+    player_numbers: list[int],
+    timestamp: float,
+) -> list[dict]:
+    """Build the ``score_correction`` lines for a set of score-editor edits.
+
+    Each edit is compared with the clue as it currently stands (its latest
+    correction applied). An edit that changes nothing, or names a clue that
+    isn't in the history, gives no line. Every other edit gives one line
+    holding the corrected ruling and, for each player whose score changes,
+    that change applied to the player's running total. Lines are built in
+    ``question_number`` order, and each line's totals include the lines
+    before it.
+
+    Args:
+        raw_entries: History entries in file order, as read from disk
+            (including earlier ``score_correction`` lines).
+        corrections: Edited clue payloads, each with ``question_number``,
+            ``player_states`` (player index to ruling) and, for Daily
+            Doubles, the corrected ``value``.
+        player_numbers: Current players' numbers. A player missing from a
+            clue's ruling counts as ``"no answer"``.
+        timestamp: Unix timestamp to record on each line.
+
+    Returns:
+        The lines to append, in order.
+    """
+    effective_entries = {
+        entry.get("question_number"): entry
+        for entry in corrected_history_entries(raw_entries)
+        if is_question_history_entry(entry)
+    }
+    totals = history_score_totals(raw_entries)
+    correction_lines = []
+    for correction in sorted(
+        corrections, key=lambda correction: correction["question_number"]
+    ):
+        question_number = correction["question_number"]
+        entry = effective_entries.get(question_number)
+        if entry is None:
+            continue
+        current_results = clue_player_results(entry)
+        current_states = {
+            player_number: current_results.get(player_number, NO_ANSWER_RESULT)
+            for player_number in player_numbers
+        }
+        corrected_states = {
+            int(player_index): result
+            for player_index, result in correction["player_states"].items()
+        }
+        current_value = int(entry.get("value", 0) or 0)
+        corrected_value = (
+            int(correction["value"]) if entry.get("is_daily_double") else current_value
+        )
+        if corrected_states == current_states and corrected_value == current_value:
+            continue
+        current_effects = clue_score_effects(entry)
+        adjustments = []
+        for player_index in sorted(set(current_effects) | set(corrected_states)):
+            change = ruling_score_effect(
+                corrected_states.get(player_index, NO_ANSWER_RESULT), corrected_value
+            ) - current_effects.get(player_index, 0)
+            if not change:
+                continue
+            score_before, score_after = _add_to_score(totals, player_index, change)
+            adjustments.append(
+                {
+                    "player_index": player_index,
+                    "score_before": score_before,
+                    "score_after": score_after,
+                }
+            )
+        correction_line = {
+            "type": SCORE_CORRECTION_TYPE,
+            "question_number": question_number,
+            "timestamp": timestamp,
+            "player_states": {
+                str(player_index): result
+                for player_index, result in sorted(corrected_states.items())
+            },
+        }
+        if entry.get("is_daily_double"):
+            correction_line["value"] = corrected_value
+        correction_line["adjustments"] = adjustments
+        correction_lines.append(correction_line)
+    return correction_lines
 
 
 def save_general_state(game: object) -> None:
@@ -816,54 +942,25 @@ def reconstruct_score_history(game: object) -> object:
         game: Active or resumed ``Game`` instance whose history should be read.
 
     Returns:
-        A mapping from player index to a list of scores by question number,
-        reflecting any score corrections ("as it should have been").
+        A mapping from player index to a list of scores, starting at ``0``
+        with one point per history event, reflecting any score corrections
+        ("as it should have been").
 
     Raises:
         HistoryFileError: If the history file cannot be read.
     """
-    entries = load_corrected_question_history(game)
-    if not entries:
-        return {}
-    all_players = set()
     score_history = {}
     scores = {}
-    event_count = 0
-
-    def ensure_player(player_index: int) -> None:
-        if player_index in score_history:
-            return
-        all_players.add(player_index)
-        scores[player_index] = INITIAL_SCORE
-        score_history[player_index] = [INITIAL_SCORE] * (event_count + 1)
-
-    for entry in entries:
-        if is_manual_score_adjustment(entry):
-            player_index = entry.get("player_index")
-            if player_index is not None:
-                ensure_player(player_index)
-        for attempt in entry.get("answer_attempts", []):
-            player_index = attempt.get("player_index")
-            if player_index is not None:
-                ensure_player(player_index)
-
-        if is_manual_score_adjustment(entry):
-            player_index = entry.get("player_index")
-            if player_index is not None:
-                scores[player_index] = entry.get(
-                    "score_after", scores.get(player_index, INITIAL_SCORE)
-                )
-        else:
-            for attempt in entry.get("answer_attempts", []):
-                player_index = attempt.get("player_index")
-                if player_index is not None:
-                    scores[player_index] = attempt.get(
-                        "score_after", scores.get(player_index, INITIAL_SCORE)
-                    )
-
-        event_count += 1
-        for player_index in all_players:
-            score_history[player_index].append(scores.get(player_index, INITIAL_SCORE))
+    for event_index, entry in enumerate(load_corrected_question_history(game)):
+        for player_index, _, score_after in history_score_events(entry):
+            if player_index is None:
+                continue
+            # A new player's series is 0 for every event before their first.
+            score_history.setdefault(player_index, [INITIAL_SCORE] * (event_index + 1))
+            if score_after is not None:
+                scores[player_index] = score_after
+        for player_index, series in score_history.items():
+            series.append(scores.get(player_index, INITIAL_SCORE))
     return score_history
 
 
