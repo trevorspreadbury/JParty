@@ -1030,6 +1030,11 @@ QCheckBox {{
             if self._resetting_advanced_configuration
             else self.snapshot_advanced_rows()
         )
+        for old_row in self._advanced_rows:
+            # A row Random's worker checks its own row's request id, so this
+            # stops it before its next fetch.
+            old_row["load_timer"].stop()
+            self._next_advanced_request_id(old_row)
         while self.advanced_rows_layout.count():
             item = self.advanced_rows_layout.takeAt(0)
             widget = item.widget()
@@ -1167,6 +1172,9 @@ QCheckBox {{
         self._clear_advanced_row_loaded_state(row)
         row["pending_selection"] = selection
         self.load_advanced_row_async(row_index)
+        # The row is empty until its load finishes, so Start must turn off
+        # now rather than wait for the next sync.
+        self.sync_active_configuration()
 
     def clear_advanced_configuration(self) -> None:
         """Discard advanced configuration and reset the welcome screen."""
@@ -1287,6 +1295,9 @@ QCheckBox {{
             "status_label": status_label,
             "loaded_data": None,
             "pending_selection": None,
+            # Note kept under the row's summary until the row changes, such
+            # as "Kept game X" after a failed Random.
+            "notice": "",
         }
         row_index = row["index"]
         load_timer.timeout.connect(partial(self.load_advanced_row_async, row_index))
@@ -1314,6 +1325,7 @@ QCheckBox {{
         row = self._advanced_rows[row_index]
         row["load_timer"].stop()
         self._clear_advanced_row_loaded_state(row)
+        row["notice"] = ""
         # Typing drops any load in flight, including a row Random.
         self._next_advanced_request_id(row)
         if not row["gameid_edit"].text().strip():
@@ -1434,6 +1446,8 @@ QCheckBox {{
         Skips the debounce. The load runs on a worker thread unless the game
         is already cached.
         """
+        if 0 <= row_index < len(self._advanced_rows):
+            self._advanced_rows[row_index]["notice"] = ""
         self.reload_advanced_row(row_index)
 
     def _apply_advanced_row_loaded_data(
@@ -1446,6 +1460,7 @@ QCheckBox {{
         pending_selection = row.get("pending_selection") or {}
         row["pending_selection"] = None
         if data is None:
+            row["notice"] = ""
             row["status_label"].setText(
                 "\n".join(
                     [
@@ -1462,6 +1477,7 @@ QCheckBox {{
             if round_matches_board_type(round_data, row["board_type"])
         ]
         if not matching_rounds:
+            row["notice"] = ""
             expected_label = self.expected_board_type_label(row["board_type"])
             row["status_label"].setText(
                 "\n".join(
@@ -1535,6 +1551,7 @@ QCheckBox {{
             else None
         )
         self._clear_advanced_row_loaded_state(row)
+        row["notice"] = ""
         request_id = self._next_advanced_request_id(row)
         row["loading"] = True
         row["status_label"].setText("Loading...")
@@ -1603,16 +1620,10 @@ QCheckBox {{
                 # round and Daily Doubles. It is usually cached, so this is
                 # immediate; otherwise it reloads on the worker thread.
                 previous_game_id, selection = fallback
+                # The note stays under the row's summary until the row
+                # changes, so later syncs don't wipe it.
+                row["notice"] = f"{failure_text} Kept game {previous_game_id}."
                 self.reload_advanced_row(row_index, selection)
-                if not row["loading"]:
-                    row["status_label"].setText(
-                        "\n\n".join(
-                            [
-                                row["status_label"].text(),
-                                f"{failure_text} Kept game {previous_game_id}.",
-                            ]
-                        )
-                    )
                 return
             row["status_label"].setText(failure_text)
             self.sync_active_configuration()
@@ -1820,11 +1831,18 @@ QCheckBox {{
             )
             media_status = self._advanced_media_status_cache.get(game_id)
             row["status_label"].setText(
-                self.build_source_game_summary_text(
-                    game_id,
-                    row["loaded_data"],
-                    media_status,
-                    selected_round_index=selected_round_index,
+                "\n\n".join(
+                    text
+                    for text in [
+                        self.build_source_game_summary_text(
+                            game_id,
+                            row["loaded_data"],
+                            media_status,
+                            selected_round_index=selected_round_index,
+                        ),
+                        row["notice"],
+                    ]
+                    if text
                 )
             )
             if row["board_type"] == "final":
@@ -1881,12 +1899,18 @@ QCheckBox {{
             self.game.set_session_game_id(session_game_id)
         if hasattr(self.game, "set_selected_round_indices"):
             self.game.set_selected_round_indices(list(range(len(board_selections))))
-        composed_data = compose_game_from_resolved_board_selections(resolved_boards)
+        # A partial board set is never a playable game, so ``game.data`` stays
+        # empty until every row is filled.
+        composed_data = (
+            compose_game_from_resolved_board_selections(resolved_boards)
+            if configuration_complete
+            else None
+        )
         self.game.data = composed_data
         if hasattr(self.game, "set_composed_game_data"):
             self.game.set_composed_game_data(
                 board_selections if configuration_complete else None,
-                composed_data if configuration_complete else None,
+                composed_data,
             )
         if configuration_complete and composed_data is not None:
             self._advanced_mode_summary_text = self.build_advanced_summary_text(
@@ -2046,8 +2070,22 @@ QCheckBox {{
         self.loader.run_async(partial(self._load_summary_game, request_id, game_id))
 
     def on_start_clicked(self, checked: object = False) -> None:
-        """Start the game or open the local-media preview when available."""
+        """Start the game or open the local-media preview when available.
+
+        The configuration is synced again first, and nothing happens unless
+        Start is enabled for the current mode afterwards. So a click that
+        lands while a row reloads, a load is pending, or a point value is
+        invalid can't start a partial game.
+        """
         self.sync_active_configuration()
+        self.check_start()
+        active_start_button = (
+            self.advanced_start_button
+            if self.advanced_options_checkbox.isChecked()
+            else self.start_button
+        )
+        if not active_start_button.isEnabled():
+            return
         if self.resume_path is None:
             preview_questions = self.preview_questions()
             if preview_questions and hasattr(

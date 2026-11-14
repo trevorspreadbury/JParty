@@ -1307,6 +1307,7 @@ def test_start_click_opens_preview_for_selected_round_local_media(
 ) -> None:
     """Welcome should show preview instead of starting immediately when local media exists."""
     game = StubGame()
+    game.startable = lambda: True
     image_path = temp_dir / "0-0-0.png"
     pixmap = QPixmap(40, 40)
     pixmap.fill(QColor("blue"))
@@ -2225,6 +2226,9 @@ def test_advanced_start_after_load_saved_leaves_the_save_untouched(
     widget.refresh_advanced_row(0)
     widget._advanced_rows[1]["gameid_edit"].setText("9999")
     widget.refresh_advanced_row(1)
+    game.buzzer_controller.connected_players = list(game.players)
+    widget.check_start()
+    assert widget.advanced_start_button.isEnabled() is True
     widget.on_start_clicked()
 
     assert game._game_state_dir != sample_saved_game_dir
@@ -2489,3 +2493,256 @@ def test_advanced_row_random_result_is_dropped_after_typing(
 
     assert row["gameid_edit"].text() == "222"
     assert row["loaded_data"] is None
+
+
+def _startable_advanced_widget(
+    qtbot: object, monkeypatch: object, games: dict, loader: object
+) -> tuple[Welcome, StubGame, list]:
+    """Build an advanced-mode widget whose game can start once boards are set."""
+    widget, game, calls = _advanced_widget(qtbot, monkeypatch, games, loader)
+    game.startable = lambda: True
+    return widget, game, calls
+
+
+def _load_advanced_row_now(
+    widget: Welcome, loader: DeferredLoader, row_index: int, game_id: str
+) -> dict:
+    """Load one advanced row and finish its load if it went to the loader."""
+    row = _load_advanced_row(widget, row_index, game_id)
+    while loader.pending:
+        loader.pending.pop(0)()
+    return row
+
+
+def test_advanced_start_waits_for_a_row_reloading_after_load_media(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Start can't launch a partial game while a row reloads (review of #18).
+
+    Load Media reloads the row's source game. Pressing Start before that
+    finished used to play only the loaded boards, with no board selections
+    saved, so the save resumed the wrong rounds.
+    """
+    loader = DeferredLoader()
+    widget, game, _ = _startable_advanced_widget(
+        qtbot,
+        monkeypatch,
+        {
+            "111": _fixture_source_game("Game 111"),
+            "222": _fixture_source_game("Game 222"),
+        },
+        loader,
+    )
+    monkeypatch.setattr(
+        "jparty.ui.widgets.welcome.import_question_media", lambda path, game_id: None
+    )
+    monkeypatch.setattr(widget, "select_question_media_path", lambda: "C:/media")
+    _load_advanced_row_now(widget, loader, 0, "111")
+    _load_advanced_row_now(widget, loader, 1, "222")
+    _load_advanced_row_now(widget, loader, 2, "111")
+    assert widget.advanced_start_button.isEnabled() is True
+
+    widget.load_advanced_question_media(1)
+
+    assert len(loader.pending) == 1
+    assert widget.advanced_start_button.isEnabled() is False
+    assert game.board_selection_configs() == []
+    assert game.data is None
+    widget.on_start_clicked()
+    assert game.start_game_calls == 0
+
+    loader.pending.pop()()
+
+    assert widget.advanced_start_button.isEnabled() is True
+    widget.on_start_clicked()
+    assert game.start_game_calls == 1
+    assert len(game.board_selection_configs()) == 3
+    assert len(game.data.rounds) == 3
+
+
+def test_advanced_start_waits_for_a_row_reloading_after_enter(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Pressing Enter in a loaded row turns Start off until it reloads."""
+    loader = DeferredLoader()
+    widget, game, _ = _startable_advanced_widget(
+        qtbot, monkeypatch, {"111": _fixture_source_game("Game 111")}, loader
+    )
+    widget.final_board_count_spinbox.setValue(0)
+    _load_advanced_row_now(widget, loader, 0, "111")
+    _load_advanced_row_now(widget, loader, 1, "111")
+    assert widget.advanced_start_button.isEnabled() is True
+    widget._advanced_game_cache.clear()
+
+    widget.refresh_advanced_row(1)
+
+    assert len(loader.pending) == 1
+    assert widget.advanced_start_button.isEnabled() is False
+    widget.on_start_clicked()
+    assert game.start_game_calls == 0
+
+
+def test_advanced_start_ignores_an_invalid_point_value(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A point value typed but not yet committed still blocks Start."""
+    loader = DeferredLoader()
+    widget, game, _ = _startable_advanced_widget(
+        qtbot, monkeypatch, {"111": _fixture_source_game("Game 111")}, loader
+    )
+    widget.final_board_count_spinbox.setValue(0)
+    row = _load_advanced_row_now(widget, loader, 0, "111")
+    _load_advanced_row_now(widget, loader, 1, "111")
+    assert widget.advanced_start_button.isEnabled() is True
+
+    row["value_edits"][0].setText("abc")
+    widget.on_start_clicked()
+
+    assert game.start_game_calls == 0
+    assert widget.advanced_start_button.isEnabled() is False
+    assert "whole numbers" in row["status_label"].text()
+
+
+def test_regular_start_is_ignored_while_a_load_is_pending(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Start does nothing while the typed id is still loading."""
+    loader = DeferredLoader()
+    widget, game = _loading_widget(
+        qtbot,
+        monkeypatch,
+        loader,
+        {
+            "111": _fixture_source_game("Game 111"),
+            "222": _fixture_source_game("Game 222"),
+        },
+    )
+    _type_game_id(widget, "111")
+    loader.pending.pop()()
+    assert widget.start_button.isEnabled() is True
+    _type_game_id(widget, "222")
+
+    widget.on_start_clicked()
+
+    assert game.start_game_calls == 0
+
+
+def test_load_saved_result_is_dropped_after_typing(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A save that finishes loading after the host typed a new id is dropped."""
+    loader = DeferredLoader()
+    newer = _fixture_source_game("Game 222")
+    widget, game = _loading_widget(qtbot, monkeypatch, loader, {"222": newer})
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved"
+    )
+
+    widget.load_saved_game()
+    _type_game_id(widget, "222")
+    saved_load, typed_load = loader.pending
+    typed_load()
+    saved_load()
+
+    assert widget.resume_path is None
+    assert game.resume_expected is None
+    assert widget.start_button.text() == "Start!"
+    assert game.data is newer
+    assert "Game 222" in widget.summary_label.text()
+    assert "Resume game" not in widget.summary_label.text()
+    assert widget.start_button.isEnabled() is True
+
+
+def test_load_saved_result_is_dropped_after_random(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A save that finishes loading after Random is dropped."""
+    loader = DeferredLoader()
+    picked = _fixture_source_game("Random game")
+    widget, game = _loading_widget(qtbot, monkeypatch, loader, {"4321": picked})
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 4321)
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved"
+    )
+
+    widget.load_saved_game()
+    widget.random(False)
+    saved_load, random_load = loader.pending
+    random_load()
+    saved_load()
+
+    assert widget.resume_path is None
+    assert game.resume_expected is None
+    assert widget.textbox.text() == "4321"
+    assert game.data is picked
+    assert "Random game" in widget.summary_label.text()
+    assert widget.start_button.isEnabled() is True
+
+
+def test_advanced_row_random_stops_when_rows_are_rebuilt(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Changing the board count cancels a row Random still in progress."""
+    loader = DeferredLoader()
+    widget, _, calls = _advanced_widget(
+        qtbot, monkeypatch, {"333": ConnectionError("offline")}, loader
+    )
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 333)
+    widget.standard_board_count_spinbox.setValue(1)
+    widget.final_board_count_spinbox.setValue(0)
+    widget.random_advanced_row(0)
+    random_load = loader.pending.pop()
+
+    widget.standard_board_count_spinbox.setValue(2)
+    random_load()
+
+    assert calls == []
+    assert widget._advanced_rows[0]["status_label"].text() == "Enter a source game id."
+
+
+def test_advanced_row_random_stops_when_advanced_is_turned_off(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """Turning Advanced off cancels a row Random still in progress."""
+    loader = DeferredLoader()
+    widget, _, calls = _advanced_widget(
+        qtbot, monkeypatch, {"333": ConnectionError("offline")}, loader
+    )
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 333)
+    widget.random_advanced_row(0)
+    random_load = loader.pending.pop()
+
+    widget.advanced_options_checkbox.setChecked(False)
+    random_load()
+
+    assert calls == []
+
+
+def test_failed_advanced_row_random_message_survives_later_changes(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """The "Kept game" note stays on the row until the row itself changes."""
+    final_only = GameData(
+        [_fixture_source_game("Final only").rounds[2]], "January 3, 2026", "Final"
+    )
+    widget, _, _ = _advanced_widget(
+        qtbot,
+        monkeypatch,
+        {"333": final_only, "111": _fixture_source_game("Game 111")},
+    )
+    monkeypatch.setattr("jparty.ui.widgets.welcome.get_random_game", lambda: 333)
+    widget.final_board_count_spinbox.setValue(0)
+    row = _load_advanced_row(widget, 0, "111")
+    other_row = _load_advanced_row(widget, 1, "111")
+    widget.random_advanced_row(0)
+    assert "Kept game 111." in row["status_label"].text()
+
+    other_row["daily_double_spinbox"].setValue(3)
+    row["board_radios"][1].click()
+
+    assert "Kept game 111." in row["status_label"].text()
+    assert "Game 111" in row["status_label"].text()
+
+    widget.refresh_advanced_row(0)
+
+    assert "Kept game" not in row["status_label"].text()
