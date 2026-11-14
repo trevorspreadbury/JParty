@@ -146,18 +146,18 @@ and this project follows [Semantic Versioning](https://semver.org/).
   Start while a board was reloading, for example right after Load Media,
   played only the loaded boards and wrote a save that resumed the wrong
   rounds. Start now turns off while any board reloads and ignores a click
-  until every board is ready (#NNN).
+  until every board is ready (#120).
 - Changing the number of advanced boards, or turning Advanced off, now stops
   a board's Random search instead of letting it keep fetching games in the
-  background (#NNN).
+  background (#120).
 - After a board's Random gives up, its "Kept game" note stays until that
-  board changes, instead of vanishing on the next edit elsewhere (#NNN).
+  board changes, instead of vanishing on the next edit elsewhere (#120).
 - A board whose own Daily Doubles share a category now keeps them where they
   are. One of them used to move to a random clue each time the welcome
-  screen refreshed, and again on resume (#NNN).
+  screen refreshed, and again on resume (#120).
 - Missing-clue warnings now read the same on the regular summary, each
   advanced board and the advanced summary ("WARNING: Missing N questions")
-  (#NNN).
+  (#120).
 
 ### Removed
 - The crash dialog no longer offers to email a report. It shows the error and
