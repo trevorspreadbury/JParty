@@ -47,6 +47,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `environment.yml` installs from `pyproject.toml` (#75, #83).
 
 ### Fixed
+- Closing JParty during a clue or Final now exits at once. A cancelled clue
+  timer kept the app, and the buzzer server's port, running for up to 31 s,
+  so a quick relaunch moved to the next port (#115).
 - The welcome screen now warns about a missing Daily Double in Double
   Jeopardy! even when Jeopardy! is unticked, or when an advanced board uses
   the Double Jeopardy! round on its own (#107).
