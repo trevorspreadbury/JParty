@@ -5,6 +5,7 @@ game, plus the QR-code display shown on the audience screen so players can join
 the buzzer web app.
 """
 
+import itertools
 import logging
 from functools import partial
 from pathlib import Path
@@ -54,7 +55,7 @@ from jparty.services.question_media import (
     local_media_questions,
 )
 from jparty.ui.styles import WINDOWPAL
-from jparty.ui.welcome_loader import WelcomeLoader
+from jparty.ui.welcome_loader import LatestRequest, WelcomeLoader
 from jparty.ui.welcome_presenter import WelcomePresenter
 from jparty.ui.widgets.common import (
     DynamicButton,
@@ -101,6 +102,46 @@ ADVANCED_RANDOM_MAX_ATTEMPTS = RANDOM_GAME_MAX_ATTEMPTS
 def _is_playable_game_data(data: object) -> bool:
     """Return whether loaded game data has at least one playable round."""
     return data is not None and bool(getattr(data, "rounds", None))
+
+
+def find_random_game_with_media(
+    accept: object, is_cancelled: object, max_attempts: int
+) -> tuple[str, object, object]:
+    """Find a random game and its local media status, on a worker thread.
+
+    Both Random buttons use this. It never touches widgets.
+
+    Args:
+        accept: Returns whether a loaded game can be used.
+        is_cancelled: Returns ``True`` once a newer request replaced this one.
+        max_attempts: Most games to try.
+
+    Returns:
+        ``(game_id, data, media_status)``, or ``("", None, None)`` when every
+        try failed or the search was cancelled.
+    """
+    game_id, data = find_random_game(
+        accept,
+        max_attempts=max_attempts,
+        is_cancelled=is_cancelled,
+        pick_game_id=get_random_game,
+        load_game=get_game,
+    )
+    media_status = detect_question_media(game_id) if game_id else None
+    return game_id, data, media_status
+
+
+def random_game_failure_text(wanted: str, max_attempts: int) -> str:
+    """Return the message shown when Random found no usable game.
+
+    Args:
+        wanted: What the game had to have, such as ``"playable random game"``.
+        max_attempts: How many games were tried.
+
+    Returns:
+        The message.
+    """
+    return f"Could not find a {wanted} after {max_attempts} tries. Try again."
 
 
 def game_warning_lines(
@@ -280,7 +321,9 @@ class Welcome(StartWidget):
         self.resume_path = None
         self._base_summary_text = ""
         self._loading_summary = False
-        self._summary_request_id = 0
+        # Newest single-game load (typed id, Random, Load Saved). Results
+        # from older requests are dropped.
+        self._summary_request = LatestRequest()
         # Request id of a reload started by a media import, or ``None``.
         self._media_reload_request_id = None
         # Shown in the summary after a failed media reload or Random kept the
@@ -293,8 +336,9 @@ class Welcome(StartWidget):
         self._advanced_rows = []
         self._advanced_game_cache = {}
         self._advanced_media_status_cache = {}
-        # Shared by all rows, so a result can never match a rebuilt row.
-        self._advanced_request_counter = 0
+        # Each row tracks its newest load, with ids from this one counter so
+        # a result can never match a rebuilt row.
+        self._advanced_request_ids = itertools.count(1)
         self._advanced_mode_summary_text = ""
         self._resetting_advanced_configuration = False
         main_layout = QVBoxLayout()
@@ -629,11 +673,11 @@ QCheckBox {{
         Returns:
             The new request id.
         """
-        self._summary_request_id += 1
+        request_id = self._summary_request.begin()
         self._media_reload_warning = ""
         self._loading_summary = loading
         self.presenter.set_loading(loading)
-        return self._summary_request_id
+        return request_id
 
     def _load_random_game(self, request_id: int) -> None:
         """Pick and load a random game on a worker thread.
@@ -649,19 +693,18 @@ QCheckBox {{
         Returns:
             ``None``.
         """
-        game_id, data = find_random_game(
+        game_id, data, media_status = find_random_game_with_media(
             _is_playable_game_data,
-            is_cancelled=lambda: request_id != self._summary_request_id,
-            pick_game_id=get_random_game,
-            load_game=get_game,
+            lambda: not self._summary_request.is_current(request_id),
+            RANDOM_GAME_MAX_ATTEMPTS,
         )
         error = None
         if not game_id:
             error = LookupError(
-                f"Could not find a playable random game after "
-                f"{RANDOM_GAME_MAX_ATTEMPTS} tries. Try again."
+                random_game_failure_text(
+                    "playable random game", RANDOM_GAME_MAX_ATTEMPTS
+                )
             )
-        media_status = detect_question_media(game_id) if game_id else None
         self.summary_load_result_trigger.emit(
             request_id, game_id, data, error, media_status, True
         )
@@ -754,7 +797,7 @@ QCheckBox {{
         Returns:
             ``None``.
         """
-        if request_id != self._summary_request_id:
+        if not self._summary_request.is_current(request_id):
             return
         if self.advanced_options_checkbox.isChecked():
             return
@@ -1045,7 +1088,7 @@ QCheckBox {{
             # A row Random's worker checks its own row's request id, so this
             # stops it before its next fetch.
             old_row["load_timer"].stop()
-            self._next_advanced_request_id(old_row)
+            old_row["request"].cancel()
         while self.advanced_rows_layout.count():
             item = self.advanced_rows_layout.takeAt(0)
             widget = item.widget()
@@ -1299,7 +1342,7 @@ QCheckBox {{
             "board_radio_group": board_radio_group,
             "board_radios": [],
             "load_timer": load_timer,
-            "load_request_id": 0,
+            "request": LatestRequest(self._advanced_request_ids),
             "loading": False,
             "status_label": status_label,
             "loaded_data": None,
@@ -1336,7 +1379,7 @@ QCheckBox {{
         self._clear_advanced_row_loaded_state(row)
         row["notice"] = ""
         # Typing drops any load in flight, including a row Random.
-        self._next_advanced_request_id(row)
+        row["request"].cancel()
         if not row["gameid_edit"].text().strip():
             row["status_label"].setText("Enter a source game id.")
             self.sync_active_configuration()
@@ -1364,7 +1407,7 @@ QCheckBox {{
             row["status_label"].setText("Enter a source game id.")
             self.sync_active_configuration()
             return
-        request_id = self._next_advanced_request_id(row)
+        request_id = row["request"].begin()
         row["loading"] = True
         row["status_label"].setText("Loading...")
         if (
@@ -1393,19 +1436,6 @@ QCheckBox {{
             )
 
         self.loader.run_async(_load)
-
-    def _next_advanced_request_id(self, row: dict) -> int:
-        """Invalidate any load in flight for ``row`` and return a new request id.
-
-        Args:
-            row: Advanced row state.
-
-        Returns:
-            The row's new request id.
-        """
-        self._advanced_request_counter += 1
-        row["load_request_id"] = self._advanced_request_counter
-        return row["load_request_id"]
 
     def _cache_advanced_game(
         self, game_id: str, data: object, media_status: object
@@ -1439,7 +1469,7 @@ QCheckBox {{
         if not 0 <= row_index < len(self._advanced_rows):
             return
         row = self._advanced_rows[row_index]
-        if request_id != row["load_request_id"]:
+        if not row["request"].is_current(request_id):
             return
         if str(game_id).strip() != row["gameid_edit"].text().strip():
             return
@@ -1559,26 +1589,24 @@ QCheckBox {{
         )
         self._clear_advanced_row_loaded_state(row)
         row["notice"] = ""
-        request_id = self._next_advanced_request_id(row)
+        request = row["request"]
+        request_id = request.begin()
         row["loading"] = True
         row["status_label"].setText("Loading...")
         self.sync_active_configuration()
         board_type = row["board_type"]
 
         def _load() -> None:
-            game_id, data = find_random_game(
+            game_id, data, media_status = find_random_game_with_media(
                 lambda candidate: any(
                     round_matches_board_type(round_data, board_type)
                     for round_data in candidate.rounds
                 ),
-                max_attempts=ADVANCED_RANDOM_MAX_ATTEMPTS,
-                is_cancelled=lambda: request_id != row["load_request_id"],
-                pick_game_id=get_random_game,
-                load_game=get_game,
+                lambda: not request.is_current(request_id),
+                ADVANCED_RANDOM_MAX_ATTEMPTS,
             )
-            if request_id != row["load_request_id"]:
+            if not request.is_current(request_id):
                 return
-            media_status = detect_question_media(game_id) if game_id else None
             self.advanced_row_random_result_trigger.emit(
                 row_index, request_id, game_id, data, media_status
             )
@@ -1608,16 +1636,15 @@ QCheckBox {{
         if not 0 <= row_index < len(self._advanced_rows):
             return
         row = self._advanced_rows[row_index]
-        if request_id != row["load_request_id"]:
+        if not row["request"].is_current(request_id):
             return
         row["loading"] = False
         fallback = row.pop("random_fallback", None)
         game_id = str(game_id).strip()
         if not game_id:
             expected_label = self.expected_board_type_label(row["board_type"])
-            failure_text = (
-                f"Could not find a random game with a {expected_label} after "
-                f"{ADVANCED_RANDOM_MAX_ATTEMPTS} tries. Try again."
+            failure_text = random_game_failure_text(
+                f"random game with a {expected_label}", ADVANCED_RANDOM_MAX_ATTEMPTS
             )
             if (
                 fallback is not None
@@ -2014,9 +2041,8 @@ QCheckBox {{
             QMessageBox.warning(self, "Question Media", str(e))
             return
         self._question_media_status = detect_question_media(game_id)
-        if (
-            self._loading_summary
-            and self._media_reload_request_id != self._summary_request_id
+        if self._loading_summary and not self._summary_request.is_current(
+            self._media_reload_request_id
         ):
             # A load (or the debounce before one) is pending, and ``game.data``
             # still holds the previous game. Show only the new media status;
@@ -2127,7 +2153,7 @@ QCheckBox {{
         Returns:
             ``None``.
         """
-        if request_id != self._summary_request_id:
+        if not self._summary_request.is_current(request_id):
             return
         if self.advanced_options_checkbox.isChecked():
             return
@@ -2187,7 +2213,7 @@ QCheckBox {{
         if state.status_text:
             self.summary_label.setText(state.status_text)
         self.start_button.setEnabled(state.start_enabled)
-        self.advanced_start_button.setEnabled(state.advanced_start_enabled)
+        self.advanced_start_button.setEnabled(state.start_enabled)
 
     def restart(self) -> None:
         """Reset the welcome screen to its initial fresh-game state.
