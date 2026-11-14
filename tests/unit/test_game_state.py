@@ -535,7 +535,11 @@ def test_build_end_game_summary_computes_game_stats(
                             {
                                 "phase_type": "main",
                                 "buzz_attempts": [
-                                    {"player_index": 0, "in_timeout": False},
+                                    {
+                                        "player_index": 0,
+                                        "is_success": True,
+                                        "in_timeout": False,
+                                    },
                                     {"player_index": 1, "in_timeout": False},
                                 ],
                             }
@@ -572,7 +576,11 @@ def test_build_end_game_summary_computes_game_stats(
                                 "phase_type": "main",
                                 "buzz_attempts": [
                                     {"player_index": 0, "in_timeout": False},
-                                    {"player_index": 1, "in_timeout": False},
+                                    {
+                                        "player_index": 1,
+                                        "is_success": True,
+                                        "in_timeout": False,
+                                    },
                                 ],
                             }
                         ],

@@ -182,10 +182,15 @@ class ClueFlow:
         successful_buzz = False
         in_timeout = False
         if not self.game.accepting_responses:
-            if not self.game.previous_answerers:
+            if not self.game._open_responses_times:
                 self.game.early_buzzes.add(i_player)
                 early_buzz = True
                 logging.info("Early buzz recorded: player %s", i_player)
+            elif self.game.answering_player is None:
+                # Time ran out on the clue. A late buzz is not part of any
+                # buzzer race, so leave it out of the clue's history.
+                logging.info("Late buzz ignored: player %s", i_player)
+                return
         elif (
             i_player in self.game.early_buzzes
             and current_time - self.game.responses_open_time < EARLY_BUZZ_PENALTY

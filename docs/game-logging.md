@@ -241,6 +241,11 @@ Each phase contains:
 - `end_time`: Unix timestamp
 - `buzz_attempts`: every buzz attempt that fell inside that window
 
+A window starts 1 second before responses open and ends 1 second after the
+winning buzz, but never runs into the next window: when the host rules
+quickly, a window ends when the next one opens. So each buzz is in exactly
+one window. A buzz after time runs out on the clue is not recorded.
+
 Each `buzz_attempts[]` object contains:
 
 - `player_index`: player slot index

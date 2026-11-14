@@ -79,6 +79,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
   phone's connection (#117).
 - The lectern page no longer opens a second connection when it is shown
   again while it is still connecting or waiting to reconnect (#117).
+- End-of-game buzzer stats are more accurate. A buzz after time runs out on
+  a clue no longer counts as an early buzz or as buzzing on that clue. When
+  the host rules within about 2 seconds of a buzz, each buzz now counts in
+  only one buzzer race, so races are no longer counted twice and a player who
+  already answered no longer gets a rebound race. A race is credited to the
+  player who won the buzz, even if the host later changes that player's
+  ruling to "no answer".
 - Closing JParty during a clue or Final now exits at once. A cancelled clue
   timer kept the app, and the buzzer server's port, running for up to 31 s,
   so a quick relaunch moved to the next port (#115).

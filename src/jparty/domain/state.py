@@ -728,29 +728,35 @@ def classify_buzz_phases(game: object) -> object:
         logging.error("No open responses times found after question completed.")
         return []
     current_time = time.time()
-    phase_start_times = [game._question_start_time] + game._open_responses_times[
-        FIRST_REBOUND_RESPONSE_INDEX:
+    open_times = game._open_responses_times
+    phase_start_times = [game._question_start_time] + [
+        max(open_time - PHASE_TIME_PADDING_SECONDS, game._question_start_time)
+        for open_time in open_times[FIRST_REBOUND_RESPONSE_INDEX:]
     ]
+    # Each window runs from just before responses open to just after the
+    # winning buzz. When the host rules quickly, those padded windows would
+    # overlap, so a window ends no later than the next one opens, and the
+    # next one starts no earlier than this one ends. Every buzz then falls in
+    # exactly one window.
     phase_boundaries = []
-    for phase_start_time, successful_buzz_time in zip_longest(
-        phase_start_times, game._successful_buzz_times, fillvalue=current_time
-    ):
-        phase_boundaries.append(
-            (
-                max(phase_start_time - 1, game._question_start_time),
-                min(
-                    successful_buzz_time + PHASE_TIME_PADDING_SECONDS,
-                    current_time,
-                ),
-            )
+    for phase_index, (phase_start_time, successful_buzz_time) in enumerate(
+        zip_longest(
+            phase_start_times, game._successful_buzz_times, fillvalue=current_time
         )
+    ):
+        phase_end_time = min(
+            successful_buzz_time + PHASE_TIME_PADDING_SECONDS, current_time
+        )
+        if phase_index + 1 < len(open_times):
+            phase_end_time = min(phase_end_time, open_times[phase_index + 1])
+        if phase_boundaries:
+            phase_start_time = max(phase_start_time, phase_boundaries[-1][1])
+        phase_boundaries.append((phase_start_time, phase_end_time))
     phases = []
-    for phase_start_time, phase_end_time in phase_boundaries:
+    for phase_index, (phase_start_time, phase_end_time) in enumerate(phase_boundaries):
         phases.append(
             {
-                "phase_type": "main"
-                if phase_start_time == game._question_start_time
-                else "rebound",
+                "phase_type": "main" if phase_index == 0 else "rebound",
                 "start_time": phase_start_time,
                 "end_time": phase_end_time,
                 "buzz_attempts": [
@@ -1228,14 +1234,25 @@ def build_end_game_summary(game: object) -> EndGameSummary:
                     )
 
         answer_attempts = entry.get("answer_attempts", [])
-        for phase_index, phase in enumerate(buzz_phases):
-            if phase_index >= len(answer_attempts):
-                break
-            race_buzzers = {
-                buzz_attempt.get("player_index")
+        for phase in buzz_phases:
+            phase_buzzes = [
+                buzz_attempt
                 for buzz_attempt in phase.get("buzz_attempts", [])
                 if buzz_attempt.get("player_index") is not None
-                and not buzz_attempt.get("in_timeout")
+            ]
+            # The winner is whoever's buzz won the window. Corrections can
+            # add or drop answer attempts, so their order can't be used.
+            winners = [
+                buzz_attempt["player_index"]
+                for buzz_attempt in phase_buzzes
+                if buzz_attempt.get("is_success")
+            ]
+            if not winners:
+                continue
+            race_buzzers = {
+                buzz_attempt["player_index"]
+                for buzz_attempt in phase_buzzes
+                if not buzz_attempt.get("in_timeout")
             }
             if len(race_buzzers) < MIN_RACE_BUZZERS:
                 continue
@@ -1244,7 +1261,7 @@ def build_end_game_summary(game: object) -> EndGameSummary:
                 race_opportunities[player_number] = (
                     race_opportunities.get(player_number, 0) + 1
                 )
-            winner_player_number = answer_attempts[phase_index].get("player_index")
+            winner_player_number = winners[0]
             if winner_player_number in race_buzzers:
                 race_wins[winner_player_number] = (
                     race_wins.get(winner_player_number, 0) + 1
