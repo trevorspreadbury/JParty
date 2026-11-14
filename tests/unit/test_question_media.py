@@ -161,8 +161,7 @@ def test_parser_continues_when_media_zip_is_corrupt(
     """Parsing a game should still succeed, just without local media."""
     from jparty.services import game_parser
 
-    media_root = _media_root_with_corrupt_zip(temp_dir, monkeypatch)
-    monkeypatch.setattr(game_parser, "QUESTION_MEDIA", media_root)
+    _media_root_with_corrupt_zip(temp_dir, monkeypatch)
     html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
 
     game = game_parser.GameParser().process_game_board_from_html(html, "4453")

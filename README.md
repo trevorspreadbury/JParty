@@ -91,6 +91,9 @@ To keep downloads, saved state, logs, and graphs in a predictable repo-local loc
 DATA_DIR=.jparty-data
 ```
 
+A relative path is taken from the folder holding the `.env` file. If
+`JPARTY_DATA_DIR` is also set, it wins over `DATA_DIR`.
+
 Run the app with either:
 
 ```

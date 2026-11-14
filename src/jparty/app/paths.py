@@ -15,7 +15,49 @@ from dotenv import find_dotenv, load_dotenv
 from .config import APP_NAME
 
 REQUIRED_SUBDIRS = ("saved_games", "question_media", "game_states")
-load_dotenv(find_dotenv(usecwd=True), override=False)
+# Checked in this order, so the JParty-specific name wins over the generic one.
+DATA_DIR_ENV_NAMES = ("JPARTY_DATA_DIR", "DATA_DIR")
+DOTENV_PATH = find_dotenv(usecwd=True)
+# Names set before ``.env`` is read. Values from the real environment win over
+# ``.env``, and only values that came from ``.env`` are resolved against it.
+_PRESET_ENV_NAMES = frozenset(os.environ)
+load_dotenv(DOTENV_PATH, override=False)
+
+
+def data_dir_override(
+    environ: object = None,
+    dotenv_path: object = None,
+    preset_env_names: object = None,
+) -> Path | None:
+    """Return the data folder named by ``JPARTY_DATA_DIR`` or ``DATA_DIR``.
+
+    ``JPARTY_DATA_DIR`` is preferred. A relative path that came from the
+    ``.env`` file is resolved against the folder holding that file, so the
+    app finds the same folder whichever directory it is started from. A
+    relative path set in the shell is left relative to the current folder.
+
+    Args:
+        environ: Environment mapping. Defaults to ``os.environ``.
+        dotenv_path: Path of the ``.env`` file that was loaded, or an empty
+            value when there is none. Defaults to the file found at import.
+        preset_env_names: Names that were set before ``.env`` was loaded.
+
+    Returns:
+        The override path, or ``None`` when neither variable is set.
+    """
+    environ = os.environ if environ is None else environ
+    dotenv_path = DOTENV_PATH if dotenv_path is None else dotenv_path
+    if preset_env_names is None:
+        preset_env_names = _PRESET_ENV_NAMES
+    for name in DATA_DIR_ENV_NAMES:
+        value = environ.get(name)
+        if not value:
+            continue
+        path = Path(value).expanduser()
+        if not path.is_absolute() and dotenv_path and name not in preset_env_names:
+            path = Path(dotenv_path).resolve().parent / path
+        return path
+    return None
 
 
 def _candidate_user_data_roots() -> object:
@@ -27,9 +69,9 @@ def _candidate_user_data_roots() -> object:
     Returns:
         An iterator of ``Path`` objects representing candidate writable roots.
     """
-    override = os.environ.get("DATA_DIR") or os.environ.get("JPARTY_DATA_DIR")
-    if override:
-        yield Path(override)
+    override = data_dir_override()
+    if override is not None:
+        yield override
     if os.name == "nt":
         for env_name in ("LOCALAPPDATA", "APPDATA"):
             base = os.environ.get(env_name)

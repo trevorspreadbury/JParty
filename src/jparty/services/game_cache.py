@@ -77,7 +77,6 @@ class GameCache:
     def __init__(self, saved_games_dir: Path) -> None:
         """Store the directory used for cached game HTML."""
         self.saved_games_dir = saved_games_dir
-        self._loaded_html_cache: dict[str, str] = {}
 
     def saved_html_path(self, game_id: object) -> Path:
         """Return the cache file path for a game id."""
@@ -96,15 +95,8 @@ class GameCache:
                 game_id,
             )
             return None
-        self._loaded_html_cache[str(game_id)] = game_html
         return game_html
 
     def save_html(self, game_id: object, game_html: str) -> Path:
         """Persist HTML for a game id atomically and return the written path."""
-        saved_game_path = write_text_atomic(self.saved_html_path(game_id), game_html)
-        self._loaded_html_cache[str(game_id)] = game_html
-        return saved_game_path
-
-    def get_loaded_html(self, game_id: object) -> str | None:
-        """Return in-memory loaded HTML for a game id when present."""
-        return self._loaded_html_cache.get(str(game_id))
+        return write_text_atomic(self.saved_html_path(game_id), game_html)

@@ -6,7 +6,7 @@ import logging
 
 from bs4 import BeautifulSoup
 
-from jparty.app.paths import QUESTION_MEDIA, SAVED_GAMES
+from jparty.app.paths import SAVED_GAMES
 
 from .game_cache import GameCache
 from .game_parser import GameParser
@@ -37,13 +37,30 @@ def _cached_game_html(game_id: object) -> str | None:
     return GameCache(SAVED_GAMES).load_saved_html(game_id)
 
 
-def _fetch_remote_game_html(game_id: object) -> object:
-    """Fetch game HTML from Wayback, falling back to J-Archive directly."""
+def _fetch_remote_game(game_id: object) -> tuple[str, object]:
+    """Fetch and parse game HTML, trying Wayback first and then J-Archive.
+
+    J-Archive is tried when the Wayback fetch raises (for example an HTTP 429
+    rate limit) or returns a page that is not a game. Errors from J-Archive
+    are raised to the caller.
+
+    Returns:
+        ``(html, game_data)``. ``game_data`` is ``None`` when the J-Archive
+        page is not a game either.
+    """
     try:
-        return get_wayback_game_html(game_id)
+        wayback_html = get_wayback_game_html(game_id)
     except Exception:
         logging.error("Wayback lookup failed for %s", game_id, exc_info=True)
-        return get_jarchive_game_html(game_id)
+    else:
+        wayback_data = _parse_or_none(wayback_html, game_id)
+        if wayback_data is not None:
+            return wayback_html, wayback_data
+        logging.warning(
+            "Wayback page for game %s is not a game; trying J-Archive", game_id
+        )
+    jarchive_html = get_jarchive_game_html(game_id)
+    return jarchive_html, _parse_or_none(jarchive_html, game_id)
 
 
 def _looks_complete(game_html: object) -> bool:
@@ -68,9 +85,14 @@ def _parse_or_none(game_html: object, game_id: object) -> object:
 def get_game_html(game_id: object) -> object:
     """Load archived game HTML from cache or remote fallback sources."""
     game_html = _cached_game_html(game_id)
-    if game_html is None:
-        game_html = _fetch_remote_game_html(game_id)
-    _LOADED_GAME_HTML_CACHE[str(game_id)] = game_html
+    if game_html is not None:
+        _LOADED_GAME_HTML_CACHE[str(game_id)] = game_html
+        return game_html
+    game_html, game_data = _fetch_remote_game(game_id)
+    # Keep only real games in memory, so a later load retries the network
+    # instead of reusing an error page.
+    if game_data is not None:
+        _LOADED_GAME_HTML_CACHE[str(game_id)] = game_html
     return game_html
 
 
@@ -124,15 +146,19 @@ def _get_archive_game(game_id: object) -> object:
             memory_data = _parse_or_none(memory_html, game_id_str)
             if memory_data is not None:
                 return memory_data
-        remote_html = _fetch_remote_game_html(game_id_str)
-        _LOADED_GAME_HTML_CACHE[game_id_str] = remote_html
-        return process_game_board_from_html(remote_html, game_id_str)
+        remote_html, remote_data = _fetch_remote_game(game_id_str)
+        if remote_data is not None:
+            _LOADED_GAME_HTML_CACHE[game_id_str] = remote_html
+        else:
+            # Drop any non-game page held from earlier so it isn't reused.
+            _LOADED_GAME_HTML_CACHE.pop(game_id_str, None)
+        return remote_data
 
     logging.warning(
         "Cached HTML for game %s looks damaged; fetching it again", game_id_str
     )
     try:
-        remote_html = _fetch_remote_game_html(game_id_str)
+        remote_html, remote_data = _fetch_remote_game(game_id_str)
     except Exception:
         logging.error(
             "Could not refetch game %s; using cached copy",
@@ -142,7 +168,6 @@ def _get_archive_game(game_id: object) -> object:
         if cached_html is not None:
             _LOADED_GAME_HTML_CACHE[game_id_str] = cached_html
         return cached_data
-    remote_data = _parse_or_none(remote_html, game_id_str)
     if remote_data is None:
         if cached_data is not None:
             logging.warning(
@@ -184,7 +209,6 @@ def find_question_media(game_id: int, round: int, index: tuple) -> str:
     """Locate downloaded media associated with a clue."""
     from jparty.services import question_media as question_media_service
 
-    question_media_service.QUESTION_MEDIA = QUESTION_MEDIA
     return question_media_service.find_question_media_file(game_id, round, index)
 
 

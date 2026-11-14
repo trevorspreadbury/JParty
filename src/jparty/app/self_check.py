@@ -1,9 +1,9 @@
 """Headless self-check for installed and packaged JParty builds.
 
 ``jparty self-check`` exercises the parts of the app that packaging most often
-breaks: package metadata, bundled assets, Qt Multimedia's audio plugins, the
-and the QR-code renderer. It opens no windows and uses no
-network, so it can run inside a PyInstaller build as a smoke test. The
+breaks: package metadata, bundled assets, Qt Multimedia's audio plugins, and
+the QR-code renderer. It opens no windows and uses no network, so it can run
+inside a PyInstaller build as a smoke test. The
 packaged app has no console, so results can also be written to a report file.
 """
 
@@ -31,6 +31,25 @@ class CheckResult:
     detail: str
 
 
+def _same_version(first: str, second: str) -> bool:
+    """Return whether two version strings name the same release.
+
+    Package metadata holds the normalized form (``3.0.0rc1``), which may be
+    spelled differently in ``_version.py`` (``3.0.0-rc.1``). ``packaging`` is
+    used when it is installed; otherwise the strings are compared as written.
+    """
+    if first == second:
+        return True
+    try:
+        from packaging.version import InvalidVersion, Version
+    except ImportError:
+        return False
+    try:
+        return Version(first) == Version(second)
+    except InvalidVersion:
+        return False
+
+
 def _check_package_metadata() -> str:
     """Confirm the package metadata exists and matches ``jparty.__version__``.
 
@@ -48,7 +67,7 @@ def _check_package_metadata() -> str:
             "jparty package metadata is missing; reinstall the package "
             "(or, for a packaged build, bundle it with copy_metadata)"
         ) from error
-    if installed_version != __version__:
+    if not _same_version(installed_version, __version__):
         raise RuntimeError(
             f"package metadata says jparty {installed_version}, but "
             f"jparty.__version__ is {__version__}; the install is stale, so "

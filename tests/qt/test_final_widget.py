@@ -1,10 +1,15 @@
 """Tests for Final Jeopardy and end-game summary widgets."""
 
 import pytest
-from PyQt6.QtCore import QRect
-from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtCore import QRect, Qt
+from PyQt6.QtGui import QColor, QImage, QPalette
+from PyQt6.QtWidgets import QLabel
 
-from jparty.app.bootstrap import SUMMARY_IMAGE_SIZE
+from jparty.app.bootstrap import (
+    SUMMARY_IMAGE_SIZE,
+    build_summary_image_widget,
+    render_summary_image,
+)
 from jparty.domain.state import (
     EndGameGameStats,
     EndGamePlayerStats,
@@ -15,6 +20,7 @@ from jparty.ui.widgets.final import (
     EndGameSummaryDisplay,
     PlayerSummaryCard,
     SummaryGraphWidget,
+    format_money,
 )
 from jparty.ui.widgets.scoreboard import NameLabel
 
@@ -116,3 +122,95 @@ def test_end_game_summary_fits_a_1080p_screen(qtbot: object, player_count: int) 
     assert display.height() == height
     for card in display.findChildren(PlayerSummaryCard):
         assert display.rect().contains(card.geometry())
+
+
+# The in-game audience area the summary is shown in on a 1080p screen.
+IN_GAME_SUMMARY_SIZE = (1746, 840)
+
+
+@pytest.mark.parametrize("player_count", [3, 6])
+@pytest.mark.parametrize("size", [SUMMARY_IMAGE_SIZE, IN_GAME_SUMMARY_SIZE])
+def test_end_game_summary_shows_every_game_stat_value(
+    qtbot: object, player_count: int, size: tuple[int, int]
+) -> None:
+    """Each Game Stats line must fit on one line, so its value stays visible.
+
+    In the ``jparty summary`` image the labels wrapped and their numbers were
+    cut off.
+    """
+    display = EndGameSummaryDisplay(_summary(player_count))
+    qtbot.addWidget(display)
+    display.resize(*size)
+    qtbot.waitExposed(display)
+
+    labels = display.game_summary_card.stat_labels
+    assert [label.text().split(":")[0] for label in labels] == [
+        "Lead Changes",
+        "Combined Coryat",
+        "Buzzer Races",
+        "Triple Stumpers",
+    ]
+    for label in labels:
+        assert label.isVisible()
+        assert not label.wordWrap()
+        text_width = label.fontMetrics().horizontalAdvance(label.text())
+        assert text_width <= label.contentsRect().width(), label.text()
+        assert label.sizeHint().height() <= label.height(), label.text()
+        top_left = label.mapTo(display, label.rect().topLeft())
+        assert display.rect().contains(QRect(top_left, label.size()))
+
+
+def test_end_game_summary_title_is_visible(qtbot: object) -> None:
+    """The "Game Summary" title must take up space, not collapse to nothing."""
+    display = EndGameSummaryDisplay(_summary(3))
+    qtbot.addWidget(display)
+    display.resize(*SUMMARY_IMAGE_SIZE)
+    qtbot.waitExposed(display)
+
+    title = display.title_label
+    assert title.text() == "Game Summary"
+    assert title.isVisible()
+    assert title.height() >= title.fontMetrics().height()
+
+
+def test_summary_image_widget_keeps_the_full_image_size(qtbot: object) -> None:
+    """The CLI widget must not be squeezed to fit a smaller screen."""
+    widget = build_summary_image_widget(_summary(6))
+    qtbot.addWidget(widget)
+
+    assert (widget.width(), widget.height()) == SUMMARY_IMAGE_SIZE
+    assert widget.testAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+
+
+def test_render_summary_image_writes_an_image_of_the_documented_size(
+    qtbot: object, temp_dir: object
+) -> None:
+    """The saved image is 1920x1080 whatever the screen's scaling."""
+    output = render_summary_image(_summary(6), temp_dir / "summary.png")
+
+    image = QImage(str(output))
+    assert (image.width(), image.height()) == SUMMARY_IMAGE_SIZE
+
+
+@pytest.mark.parametrize(
+    ("amount", "expected"),
+    [(0, "$0"), (1200, "$1,200"), (-200, "-$200"), (-123450, "-$123,450")],
+)
+def test_format_money_puts_the_minus_sign_first(amount: int, expected: str) -> None:
+    """Negative amounts read ``-$200``, not ``$-200``."""
+    assert format_money(amount) == expected
+
+
+def test_player_summary_card_shows_negative_scores_with_leading_minus(
+    qtbot: object,
+) -> None:
+    """A negative final score and Coryat show as ``-$...`` on the card."""
+    stats = _player_stats(0)
+    stats.final_score = -200
+    stats.coryat = -800
+    card = PlayerSummaryCard(stats, QColor("#ffd447"))
+    qtbot.addWidget(card)
+
+    texts = [label.text() for label in card.findChildren(QLabel)]
+    assert "Final Score: -$200" in texts
+    assert "Coryat: -$800" in texts

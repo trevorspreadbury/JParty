@@ -73,11 +73,6 @@ class QuestionMediaStatus:
         """Return whether a game-media zip exists."""
         return self.zip_file is not None
 
-    @property
-    def has_any(self) -> bool:
-        """Return whether any local-media artifact exists."""
-        return self.has_directory or self.has_zip
-
     def summary_text(self) -> str:
         """Return a user-facing summary of media detection."""
         if self.error:

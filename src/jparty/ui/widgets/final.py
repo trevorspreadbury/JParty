@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from math import ceil
 
-from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPalette, QPen
 from PyQt6.QtWidgets import (
     QFrame,
@@ -38,6 +38,22 @@ SUMMARY_GRID_COLOR = QColor(255, 255, 255, 45)
 # Above this many players the summary uses compact cards in two columns so the
 # whole screen still fits on a 1080p display.
 MAX_SINGLE_COLUMN_PLAYERS = 3
+# Graph margins, in pixels, around the rotated "Score" title and tick labels.
+AXIS_TITLE_MARGIN = 8
+AXIS_LABEL_GAP = 8
+
+
+def format_money(amount: int) -> str:
+    """Format a dollar amount with the minus sign before the dollar sign.
+
+    Args:
+        amount: Whole-dollar amount, possibly negative.
+
+    Returns:
+        Text such as ``$1,200`` or ``-$200``.
+    """
+    sign = "-" if amount < 0 else ""
+    return f"{sign}${abs(int(amount)):,}"
 
 
 def _set_name_label_dark_text(label: NameLabel) -> None:
@@ -119,12 +135,27 @@ class SummaryGraphWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        rect = self.rect().adjusted(86, 18, -18, -36)
         painter.fillRect(self.rect(), CARDPAL.color(QPalette.ColorRole.Window))
 
         min_score, max_score = self._score_range()
         max_points = self._max_points()
         y_ticks = 5
+        tick_labels = [
+            format_money(
+                int(max_score - ((max_score - min_score) * tick_index / y_ticks))
+            )
+            for tick_index in range(y_ticks + 1)
+        ]
+        # Leave room for the rotated "Score" title, then the widest tick label,
+        # so the two never overlap however wide the scores get.
+        metrics = painter.fontMetrics()
+        tick_label_left = AXIS_TITLE_MARGIN + metrics.height() + AXIS_LABEL_GAP
+        tick_label_width = max(
+            metrics.horizontalAdvance(label) for label in tick_labels
+        )
+        rect = self.rect().adjusted(
+            tick_label_left + tick_label_width + AXIS_LABEL_GAP, 18, -18, -36
+        )
 
         def x_pos(index: int) -> float:
             if max_points <= 1:
@@ -147,15 +178,26 @@ class SummaryGraphWidget(QWidget):
         painter.setPen(QColor("white"))
         painter.drawText(rect.left(), rect.bottom() + 28, "Question #")
         painter.save()
-        painter.translate(14, rect.center().y())
+        painter.translate(
+            AXIS_TITLE_MARGIN + metrics.ascent(),
+            rect.center().y() + metrics.horizontalAdvance("Score") / 2,
+        )
         painter.rotate(-90)
         painter.drawText(0, 0, "Score")
         painter.restore()
 
-        for tick_index in range(y_ticks + 1):
-            score = int(max_score - ((max_score - min_score) * tick_index / y_ticks))
+        for tick_index, label in enumerate(tick_labels):
             y = rect.top() + (rect.height() * tick_index / y_ticks)
-            painter.drawText(10, int(y) + 5, f"${score:,}")
+            painter.drawText(
+                QRectF(
+                    tick_label_left,
+                    y - metrics.height(),
+                    tick_label_width,
+                    2 * metrics.height(),
+                ),
+                int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+                label,
+            )
 
         if max_points > 1:
             x_step = max(1, ceil(max_points / 8))
@@ -273,7 +315,9 @@ class PlayerSummaryCard(QWidget):
 
         stats_layout = QVBoxLayout()
         stats_layout.setSpacing(6 if compact else 8)
-        final_score = QLabel(f"Final Score: ${player_stats.final_score:,}", self)
+        final_score = QLabel(
+            f"Final Score: {format_money(player_stats.final_score)}", self
+        )
         final_score.setStyleSheet(
             f"QLabel {{ color: #1010a1; font-size: {score_font}px; font-weight: 800; "
             "background: transparent; border: none; }"
@@ -281,7 +325,7 @@ class PlayerSummaryCard(QWidget):
         stats_layout.addWidget(final_score)
 
         for stat_line in [
-            f"Coryat: ${player_stats.coryat:,}",
+            f"Coryat: {format_money(player_stats.coryat)}",
             f"Right / Wrong: {player_stats.right_count} / {player_stats.wrong_count}",
             f"Questions Buzzed: {player_stats.questions_buzzed_on}",
             f"Early Buzzes: {player_stats.early_buzzes}",
@@ -314,8 +358,17 @@ class PlayerSummaryCard(QWidget):
 class GameSummaryCard(QWidget):
     """Render whole-game summary stats below the score graph."""
 
-    def __init__(self, game_stats: object, parent: object = None) -> None:
-        """Initialize the game summary stats card."""
+    def __init__(
+        self, game_stats: object, parent: object = None, compact: bool = False
+    ) -> None:
+        """Initialize the game summary stats card.
+
+        Args:
+            game_stats: Whole-game stats to show.
+            parent: Optional parent widget.
+            compact: Use smaller stat text, for the narrower graph column
+                used when there are more than three players.
+        """
         super().__init__(parent)
         self.setObjectName("gameSummaryCard")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -342,18 +395,23 @@ class GameSummaryCard(QWidget):
         stats_grid.setVerticalSpacing(10)
         stat_lines = [
             f"Lead Changes: {game_stats.lead_changes}",
-            f"Combined Coryat: ${game_stats.combined_coryat:,}",
+            f"Combined Coryat: {format_money(game_stats.combined_coryat)}",
             f"Buzzer Races: {game_stats.buzzer_races}",
             f"Triple Stumpers: {game_stats.triple_stumpers}",
         ]
+        stat_font = 26 if compact else 32
+        self.stat_labels = []
         for index, stat_line in enumerate(stat_lines):
             label = QLabel(stat_line, self)
-            label.setWordWrap(True)
+            # Never wrap: a wrapped stat's value was pushed out of sight. An
+            # unwrapped label asks the layout for its full width instead.
+            label.setWordWrap(False)
             label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
             label.setStyleSheet(
-                "QLabel { color: white; font-size: 32px; font-weight: 600; "
-                "background: transparent; }"
+                f"QLabel {{ color: white; font-size: {stat_font}px; "
+                "font-weight: 600; background: transparent; }"
             )
+            self.stat_labels.append(label)
             stats_grid.addWidget(label, index // 2, index % 2)
         layout.addLayout(stats_grid)
 
@@ -389,7 +447,19 @@ class EndGameSummaryDisplay(QWidget):
         main_layout.setContentsMargins(28, 24, 28, 24)
         main_layout.setSpacing(18)
 
-        title = MyLabel("Game Summary", lambda: self.height() * 0.08, self)
+        title = QLabel("Game Summary", self)
+        title.setTextFormat(Qt.TextFormat.PlainText)
+        title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        title.setStyleSheet(
+            "QLabel { color: white; font-size: 48px; font-weight: 800; "
+            "background: transparent; }"
+        )
+        self.title_label = title
+
+        # Full-size cards stack in one column. With more players they would
+        # overflow a 1080p screen, so use compact cards in two columns and give
+        # the cards as much width as the graph.
+        compact = len(self.summary.current_players) > MAX_SINGLE_COLUMN_PLAYERS
 
         content_layout = QHBoxLayout()
         content_layout.setSpacing(18)
@@ -403,12 +473,11 @@ class EndGameSummaryDisplay(QWidget):
             self,
         )
         left_panel.addWidget(self.graph_widget, 5)
-        left_panel.addWidget(GameSummaryCard(self.summary.game_stats, self), 2)
+        self.game_summary_card = GameSummaryCard(
+            self.summary.game_stats, self, compact=compact
+        )
+        left_panel.addWidget(self.game_summary_card, 2)
 
-        # Full-size cards stack in one column. With more players they would
-        # overflow a 1080p screen, so use compact cards in two columns and give
-        # the cards as much width as the graph.
-        compact = len(self.summary.current_players) > MAX_SINGLE_COLUMN_PLAYERS
         columns = 2 if compact else 1
         cards_grid = QGridLayout()
         cards_grid.setHorizontalSpacing(14)

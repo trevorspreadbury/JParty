@@ -1387,7 +1387,6 @@ def test_franken_preview_start_uses_cached_composed_game_with_local_media(
     assert pixmap.save(str(image_path))
 
     monkeypatch.setattr("jparty.services.question_media.QUESTION_MEDIA", media_root)
-    monkeypatch.setattr("jparty.services.game_parser.QUESTION_MEDIA", media_root)
     monkeypatch.setattr(game, "_save_played_game_html", lambda: None)
 
     parser = GameParser()

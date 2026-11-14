@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import csv
 import logging
 import re
 from html import unescape
@@ -10,7 +9,6 @@ from html import unescape
 from bs4 import BeautifulSoup
 
 from jparty.app.config import MONIES
-from jparty.app.paths import QUESTION_MEDIA
 from jparty.domain.models import Board, FinalBoard, GameData, Question
 from jparty.services import question_media as question_media_service
 
@@ -52,17 +50,20 @@ class GameParser:
         boards.append(FinalBoard(final_row[1], question))
         return GameData(boards, final_row[5], final_row[7])
 
-    def csv_text_to_game(self, csv_text: str) -> GameData:
-        """Convert raw CSV export text into ``GameData``."""
-        return self.list_to_game(list(csv.reader(csv_text.splitlines())))
-
     def findanswer(self, clue: object) -> str:
-        """Extract the correct response text from a clue HTML fragment."""
-        return re.findall('correct_response">(.*?)</em', unescape(str(clue)))[0]
+        """Extract the correct response text from a clue HTML fragment.
+
+        Returns an empty string, rather than raising, when the clue has no
+        recorded response.
+        """
+        matches = re.findall('correct_response">(.*?)</em', unescape(str(clue)))
+        if not matches:
+            logging.warning("Clue has no correct response; leaving it blank")
+            return ""
+        return matches[0]
 
     def find_question_media(self, game_id: int, round_index: int, index: tuple) -> str:
         """Locate downloaded media associated with a clue."""
-        question_media_service.QUESTION_MEDIA = QUESTION_MEDIA
         return question_media_service.find_question_media_file(
             game_id, round_index, index
         )
