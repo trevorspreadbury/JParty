@@ -284,8 +284,8 @@ class ClueFlow:
             # The early-buzz penalty only applies to the window a player
             # jumped; the rebound is a fresh window for everyone left.
             self.game.early_buzzes = set()
+            # open_responses restarts the paused clue timer itself.
             self.open_responses()
-            self.game.timer.resume()
 
     def stumped(self) -> None:
         """Handle a clue expiring without a correct response."""

@@ -102,8 +102,14 @@ class QuestionTimer:
         Returns:
             ``None``.
         """
+        # A daemon thread, like the app's other background threads, so a
+        # cancelled timer still sleeping can't keep the process (and the
+        # buzzer server's port) alive after the windows close. ``run`` only
+        # fires for the current thread, so cutting it off at exit is safe.
         self._thread = threading.Thread(
-            target=self.run, args=(self.interval - self._elapsed_time,)
+            target=self.run,
+            args=(self.interval - self._elapsed_time,),
+            daemon=True,
         )
         self._thread.start()
         self._start_time = time.time()
