@@ -108,9 +108,14 @@ def test_summary_cli_reports_cut_off_history(
 
 
 def test_score_editor_button_stays_enabled_to_show_history_error(
-    game: object, broken_saved_game_dir: Path
+    game_with_players: object, broken_saved_game_dir: Path
 ) -> None:
-    """Test a damaged file does not crash the score-editor refresh."""
+    """Test a file damaged mid-game keeps Edit Score usable to show the error."""
+    game = game_with_players
+    game.load_question(game.current_round.get_question(0, 0))
+    game.open_responses()
+    game.buzz(0)
+    game.correct_answer()
     game._game_state_dir = broken_saved_game_dir
     assert game.can_open_score_editor() is True
     with pytest.raises(HistoryFileError):

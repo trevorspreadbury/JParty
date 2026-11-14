@@ -222,3 +222,29 @@ def test_final_answer_can_stay_blank(game_with_players: object) -> None:
     game.answer(player, "")
 
     assert player.finalanswer == ""
+
+
+def test_daily_double_cap_is_never_below_the_minimum_wager(
+    game_with_players: object, monkeypatch: object
+) -> None:
+    """A custom board worth less than $5 still allows the $5 minimum wager."""
+    game = game_with_players
+    for question in game.current_round.questions:
+        question.value = 1
+    game.players[0].score = 0
+
+    assert _capture_dd_wager_cap(game, monkeypatch, game.players[0]) == 5
+
+
+def test_dd_wager_bounds_rule() -> None:
+    """The wager range runs from $5 to the larger of score and top clue value."""
+    from jparty.domain.game_engine import dd_wager_bounds
+    from tests.conftest import build_round
+
+    board = build_round(1)
+    assert dd_wager_bounds(0, board) == (5, 1000)
+    assert dd_wager_bounds(3400, board) == (5, 3400)
+    assert dd_wager_bounds(-600, board) == (5, 1000)
+    for question in board.questions:
+        question.value = 2
+    assert dd_wager_bounds(0, board) == (5, 5)

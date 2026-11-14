@@ -46,6 +46,70 @@ QRadioButton::indicator:checked {
     border-radius: 9px;
 }
 """
+# The dialog sets its own dark colors instead of using the system palette, so
+# the white player names stay readable under a light Windows theme too.
+DIALOG_STYLE = """
+QDialog, QScrollArea, QWidget#scoreCorrectionContent {
+    background-color: #09131d;
+}
+QLabel {
+    color: white;
+}
+QGroupBox {
+    color: #f3c969;
+    font-weight: 700;
+    border: 1px solid #6db3e4;
+    border-radius: 8px;
+    margin-top: 12px;
+    padding-top: 8px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 4px;
+}
+QPushButton {
+    color: white;
+    background-color: #18354a;
+    border: 1px solid #6db3e4;
+    border-radius: 4px;
+    padding: 4px 10px;
+}
+"""
+
+
+class WagerSpinBox(QSpinBox):
+    """Spin box that ignores the mouse wheel unless it has keyboard focus.
+
+    The editor is a scroll area, so scrolling past a Daily Double would
+    otherwise change its wager without the host noticing.
+    """
+
+    def __init__(self, parent: object = None) -> None:
+        """Initialize the spin box so the wheel alone never focuses it.
+
+        Args:
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__(parent)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def wheelEvent(self, event: object) -> None:
+        """Change the value only when focused; otherwise let the area scroll.
+
+        Args:
+            event: Qt wheel event.
+
+        Returns:
+            ``None``.
+        """
+        if not self.hasFocus():
+            event.ignore()
+            return
+        super().wheelEvent(event)
 
 
 class ScoreCorrectionDialog(QDialog):
@@ -69,6 +133,7 @@ class ScoreCorrectionDialog(QDialog):
         self.players = players
         self._entry_widgets = []
         self.setWindowTitle("Edit Score")
+        self.setStyleSheet(DIALOG_STYLE)
         self.resize(900, 640)
 
         layout = QVBoxLayout()
@@ -81,6 +146,7 @@ class ScoreCorrectionDialog(QDialog):
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         content = QWidget(scroll)
+        content.setObjectName("scoreCorrectionContent")
         content_layout = QVBoxLayout()
         for entry in entries:
             content_layout.addWidget(self._build_entry_group(entry))
@@ -143,17 +209,22 @@ class ScoreCorrectionDialog(QDialog):
         group_layout = QVBoxLayout()
 
         summary_layout = QHBoxLayout()
-        summary_layout.addWidget(QLabel(f"Value: {entry['value']}", group))
+        summary_layout.setSpacing(12)
+        saved_value = int(entry["value"])
         if entry["is_daily_double"]:
-            value_input = QSpinBox(group)
-            # A Daily Double can be worth more than 50,000 (the cap is the
-            # player's score), so never clamp the recorded wager on open.
-            value_input.setRange(5, max(50000, int(entry["value"])))
-            value_input.setValue(int(entry["value"]))
-            summary_layout.addWidget(QLabel("Daily Double value:", group))
+            # The game engine gives the range the wager was made under. The
+            # saved wager is always allowed, even above that range, so an
+            # older save never has its wager clamped just by opening this.
+            minimum, maximum = entry.get("wager_bounds") or (5, saved_value)
+            value_input = WagerSpinBox(group)
+            value_input.setRange(min(minimum, saved_value), max(maximum, saved_value))
+            value_input.setValue(saved_value)
+            summary_layout.addWidget(QLabel("Daily Double wager:", group))
             summary_layout.addWidget(value_input)
+            summary_layout.addWidget(QLabel(f"(${minimum} to ${maximum})", group))
         else:
             value_input = None
+            summary_layout.addWidget(QLabel(f"Value: ${saved_value}", group))
         summary_layout.addStretch()
         group_layout.addLayout(summary_layout)
 

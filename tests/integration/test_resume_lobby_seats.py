@@ -307,10 +307,10 @@ def test_start_that_cannot_save_the_seat_order_stays_in_the_lobby(
     assert general_file.read_bytes() == general_before
     assert game._pending_history_lines == []
 
-    # Once the disk works again, lobby actions refresh the score-edit button,
-    # which reads (and so flushes) the history. Nothing may be waiting then.
+    # Once the disk works again, any history read flushes queued lines.
+    # Nothing may be waiting then.
     disk_full["on"] = False
-    game.can_open_score_editor()
+    game._load_question_history()
     assert history_file.read_bytes() == history_before
 
     game.start_game()

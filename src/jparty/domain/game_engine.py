@@ -62,6 +62,52 @@ from jparty.services.game_loader import build_game_from_board_selection_configs
 from jparty.ui.widgets.common import CompoundObject, SongPlayer
 
 DEFAULT_DAILY_DOUBLE_WAGER_CAP = 1000
+MIN_DAILY_DOUBLE_WAGER = 5
+
+
+def board_top_clue_value(board: object) -> int:
+    """Return the highest clue value on ``board``, for the Daily Double cap.
+
+    Played Daily Doubles are skipped, because their value is replaced by
+    the wager. Unplayed ones (including the one being wagered on) still
+    hold their row value and count, so a board whose top row is all
+    Daily Doubles still caps at that row. The cap comes from the board
+    itself, not from the round's position, since a game can start with
+    any selected round.
+
+    Args:
+        board: Standard board whose clue values set the cap.
+
+    Returns:
+        The highest clue value, or the standard first-round cap when the
+        board has no usable values.
+    """
+    values = [
+        question.value
+        for question in getattr(board, "questions", [])
+        if not (question.dd and question.complete)
+        and question.value
+        and question.value > 0
+    ]
+    return max(values, default=DEFAULT_DAILY_DOUBLE_WAGER_CAP)
+
+
+def dd_wager_bounds(score_before: int, board: object) -> tuple[int, int]:
+    """Return the allowed Daily Double wager range for one player.
+
+    A player may wager from $5 up to their score or the board's top clue
+    value, whichever is larger. The maximum is never below the $5 minimum,
+    even on a custom board whose clues are all worth less.
+
+    Args:
+        score_before: The player's score just before the Daily Double.
+        board: Board the Daily Double is on.
+
+    Returns:
+        ``(minimum, maximum)`` wager.
+    """
+    maximum = max(score_before, board_top_clue_value(board), MIN_DAILY_DOUBLE_WAGER)
+    return MIN_DAILY_DOUBLE_WAGER, maximum
 
 
 def _ends_with_newline(path: Path) -> bool:
@@ -203,6 +249,10 @@ class Game(QObject):
         self.toolate_trigger.connect(self.__toolate)
         self.lectern_update_trigger.connect(self.__broadcast_lectern_update)
         self._game_state_dir = None
+        # Whether this session's history has a non-Final clue the score
+        # editor can change. Kept in memory so refreshing the Edit Score
+        # button never re-reads the history file.
+        self._has_editable_clue = False
         self._pending_history_lines = []
         self._history_save_failing = False
         self._current_question_history = None
@@ -560,6 +610,7 @@ class Game(QObject):
         self._history_format = HISTORY_FORMAT
         self._started_by_version = __version__
         self._starting_roster = None
+        self._has_editable_clue = False
         self._initialize_game_state_dir()
         self._save_general_state()
         if isinstance(self.current_round, FinalBoard):
@@ -736,6 +787,7 @@ class Game(QObject):
         """
         resume_state = self._resume_state
         self._game_state_dir = resume_state["path"]
+        self._has_editable_clue = False
         self._clear_pending_history()
         self._game_started_at = (
             resume_state["general_state"].get("started_at") or time.time()
@@ -756,6 +808,9 @@ class Game(QObject):
             if is_question_history_entry(entry)
         ]
         question_history.sort(key=lambda entry: entry.get("question_number", 0))
+        self._has_editable_clue = any(
+            self._is_editable_clue_entry(entry) for entry in question_history
+        )
         self._mark_completed_questions(question_history)
         self._restore_player_scores(raw_history)
         if question_history:
@@ -950,6 +1005,9 @@ class Game(QObject):
             logging.error("No game state directory available for history append")
             return False
         self._pending_history_lines.append(entry)
+        # Queued lines count too: the score editor already shows them.
+        if self._is_editable_clue_entry(entry):
+            self._has_editable_clue = True
         return self._flush_pending_history()
 
     def _flush_pending_history(self, warn_host: bool = True) -> bool:
@@ -1077,17 +1135,32 @@ class Game(QObject):
     def can_open_score_editor(self) -> bool:
         """Return whether the host score-correction dialog should be enabled.
 
+        This runs on every Edit Score button refresh, so it uses an in-memory
+        flag instead of reading the history file. The file is read only when
+        the dialog opens, which is also where a damaged file is reported.
+
         Returns:
             ``True`` when there is saved non-final clue history and no active
             clue interaction is in progress.
         """
         if self.active_question is not None or self.soliciting_player:
             return False
-        try:
-            return bool(self.get_recent_score_corrections(limit=1))
-        except HistoryFileError:
-            # Keep the button usable so clicking it shows the host the error.
-            return True
+        return self._has_editable_clue
+
+    def _is_editable_clue_entry(self, entry: dict) -> bool:
+        """Return whether the score editor can change this history entry.
+
+        Args:
+            entry: History line.
+
+        Returns:
+            ``True`` for a played clue on a standard (non-Final) board.
+        """
+        if not is_question_history_entry(entry):
+            return False
+        if self._question_from_history_entry(entry) is None:
+            return False
+        return not isinstance(self.data.rounds[entry["round_index"]], FinalBoard)
 
     def _question_from_history_entry(self, entry: dict) -> object:
         """Resolve the question object referenced by a saved clue history entry.
@@ -1116,13 +1189,9 @@ class Game(QObject):
         entries = corrected_history_entries(self._load_question_history())
         recent_entries = []
         for entry in entries:
-            if not is_question_history_entry(entry):
+            if not self._is_editable_clue_entry(entry):
                 continue
             question = self._question_from_history_entry(entry)
-            if question is None or isinstance(
-                self.data.rounds[entry["round_index"]], FinalBoard
-            ):
-                continue
             player_states = {
                 player.player_number: clue_player_results(entry).get(
                     player.player_number, NO_ANSWER_RESULT
@@ -1136,6 +1205,7 @@ class Game(QObject):
                     "value": entry.get("value", 0),
                     "answer": question.answer,
                     "is_daily_double": bool(entry.get("is_daily_double")),
+                    "wager_bounds": self._history_dd_wager_bounds(entry),
                     "player_states": player_states,
                 }
             )
@@ -1143,6 +1213,24 @@ class Game(QObject):
             key=lambda entry: entry.get("question_number", 0), reverse=True
         )
         return recent_entries[:limit]
+
+    def _history_dd_wager_bounds(self, entry: dict) -> tuple[int, int] | None:
+        """Return the wager range a saved Daily Double was played under.
+
+        Args:
+            entry: Corrected clue history entry.
+
+        Returns:
+            ``(minimum, maximum)`` from :func:`dd_wager_bounds`, using the
+            player's score just before the clue, or ``None`` for a regular
+            clue. If no one is ruled on the clue any more, the score is taken
+            as 0, so the cap is the board's top value.
+        """
+        if not entry.get("is_daily_double"):
+            return None
+        attempts = entry.get("answer_attempts") or [{}]
+        score_before = int(attempts[0].get("score_before") or 0)
+        return dd_wager_bounds(score_before, self.data.rounds[entry["round_index"]])
 
     def apply_question_history_corrections(self, corrections: list[dict]) -> bool:
         """Record host score-correction edits as appended history lines.
@@ -1251,14 +1339,6 @@ class Game(QObject):
         """
         return self.score_recorder.apply_manual_score_override(player, new_score)
 
-    def _flush_question_history(self) -> None:
-        """Persist the active clue's history and clear per-question buffers.
-
-        Returns:
-            ``None``.
-        """
-        self.score_recorder.flush_question_history()
-
     def arrowhints(self, val: object) -> None:
         """Update host UI arrow-key hints.
 
@@ -1333,21 +1413,7 @@ class Game(QObject):
         Returns:
             ``None``.
         """
-        if player not in self.players:
-            return
-        if self._in_saved_player_reclaim_mode():
-            self._move_saved_player(player, -1)
-            return
-        index = self.players.index(player)
-        if index > 0:
-            (self.players[index], self.players[index - 1]) = (
-                self.players[index - 1],
-                self.players[index],
-            )
-            self._update_player_numbers()
-            self.dc.scoreboard.refresh_players()
-            self._refresh_score_edit_controls()
-            self._update_all_lecterns()
+        self._move_player(player, -1)
 
     def move_player_down(self, player: object) -> None:
         """Move a player one slot later in the roster order.
@@ -1358,21 +1424,35 @@ class Game(QObject):
         Returns:
             ``None``.
         """
+        self._move_player(player, 1)
+
+    def _move_player(self, player: object, offset: int) -> None:
+        """Swap a player with the neighbour ``offset`` seats away.
+
+        Args:
+            player: Connected player object to reorder.
+            offset: ``-1`` for one seat earlier, ``1`` for one seat later.
+
+        Returns:
+            ``None``.
+        """
         if player not in self.players:
             return
         if self._in_saved_player_reclaim_mode():
-            self._move_saved_player(player, 1)
+            self._move_saved_player(player, offset)
             return
         index = self.players.index(player)
-        if index < len(self.players) - 1:
-            (self.players[index], self.players[index + 1]) = (
-                self.players[index + 1],
-                self.players[index],
-            )
-            self._update_player_numbers()
-            self.dc.scoreboard.refresh_players()
-            self._refresh_score_edit_controls()
-            self._update_all_lecterns()
+        other = index + offset
+        if not 0 <= other < len(self.players):
+            return
+        (self.players[index], self.players[other]) = (
+            self.players[other],
+            self.players[index],
+        )
+        self._update_player_numbers()
+        self.dc.scoreboard.refresh_players()
+        self._refresh_score_edit_controls()
+        self._update_all_lecterns()
 
     def _in_saved_player_reclaim_mode(self) -> bool:
         """Return whether the lobby is reclaiming players from a saved game."""
@@ -1445,14 +1525,6 @@ class Game(QObject):
             ``None``.
         """
         self.clue_flow.close_responses()
-
-    def keyboard_buzz(self) -> None:
-        """Trigger a buzz for the first keyboard-controlled player.
-
-        Returns:
-            ``None``.
-        """
-        self.buzz(0)
 
     def buzz(self, i_player: object) -> None:
         """Handle a player's buzz attempt for the active clue.
@@ -1666,14 +1738,6 @@ class Game(QObject):
         """
         self.final_jeopardy_flow.incorrect_answer()
 
-    def final_judgement_given(self) -> None:
-        """Finalize one Final Jeopardy judgment and ready the next step.
-
-        Returns:
-            ``None``.
-        """
-        self.final_jeopardy_flow.judgement_given()
-
     def final_finished_song(self) -> None:
         """Handle the end of the Final Jeopardy think music.
 
@@ -1784,32 +1848,15 @@ class Game(QObject):
         self._judgement_round = 0
         self.early_buzzes = set()
         self.responses_open_time = None
+        # Forget the closed session's save folder, so nothing done in the
+        # lobby (or a later game) is written into that save.
+        self._game_state_dir = None
+        self._has_editable_clue = False
+        self._game_started_at = None
+        self._starting_roster = None
         self.dc.restart()
         self.begin()
         self._refresh_score_edit_controls()
-
-    def _board_top_clue_value(self) -> int:
-        """Return the highest clue value on the current board.
-
-        Played Daily Doubles are skipped, because their value is replaced by
-        the wager. Unplayed ones (including the one being wagered on) still
-        hold their row value and count, so a board whose top row is all
-        Daily Doubles still caps at that row. The cap comes from the board
-        itself, not from the round's position, since a game can start with
-        any selected round.
-
-        Returns:
-            The highest clue value, or the standard first-round cap when the
-            board has no usable values.
-        """
-        values = [
-            question.value
-            for question in getattr(self.current_round, "questions", [])
-            if not (question.dd and question.complete)
-            and question.value
-            and question.value > 0
-        ]
-        return max(values, default=DEFAULT_DAILY_DOUBLE_WAGER_CAP)
 
     def get_dd_wager(self, player: object) -> bool | None:
         """Prompt the active player for a Daily Double wager.
@@ -1824,12 +1871,14 @@ class Game(QObject):
         self.answering_player = player
         self.soliciting_player = False
         self._refresh_score_edit_controls()
-        max_wager = max(self.answering_player.score, self._board_top_clue_value())
+        min_wager, max_wager = dd_wager_bounds(
+            self.answering_player.score, self.current_round
+        )
         wager_res = QInputDialog.getInt(
             self.host_display,
             "Wager",
-            f"How much do they wager? (min: 5, max: ${max_wager})",
-            min=5,
+            f"How much do they wager? (min: ${min_wager}, max: ${max_wager})",
+            min=min_wager,
             max=max_wager,
         )
         if not wager_res[1]:
@@ -1981,12 +2030,18 @@ class Game(QObject):
     def adjust_score(self, player: object) -> None:
         """Prompt the host to manually override a player's score.
 
+        Edits are ignored until a game has started (in the lobby before Start
+        and after Close Game). There is no save to record them in yet, and an
+        edited score would break the new save's score chain.
+
         Args:
             player: Player whose score should be edited.
 
         Returns:
             ``None``.
         """
+        if self.current_round is None:
+            return
         if self.active_question is not None or self.soliciting_player:
             return
         (new_score, answered) = QInputDialog.getInt(

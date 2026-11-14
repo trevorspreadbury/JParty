@@ -3,9 +3,9 @@
 from types import SimpleNamespace
 
 import pytest
-from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, Qt
-from PyQt6.QtGui import QColor, QImage
-from PyQt6.QtWidgets import QLabel, QRadioButton
+from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QPoint, QPointF, Qt
+from PyQt6.QtGui import QColor, QImage, QWheelEvent
+from PyQt6.QtWidgets import QApplication, QLabel, QRadioButton
 
 from jparty.domain.models import Player
 from jparty.domain.state import HistoryFileError
@@ -313,3 +313,90 @@ def test_host_scoreboard_shows_history_error_instead_of_opening_dialog(
 
     assert shown_errors == [error]
     assert game.applied_corrections == []
+
+
+def _daily_double_entry(value: int, wager_bounds: tuple[int, int]) -> dict:
+    """Return one Daily Double editor entry with the given wager range."""
+    entry = StubScoreGame().get_recent_score_corrections(limit=1)[0]
+    entry.update(
+        {"value": value, "is_daily_double": True, "wager_bounds": wager_bounds}
+    )
+    return entry
+
+
+def test_score_correction_dialog_uses_the_daily_double_wager_cap(
+    qtbot: object,
+) -> None:
+    """The wager box allows exactly the game's Daily Double range."""
+    game = StubScoreGame()
+    dialog = ScoreCorrectionDialog([_daily_double_entry(700, (5, 1200))], game.players)
+    qtbot.addWidget(dialog)
+
+    value_input = dialog._entry_widgets[0]["value_input"]
+    assert (value_input.minimum(), value_input.maximum()) == (5, 1200)
+    assert value_input.value() == 700
+
+
+def test_score_correction_dialog_keeps_a_saved_wager_above_the_cap(
+    qtbot: object,
+) -> None:
+    """An older save's wager above today's cap still opens unchanged."""
+    game = StubScoreGame()
+    dialog = ScoreCorrectionDialog([_daily_double_entry(3000, (5, 1000))], game.players)
+    qtbot.addWidget(dialog)
+
+    value_input = dialog._entry_widgets[0]["value_input"]
+    assert (value_input.minimum(), value_input.maximum()) == (5, 3000)
+    assert dialog.collect_changes() == []
+
+
+def test_score_correction_wager_ignores_the_wheel_unless_focused(
+    qtbot: object,
+) -> None:
+    """Scrolling the dialog over the wager box must not change the wager."""
+    game = StubScoreGame()
+    dialog = ScoreCorrectionDialog([_daily_double_entry(700, (5, 1200))], game.players)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    value_input = dialog._entry_widgets[0]["value_input"]
+
+    def scroll_up() -> None:
+        center = QPointF(value_input.rect().center())
+        event = QWheelEvent(
+            center,
+            value_input.mapToGlobal(center),
+            QPoint(0, 0),
+            QPoint(0, 120),
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.NoScrollPhase,
+            False,
+        )
+        QApplication.sendEvent(value_input, event)
+
+    value_input.clearFocus()
+    scroll_up()
+    assert value_input.value() == 700
+
+    value_input.setFocus()
+    qtbot.waitUntil(value_input.hasFocus)
+    scroll_up()
+    assert value_input.value() > 700
+
+
+def test_score_correction_dialog_labels_value_and_wager_separately(
+    qtbot: object,
+) -> None:
+    """Clue value and Daily Double wager text must not run together."""
+    game = StubScoreGame()
+    plain_entry = game.get_recent_score_corrections(limit=1)[0]
+    dialog = ScoreCorrectionDialog(
+        [_daily_double_entry(700, (5, 1200)), plain_entry], game.players
+    )
+    qtbot.addWidget(dialog)
+
+    label_texts = [label.text() for label in dialog.findChildren(QLabel)]
+    assert "Daily Double wager:" in label_texts
+    assert "Value: $200" in label_texts
+    assert not any(text.startswith("Value: $700") for text in label_texts)
