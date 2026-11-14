@@ -107,7 +107,9 @@ Field notes:
   screen's checkboxes use the source game's round numbers until Start.)
 - `board_selections`: one entry per board being played, in play order. Both
   regular and advanced mode write it; it is `[]` only when no board was set
-  up. Each entry has:
+  up. Entries are built only by `standard_board_selection` and
+  `final_board_selection` in `src/jparty/services/game_loader.py`. Each entry
+  has:
   - `game_id`: the source game for this board
   - `source_round_index`: the round's index in that source game
   - `source_round_label`: the label shown on the welcome screen, also used in
@@ -118,7 +120,9 @@ Field notes:
     `[]` for Final
   - `daily_double_count` and `daily_double_indices` (standard boards only):
     how many Daily Doubles the board has and where they are, as
-    `[category_index, row_index]` pairs
+    `[category_index, row_index]` pairs. The board's own Daily Doubles are
+    kept even when two share a category; extras added in advanced mode each
+    get a category of their own.
 - `reveal_answers_after_triple_stumper`: whether the host chose to show the
   correct response after a clue nobody gets right. Resume restores it.
 - `started_at`: Unix timestamp for when the game session started. Resume

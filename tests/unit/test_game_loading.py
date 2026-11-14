@@ -8,13 +8,18 @@ from bs4 import BeautifulSoup
 from jparty.domain.models import Board, FinalBoard, GameData, Question
 from jparty.services.game_loader import (
     RANDOM_GAME_MAX_ATTEMPTS,
+    advanced_standard_board_selection,
     build_game_from_board_selection_configs,
+    describe_source_round,
+    final_board_selection,
     find_random_game,
     normalize_standard_board_daily_doubles,
     original_board_row_values,
+    original_board_selection,
     round_matches_board_type,
     select_advanced_daily_double_indices,
     standard_board_daily_double_indices,
+    standard_board_selection,
 )
 from jparty.services.game_parser import GameParser
 
@@ -376,3 +381,142 @@ def test_source_daily_double_counts_follow_source_round_positions() -> None:
     assert game.source_daily_double_counts([0, 1, 2]) == [1, 2]
     assert game.source_daily_double_counts([1, 2]) == [2]
     assert game.source_daily_double_counts([2, 5]) == []
+
+
+# The ``board_selections`` example in docs/game-logging.md. Saves already on
+# disk use exactly these keys, so the builders must keep producing them.
+DOCUMENTED_BOARD_SELECTIONS = [
+    {
+        "game_id": "4453",
+        "source_round_index": 1,
+        "source_round_label": "Double Jeopardy!",
+        "board_type": "standard",
+        "row_values": [400, 800, 1200, 1600, 2000],
+        "daily_double_count": 2,
+        "daily_double_indices": [[1, 3], [4, 2]],
+    },
+    {
+        "game_id": "4453",
+        "source_round_index": 2,
+        "source_round_label": "Final Jeopardy!",
+        "board_type": "final",
+        "row_values": [],
+    },
+]
+
+
+def _documented_source_game() -> GameData:
+    """Return a game shaped like the one the documented selections describe."""
+    double_jeopardy = _board_with_daily_doubles({(1, 3), (4, 2)})
+    for question in double_jeopardy.questions:
+        question.value = 400 * (question.index[1] + 1)
+    return GameData(
+        [
+            _board_with_daily_doubles({(0, 0)}),
+            double_jeopardy,
+            FinalBoard("Final", Question((0, 0), "FQ", "FA", "Final")),
+        ],
+        "January 1, 2026",
+        "Fixture",
+    )
+
+
+def test_board_selection_builders_match_the_documented_format() -> None:
+    """The builders write exactly the documented ``board_selections`` entries."""
+    assert [
+        standard_board_selection(
+            "4453",
+            1,
+            "Double Jeopardy!",
+            [400, 800, 1200, 1600, 2000],
+            [[1, 3], [4, 2]],
+        ),
+        final_board_selection("4453", 2, "Final Jeopardy!"),
+    ] == DOCUMENTED_BOARD_SELECTIONS
+    source = _documented_source_game()
+    assert [
+        original_board_selection("4453", source, 1),
+        original_board_selection("4453", source, 2),
+    ] == DOCUMENTED_BOARD_SELECTIONS
+
+
+def test_documented_board_selections_rebuild_the_saved_game(
+    monkeypatch: object,
+) -> None:
+    """A save written in the documented format still loads (round trip)."""
+    source = _documented_source_game()
+    monkeypatch.setattr(
+        "jparty.services.game_loader.get_game",
+        lambda game_id: {"4453": source}[game_id],
+    )
+
+    composed = build_game_from_board_selection_configs(DOCUMENTED_BOARD_SELECTIONS)
+
+    assert composed is not None
+    assert [
+        original_board_selection("4453", source, 1)["daily_double_indices"],
+        standard_board_daily_double_indices(composed.rounds[0]),
+    ] == [[[1, 3], [4, 2]]] * 2
+    assert [question.value for question in composed.rounds[0].questions[:5]] == [
+        400,
+        800,
+        1200,
+        1600,
+        2000,
+    ]
+    assert isinstance(composed.rounds[1], FinalBoard)
+    assert composed.comments == "4453: Double Jeopardy! / 4453: Final Jeopardy!"
+
+
+def test_describe_source_round_labels_rounds_by_position() -> None:
+    """Rounds are labelled by their place among the standard rounds."""
+    game = GameData(
+        [_board_with_daily_doubles(set()) for _ in range(4)]
+        + [FinalBoard("Final", Question((0, 0), "FQ", "FA", "Final"))],
+        "date",
+        "comments",
+    )
+
+    assert [describe_source_round(game, index) for index in range(5)] == [
+        "Jeopardy!",
+        "Double Jeopardy!",
+        "Triple Jeopardy!",
+        "Round 4",
+        "Final Jeopardy!",
+    ]
+
+
+def test_board_sharing_a_daily_double_category_keeps_its_layout(
+    monkeypatch: object,
+) -> None:
+    """Two original Daily Doubles in one category survive selection and resume.
+
+    One of them used to be dropped and a random clue elsewhere drawn instead,
+    so each sync, and each resume, could move it.
+    """
+    board = _board_with_daily_doubles({(2, 1), (2, 3)})
+    source = GameData([board], "date", "comments")
+    monkeypatch.setattr("jparty.services.game_loader.get_game", lambda game_id: source)
+
+    selection = original_board_selection("111", source, 0)
+    composed = build_game_from_board_selection_configs([selection])
+
+    assert selection["daily_double_indices"] == [[2, 1], [2, 3]]
+    assert standard_board_daily_double_indices(composed.rounds[0]) == [
+        [2, 1],
+        [2, 3],
+    ]
+
+
+def test_advanced_board_selection_adds_extras_without_moving_originals() -> None:
+    """An advanced board keeps its originals and adds extras in new categories."""
+    board = _board_with_daily_doubles({(1, 2)})
+
+    selection = advanced_standard_board_selection(
+        "111", board, 0, "Jeopardy!", [100, 200, 300, 400, 500], 3
+    )
+
+    assert selection["daily_double_count"] == 3
+    assert [1, 2] in selection["daily_double_indices"]
+    assert len({index[0] for index in selection["daily_double_indices"]}) == 3
+    assert [question.index for question in board.questions if question.dd] == [(1, 2)]

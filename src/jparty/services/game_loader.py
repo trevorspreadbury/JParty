@@ -30,6 +30,14 @@ FOUR_PLUS_STANDARD_BOARD_BASE_VALUE = 100
 STANDARD_CLUE_VALUE_COUNT = 5
 MAX_DAILY_DOUBLES_PER_BOARD = 6
 QUESTION_INDEX_PART_COUNT = 2
+# Labels for a game's standard rounds, in order. Saved in each board
+# selection's ``source_round_label``.
+STANDARD_ROUND_LABELS = [
+    "Jeopardy!",
+    "Double Jeopardy!",
+    "Triple Jeopardy!",
+]
+FINAL_ROUND_LABEL = "Final Jeopardy!"
 # Most games Random tries before giving up, so a run of games that won't
 # parse can't keep hitting J-Archive and the Wayback Machine (#88).
 RANDOM_GAME_MAX_ATTEMPTS = 10
@@ -255,6 +263,7 @@ def normalize_standard_board_daily_doubles(
         question.dd = False
 
     chosen_questions = []
+    chosen_indices: set[tuple[int, int]] = set()
     occupied_categories: set[str] = set()
     if daily_double_indices:
         for raw_index in daily_double_indices:
@@ -264,9 +273,18 @@ def normalize_standard_board_daily_doubles(
                 continue
             normalized_index = (int(raw_index[0]), int(raw_index[1]))
             question = questions_by_index.get(normalized_index)
-            if question is None or question.category in occupied_categories:
+            if question is None or normalized_index in chosen_indices:
+                continue
+            # The board's own Daily Doubles are kept even when two share a
+            # category, so a board plays (and resumes) as it was written.
+            # Only extras have to be in a category of their own.
+            if (
+                question.category in occupied_categories
+                and normalized_index not in original_daily_double_indices
+            ):
                 continue
             chosen_questions.append(question)
+            chosen_indices.add(normalized_index)
             occupied_categories.add(question.category)
             if len(chosen_questions) >= requested_total:
                 break
@@ -366,6 +384,170 @@ def select_advanced_daily_double_indices(
             current_extra_indices.append(list(index))
             seen_extra_indices.add(normalized_index)
     return original_daily_double_indices + current_extra_indices[:extra_slots]
+
+
+def describe_source_round(game_data: object, round_index: int) -> str:
+    """Return the label for one round of a source game.
+
+    This is the label the welcome screen shows and each board selection
+    saves as ``source_round_label``.
+
+    Args:
+        game_data: Source game containing the round.
+        round_index: Index of the round within ``game_data.rounds``.
+
+    Returns:
+        ``"Final Jeopardy!"`` for a Final, otherwise the standard round's
+        label by its place among the game's standard rounds.
+    """
+    if isinstance(game_data.rounds[round_index], FinalBoard):
+        return FINAL_ROUND_LABEL
+    standard_round_index = sum(
+        1
+        for prior_round in game_data.rounds[:round_index]
+        if not isinstance(prior_round, FinalBoard)
+    )
+    if standard_round_index < len(STANDARD_ROUND_LABELS):
+        return STANDARD_ROUND_LABELS[standard_round_index]
+    return f"Round {standard_round_index + 1}"
+
+
+# One board in play, as saved in ``general.json``'s ``board_selections`` and
+# read back by ``build_game_from_board_selection_configs``. The two builders
+# below are the only places that write these dictionaries; see
+# docs/game-logging.md for the format.
+
+
+def standard_board_selection(
+    game_id: str,
+    source_round_index: int,
+    source_round_label: str,
+    row_values: list[int],
+    daily_double_indices: list[list[int]],
+) -> dict:
+    """Return the saved form of one standard board.
+
+    Args:
+        game_id: Source game the board comes from.
+        source_round_index: The round's index in the source game.
+        source_round_label: Label of that round, shown on the welcome screen.
+        row_values: The five clue values, top row first.
+        daily_double_indices: Daily Double coordinates as
+            ``[category_index, row_index]`` pairs.
+
+    Returns:
+        A ``board_selections`` entry.
+    """
+    daily_double_indices = [
+        [int(index[0]), int(index[1])] for index in daily_double_indices
+    ]
+    return {
+        "game_id": game_id,
+        "source_round_index": int(source_round_index),
+        "source_round_label": source_round_label,
+        "board_type": "standard",
+        "row_values": list(row_values),
+        "daily_double_count": len(daily_double_indices),
+        "daily_double_indices": daily_double_indices,
+    }
+
+
+def final_board_selection(
+    game_id: str, source_round_index: int, source_round_label: str
+) -> dict:
+    """Return the saved form of one Final Jeopardy board.
+
+    Args:
+        game_id: Source game the board comes from.
+        source_round_index: The round's index in the source game.
+        source_round_label: Label of that round, shown on the welcome screen.
+
+    Returns:
+        A ``board_selections`` entry. Finals have no clue values, so
+        ``row_values`` is ``[]``.
+    """
+    return {
+        "game_id": game_id,
+        "source_round_index": int(source_round_index),
+        "source_round_label": source_round_label,
+        "board_type": "final",
+        "row_values": [],
+    }
+
+
+def advanced_standard_board_selection(
+    game_id: str,
+    round_data: object,
+    source_round_index: int,
+    source_round_label: str,
+    row_values: list[int],
+    requested_daily_double_count: int,
+    existing_daily_double_indices: object = None,
+) -> dict:
+    """Return the saved form of one advanced-mode standard board.
+
+    The board keeps its original Daily Doubles as a baseline (see
+    ``select_advanced_daily_double_indices``), and any extras still missing
+    are drawn here, so the saved coordinates are the final layout.
+
+    Args:
+        game_id: Source game the board comes from.
+        round_data: The source round. It is not changed.
+        source_round_index: The round's index in the source game.
+        source_round_label: Label of that round.
+        row_values: The five clue values, top row first.
+        requested_daily_double_count: Daily Doubles the host asked for.
+        existing_daily_double_indices: Coordinates chosen earlier for this
+            board, kept when still valid so the layout stays stable.
+
+    Returns:
+        A ``board_selections`` entry.
+    """
+    baseline_daily_double_indices = select_advanced_daily_double_indices(
+        round_data,
+        requested_daily_double_count,
+        existing_daily_double_indices=existing_daily_double_indices,
+    )
+    round_copy = clone_round(round_data)
+    normalize_standard_board_daily_doubles(
+        round_copy,
+        requested_count=requested_daily_double_count,
+        daily_double_indices=baseline_daily_double_indices,
+    )
+    return standard_board_selection(
+        game_id,
+        source_round_index,
+        source_round_label,
+        row_values,
+        standard_board_daily_double_indices(round_copy),
+    )
+
+
+def original_board_selection(game_id: str, game_data: object, round_index: int) -> dict:
+    """Return the saved form of one round played as it is in its source game.
+
+    Regular mode uses this: the round keeps its clue values and Daily
+    Doubles from the source game.
+
+    Args:
+        game_id: Source game id.
+        game_data: Parsed source game.
+        round_index: Index of the round within ``game_data.rounds``.
+
+    Returns:
+        A ``board_selections`` entry.
+    """
+    round_data = game_data.rounds[round_index]
+    label = describe_source_round(game_data, round_index)
+    if isinstance(round_data, FinalBoard):
+        return final_board_selection(game_id, round_index, label)
+    return standard_board_selection(
+        game_id,
+        round_index,
+        label,
+        original_board_row_values(game_data, round_index),
+        standard_board_daily_double_indices(round_data),
+    )
 
 
 def compose_game_from_resolved_board_selections(
@@ -513,10 +695,16 @@ def find_random_game(
 
 
 __all__ = [
+    "STANDARD_ROUND_LABELS",
+    "advanced_standard_board_selection",
     "build_game_from_board_selection_configs",
     "compose_game_from_resolved_board_selections",
     "default_board_row_values",
+    "describe_source_round",
+    "final_board_selection",
     "original_board_row_values",
+    "original_board_selection",
+    "standard_board_selection",
     "find_question_media",
     "find_random_game",
     "get_Gsheet_game",

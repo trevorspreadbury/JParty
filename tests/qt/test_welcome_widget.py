@@ -606,10 +606,15 @@ def test_advanced_row_status_ignores_missing_questions_on_unselected_rounds(
     widget._advanced_rows[0]["gameid_edit"].setText("111")
     widget.refresh_advanced_row(0)
 
-    assert "Missing questions: 1" in widget._advanced_rows[0]["status_label"].text()
+    assert (
+        "WARNING: Missing 1 question" in widget._advanced_rows[0]["status_label"].text()
+    )
     widget._advanced_rows[0]["board_radios"][1].click()
 
-    assert "Missing questions: 1" not in widget._advanced_rows[0]["status_label"].text()
+    assert (
+        "WARNING: Missing 1 question"
+        not in widget._advanced_rows[0]["status_label"].text()
+    )
 
 
 def test_advanced_options_store_daily_double_count_and_locations(

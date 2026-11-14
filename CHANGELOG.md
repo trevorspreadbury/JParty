@@ -152,6 +152,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
   background (#NNN).
 - After a board's Random gives up, its "Kept game" note stays until that
   board changes, instead of vanishing on the next edit elsewhere (#NNN).
+- A board whose own Daily Doubles share a category now keeps them where they
+  are. One of them used to move to a random clue each time the welcome
+  screen refreshed, and again on resume (#NNN).
+- Missing-clue warnings now read the same on the regular summary, each
+  advanced board and the advanced summary ("WARNING: Missing N questions")
+  (#NNN).
 
 ### Removed
 - The crash dialog no longer offers to email a report. It shows the error and
