@@ -119,8 +119,17 @@ def test_buzz_after_the_clue_times_out_is_not_an_early_buzz(
     game.buzz(1)
 
     assert 1 not in game.early_buzzes
-    assert not any(attempt.is_early for attempt in game._all_buzz_attempts)
+    assert game._all_buzz_attempts == []
+    # Move the clock past the buzz so the saved windows cannot leave it out
+    # just because its timestamp equals a window's end.
+    time_controller.advance(0.5)
     game.back_to_board()
+    entry = json.loads(
+        (game._game_state_dir / "question_history.jsonl").read_text().splitlines()[0]
+    )
+    assert [
+        attempt for phase in entry["buzz_phases"] for attempt in phase["buzz_attempts"]
+    ] == []
     _, stats = _player_stats(game)
     assert stats[1].early_buzzes == 0
     assert stats[1].questions_buzzed_on == 0
