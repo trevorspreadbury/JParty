@@ -7,28 +7,63 @@ var updater = {
     lightsInterval: null,
     lightsRunning: false,
     currentLightStage: 0,
+    reconnectTimer: null,
+    replaced: false,
+    // Close code the server sends when another lectern page takes this slot.
+    // Matches LECTERN_REPLACED_CLOSE_CODE in handlers.py.
+    replacedCloseCode: 4000,
+
+    // True while a socket is connecting or open, or a reconnect is waiting.
+    isConnectingOrConnected: function() {
+        if (updater.reconnectTimer !== null) {
+            return true;
+        }
+        return !!updater.socket && (
+            updater.socket.readyState === WebSocket.CONNECTING ||
+            updater.socket.readyState === WebSocket.OPEN
+        );
+    },
 
     start: function() {
+        // Never open a second socket while one is live; the server would
+        // close the first and the page would end up fighting itself.
+        if (updater.socket && (
+            updater.socket.readyState === WebSocket.CONNECTING ||
+            updater.socket.readyState === WebSocket.OPEN
+        )) {
+            return;
+        }
         this.playerNumber = typeof playerNumber !== 'undefined' ? playerNumber : 0;
         var url = "ws://" + location.host + "/lecternsocket?player=" + this.playerNumber;
-        updater.socket = new WebSocket(url);
-        
-        updater.socket.onopen = function(event) {
+        var socket = new WebSocket(url);
+        updater.socket = socket;
+
+        socket.onopen = function(event) {
             console.log("Lectern WebSocket connected for player " + updater.playerNumber);
             updater.reconnectAttempts = 0;
         };
-        
-        updater.socket.onmessage = function(event) {
+
+        socket.onmessage = function(event) {
             var jsondata = JSON.parse(event.data);
             updater.handleMessage(jsondata);
         };
-        
-        updater.socket.onerror = function(error) {
+
+        socket.onerror = function(error) {
             console.error("WebSocket error:", error);
         };
-        
-        updater.socket.onclose = function(event) {
+
+        socket.onclose = function(event) {
             console.log("WebSocket closed");
+            if (updater.socket !== socket) {
+                return;
+            }
+            if (event.code === updater.replacedCloseCode) {
+                updater.replaced = true;
+                var nameElement = document.getElementById("player-name");
+                nameElement.textContent = "Opened on another screen";
+                nameElement.style.display = "";
+                return;
+            }
             updater.handleReconnect();
         };
     },
@@ -200,10 +235,14 @@ var updater = {
     },
 
     handleReconnect: function() {
+        if (updater.reconnectTimer !== null) {
+            return;
+        }
         if (updater.reconnectAttempts < updater.maxReconnectAttempts) {
             updater.reconnectAttempts++;
             console.log("Attempting to reconnect (" + updater.reconnectAttempts + "/" + updater.maxReconnectAttempts + ")...");
-            setTimeout(function() {
+            updater.reconnectTimer = setTimeout(function() {
+                updater.reconnectTimer = null;
                 updater.start();
             }, updater.reconnectDelay);
         } else {
@@ -259,7 +298,7 @@ $(document).ready(function() {
     
     // Handle page visibility changes to reconnect if needed
     document.addEventListener("visibilitychange", function() {
-        if (!document.hidden && (!updater.socket || updater.socket.readyState !== WebSocket.OPEN)) {
+        if (!document.hidden && !updater.replaced && !updater.isConnectingOrConnected()) {
             console.log("Page visible, checking connection...");
             updater.start();
         }

@@ -132,6 +132,7 @@ class Game(QObject):
     stumped_trigger = pyqtSignal()
     final_finished_trigger = pyqtSignal()
     wager_trigger = pyqtSignal(int, int)
+    answer_trigger = pyqtSignal(object, str)
     toolate_trigger = pyqtSignal()
     lectern_update_trigger = pyqtSignal(int, dict)
 
@@ -242,6 +243,7 @@ class Game(QObject):
                 func_args=player_index,
             )
         self.wager_trigger.connect(self.wager)
+        self.answer_trigger.connect(self.answer)
         self.buzz_trigger.connect(self.buzz)
         self.new_player_trigger.connect(self.new_player)
         self.stumped_trigger.connect(self.__handle_stumped_timeout)

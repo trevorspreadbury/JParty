@@ -318,6 +318,10 @@ class AutosizeWidget:
             Plain-text version of the widget's current text.
         """
         text = self.text()
+        # Plain-text labels draw their tags, so measure them as written.
+        text_format = getattr(self, "textFormat", None)
+        if text_format is not None and text_format() == Qt.TextFormat.PlainText:
+            return text
         text = re.sub("<br>", "\n", text)
         text = re.sub("<[^>]*>", "", text)
         return text

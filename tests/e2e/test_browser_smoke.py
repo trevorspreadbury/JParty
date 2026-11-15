@@ -88,31 +88,38 @@ def live_browser_server() -> object:
             sock.close()
 
 
+def prepare_page(page: object) -> None:
+    """Stub the CDN scripts and styles the buzzer and lectern pages load."""
+    page.add_init_script(
+        '\n            window.$ = window.jQuery = function(selector) {\n                if (selector === document) {\n                    return {\n                        ready: function(callback) {\n                            if (document.readyState === "loading") {\n                                document.addEventListener("DOMContentLoaded", callback, { once: true });\n                            } else {\n                                callback();\n                            }\n                        }\n                    };\n                }\n                const nodes = typeof selector === "string"\n                    ? Array.from(document.querySelectorAll(selector))\n                    : (selector ? [selector] : []);\n                return {\n                    hide: function() { nodes.forEach((node) => { node.style.display = "none"; }); return this; },\n                    show: function() { nodes.forEach((node) => { node.style.display = ""; }); return this; },\n                    prop: function(name, value) {\n                        if (value === undefined) {\n                            return nodes[0] ? nodes[0][name] : undefined;\n                        }\n                        nodes.forEach((node) => { node[name] = value; });\n                        return this;\n                    },\n                    val: function(value) {\n                        if (value === undefined) {\n                            return nodes[0] ? nodes[0].value : "";\n                        }\n                        nodes.forEach((node) => { node.value = value; });\n                        return this;\n                    },\n                    attr: function(name, value) {\n                        if (value === undefined) {\n                            return nodes[0] ? nodes[0].getAttribute(name) : undefined;\n                        }\n                        nodes.forEach((node) => { node.setAttribute(name, value); });\n                        return this;\n                    },\n                    on: function(name, handler) {\n                        nodes.forEach((node) => { node.addEventListener(name, handler); });\n                        return this;\n                    }\n                };\n            };\n            window.SignaturePad = function() {\n                this.clear = function() {};\n                this.isEmpty = function() { return true; };\n                this.toData = function() { return []; };\n                this.fromData = function() {};\n                this.toDataURL = function() { return "data:image/png;base64,stub"; };\n            };\n            '
+    )
+    page.route(
+        "https://cdn.jsdelivr.net/**",
+        lambda route: route.fulfill(body="", content_type="application/javascript"),
+    )
+    page.route(
+        "http://ajax.googleapis.com/**",
+        lambda route: route.fulfill(body="", content_type="application/javascript"),
+    )
+    page.route(
+        "https://fonts.googleapis.com/**",
+        lambda route: route.fulfill(body="", content_type="text/css"),
+    )
+    page.route(
+        "https://www.w3schools.com/**",
+        lambda route: route.fulfill(body="", content_type="text/css"),
+    )
+
+
 @pytest.fixture
 def browser_page() -> object:
     """Test browser page."""
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        page = browser.new_page()
-        page.add_init_script(
-            '\n            window.$ = window.jQuery = function(selector) {\n                if (selector === document) {\n                    return {\n                        ready: function(callback) {\n                            if (document.readyState === "loading") {\n                                document.addEventListener("DOMContentLoaded", callback, { once: true });\n                            } else {\n                                callback();\n                            }\n                        }\n                    };\n                }\n                const nodes = typeof selector === "string"\n                    ? Array.from(document.querySelectorAll(selector))\n                    : (selector ? [selector] : []);\n                return {\n                    hide: function() { nodes.forEach((node) => { node.style.display = "none"; }); return this; },\n                    show: function() { nodes.forEach((node) => { node.style.display = ""; }); return this; },\n                    prop: function(name, value) {\n                        if (value === undefined) {\n                            return nodes[0] ? nodes[0][name] : undefined;\n                        }\n                        nodes.forEach((node) => { node[name] = value; });\n                        return this;\n                    },\n                    val: function(value) {\n                        if (value === undefined) {\n                            return nodes[0] ? nodes[0].value : "";\n                        }\n                        nodes.forEach((node) => { node.value = value; });\n                        return this;\n                    },\n                    attr: function(name, value) {\n                        if (value === undefined) {\n                            return nodes[0] ? nodes[0].getAttribute(name) : undefined;\n                        }\n                        nodes.forEach((node) => { node.setAttribute(name, value); });\n                        return this;\n                    },\n                    on: function(name, handler) {\n                        nodes.forEach((node) => { node.addEventListener(name, handler); });\n                        return this;\n                    }\n                };\n            };\n            window.SignaturePad = function() {\n                this.clear = function() {};\n                this.isEmpty = function() { return true; };\n                this.toData = function() { return []; };\n                this.fromData = function() {};\n                this.toDataURL = function() { return "data:image/png;base64,stub"; };\n            };\n            '
-        )
-        page.route(
-            "https://cdn.jsdelivr.net/**",
-            lambda route: route.fulfill(body="", content_type="application/javascript"),
-        )
-        page.route(
-            "http://ajax.googleapis.com/**",
-            lambda route: route.fulfill(body="", content_type="application/javascript"),
-        )
-        page.route(
-            "https://fonts.googleapis.com/**",
-            lambda route: route.fulfill(body="", content_type="text/css"),
-        )
-        page.route(
-            "https://www.w3schools.com/**",
-            lambda route: route.fulfill(body="", content_type="text/css"),
-        )
+        # An explicit context lets a test open a second tab that shares
+        # cookies with this one.
+        page = browser.new_context().new_page()
+        prepare_page(page)
         try:
             yield page
         finally:

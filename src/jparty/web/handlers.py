@@ -28,6 +28,14 @@ SIGNATURE_PREFIX = "data:image/png;base64,"
 MAX_NAME_LENGTH = 100
 MAX_SIGNATURE_LENGTH = 2_000_000
 MAX_ANSWER_LENGTH = 500
+# Websocket close code sent to a lectern page when another page takes its slot.
+# lectern.js checks for it, so keep the two in step.
+LECTERN_REPLACED_CLOSE_CODE = 4000
+# Websocket close code sent to a buzzer page when the same player reconnects
+# from another tab or screen. buzzer.js checks for it and stops reloading, so
+# two tabs with one player's cookie don't keep taking the player from each
+# other. Keep the two in step.
+BUZZER_REPLACED_CLOSE_CODE = 4001
 
 
 def clean_player_name(text: object) -> str | None:
@@ -109,24 +117,7 @@ class WelcomeHandler(tornado.web.RequestHandler):
         Returns:
             ``None``.
         """
-        self.render("index.html", messages=BuzzerSocketHandler.cache)
-
-
-class BuzzerHandler(tornado.web.RequestHandler):
-    """Serve the player buzzer page after the initial form post."""
-
-    def post(self) -> None:
-        """Ensure the test cookie exists and render the buzzer page.
-
-        Returns:
-            ``None``.
-        """
-        if not self.get_cookie("test"):
-            self.set_cookie("test", "test_val")
-            logging.info("set cookie")
-        else:
-            logging.info("cookie: %s", self.get_cookie("test"))
-        self.render("play.html", messages=BuzzerSocketHandler.cache)
+        self.render("index.html")
 
 
 class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
@@ -135,9 +126,6 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
     application: Application
     controller: BuzzerController
     player: Player | None
-
-    cache: list[dict[str, str]] = []
-    cache_size = 400
 
     def initialize(self) -> None:
         """Attach controller references for this websocket connection.
@@ -207,13 +195,29 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
                 self.send("NEW")
             return
         logging.info("Reconnected %s", player)
+        old = player.waiter
         self.player = player
         player.connected = True
         player.waiter = self
+        if old is not None and old is not self:
+            # The old socket must not buzz or answer for the player any more.
+            # It is closed with its own code so the old page shows a message
+            # and stays closed. If it reloaded instead, it would take the
+            # player back, and two tabs would keep reloading each other.
+            if getattr(old, "player", None) is player:
+                old.player = None
+            close = getattr(old, "close", None)
+            if close is not None:
+                self.controller.run_on_loop(
+                    close, BUZZER_REPLACED_CLOSE_CODE, "Opened in another tab"
+                )
         self.send("EXISTS", tornado.escape.json_encode(player.state()))
 
     def on_message(self, message: str) -> None:
         """Dispatch an inbound websocket message from a player client.
+
+        A message that is not a JSON object with a known ``message`` type is
+        logged and ignored, so one bad frame does not drop the phone.
 
         Args:
             message: Raw websocket message string received from the client.
@@ -221,9 +225,15 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         Returns:
             ``None``.
         """
-        parsed = tornado.escape.json_decode(message)
-        msg = parsed["message"]
-        text = parsed["text"]
+        try:
+            parsed = tornado.escape.json_decode(message)
+        except ValueError:
+            parsed = None
+        if not isinstance(parsed, dict):
+            logging.warning("Ignoring malformed message from %s", self.player)
+            return
+        msg = parsed.get("message")
+        text = parsed.get("text", "")
         if msg == "BUZZ":
             self.buzz()
         elif msg == "NAME":
@@ -237,7 +247,7 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         elif msg == "ANSWER":
             self.answer(text)
         else:
-            raise Exception("Unknown message")
+            logging.warning("Ignoring unknown message %.40r from %s", msg, self.player)
 
     def init_player(self, name: object) -> None:
         """Create and register a player from the submitted display name.
@@ -458,19 +468,29 @@ class LecternSocketHandler(tornado.websocket.WebSocketHandler):
     def open(self) -> None:
         """Register the lectern connection and send its initial state.
 
+        A lectern that already holds this slot is closed, so only one
+        lectern socket per slot gets updates.
+
         Returns:
             ``None``.
         """
         self.set_nodelay(True)
         try:
-            self.player_number = int(self.get_argument("player", "0"))
-            if self.player_number < 0 or self.player_number >= MAXPLAYERS:
-                raise ValueError(f"Player number {self.player_number} out of range")
-            self.controller.lectern_connections[self.player_number] = self
-            self.send_initial_state()
+            player_number = int(self.get_argument("player", "0"))
+            if player_number < 0 or player_number >= MAXPLAYERS:
+                raise ValueError(f"Player number {player_number} out of range")
         except (ValueError, TypeError) as exc:
             logging.error("Invalid player number for lectern: %s", exc)
             self.close()
+            return
+        self.player_number = player_number
+        previous = self.controller.lectern_connections.get(player_number)
+        self.controller.lectern_connections[player_number] = self
+        if previous is not None and previous is not self:
+            # The replaced page sees this code and stops reconnecting, so two
+            # pages for one slot don't keep taking it from each other.
+            previous.close(LECTERN_REPLACED_CLOSE_CODE, "Opened on another screen")
+        self.send_initial_state()
 
     def send(self, msg: str, text: str = "") -> None:
         """Send a structured websocket message to the lectern client.
@@ -519,8 +539,11 @@ class LecternSocketHandler(tornado.websocket.WebSocketHandler):
     def on_close(self) -> None:
         """Remove the lectern connection from the controller registry.
 
+        Only this socket's own entry is removed. A lectern that was replaced
+        by a newer one leaves the newer one in place.
+
         Returns:
             ``None``.
         """
-        if self.player_number in self.controller.lectern_connections:
+        if self.controller.lectern_connections.get(self.player_number) is self:
             del self.controller.lectern_connections[self.player_number]

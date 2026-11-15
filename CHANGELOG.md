@@ -18,6 +18,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
   lectern URL is rejected (#86).
 - Updated dependencies with known vulnerabilities (Tornado, requests,
   PyInstaller, PyQt6, qrcode and others) (#82).
+- Player names and Final answers are shown on the host exactly as typed.
+  Qt used to read them as HTML, so a name like `<img src=...>` made the host
+  fetch an image. That froze the game and could leak the host's Windows login
+  hash to another computer (#117).
+- A second lectern page for the same player now takes over that lectern
+  cleanly. The old page is told and stops reconnecting, and the old page
+  closing no longer cuts off the new one (#117).
 
 ### Added
 - `jparty self-check [--report FILE]` checks an installed or packaged app's
@@ -61,6 +68,17 @@ and this project follows [Semantic Versioning](https://semver.org/).
   Double label. Scrolling over a wager no longer changes it.
 - The Edit Score button no longer re-reads the whole clue history file every
   time the host screen updates.
+- Final answers are stored on the game's main thread, like buzzes and
+  wagers, instead of on the buzzer server's thread (#117).
+- When a phone reconnects, its old connection is closed and can no longer
+  buzz or answer for the player. If the same player has the buzzer open in
+  two tabs (for example after scanning the QR code again), the older tab
+  says "Opened in another tab or screen" and offers a Play here button,
+  instead of the two tabs reloading each other (#117).
+- A garbled message from a phone is logged and ignored. It used to drop the
+  phone's connection (#117).
+- The lectern page no longer opens a second connection when it is shown
+  again while it is still connecting or waiting to reconnect (#117).
 - Closing JParty during a clue or Final now exits at once. A cancelled clue
   timer kept the app, and the buzzer server's port, running for up to 31 s,
   so a quick relaunch moved to the next port (#115).
@@ -184,6 +202,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   The image review text is readable on the black host screen, and editing
   scores no longer cuts a Daily Double wager above 50,000 down to 50,000
   (#112).
+- Unused buzzer server code: the `/play` page (its template no longer
+  existed), a message cache, an empty cookie secret, and a buzz branch that
+  could never run (#117).
 
 ## [3.0.0-rc.1] - 2026-05-02
 

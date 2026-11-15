@@ -25,7 +25,7 @@ class FakeServerController(BuzzerController):
             buzz_trigger=SimpleNamespace(emit=_ignore),
             wager_trigger=SimpleNamespace(emit=_ignore),
             new_player_trigger=SimpleNamespace(emit=_ignore),
-            answer=_ignore,
+            answer_trigger=SimpleNamespace(emit=_ignore),
         )
         super().__init__(game)
         self.buzzed_players = []
