@@ -38,24 +38,19 @@ from jparty.domain.state import (
     NO_ANSWER_RESULT,
     PLAYER_RENUMBER_TYPE,
     QUESTION_HISTORY_FILE_NAME,
-    SCORE_CORRECTION_TYPE,
     HistoryFileError,
     LoadedSave,
+    build_score_correction_lines,
     classify_buzz_phases,
     clue_player_results,
-    clue_score_effects,
     corrected_history_entries,
     current_saved_players,
-    get_current_game_state,
     history_score_totals,
     is_question_history_entry,
-    load_general_state,
     load_question_history,
     load_saved_game_data,
     question_for_history_entry,
     read_history_file,
-    reconstruct_score_history,
-    ruling_score_effect,
     save_general_state,
 )
 from jparty.services.game_loader import build_game_from_board_selection_configs
@@ -952,14 +947,6 @@ class Game(QObject):
         """
         return self._session_game_id
 
-    def _get_current_game_state(self) -> object:
-        """Return the serializable high-level state for this session.
-
-        Returns:
-            A dictionary describing the current game state.
-        """
-        return get_current_game_state(self)
-
     def _save_general_state(self) -> None:
         """Persist the high-level session metadata for the current game.
 
@@ -1253,72 +1240,12 @@ class Game(QObject):
         """
         if not corrections:
             return False
-        raw_entries = self._load_question_history()
-        effective_entries = {
-            entry.get("question_number"): entry
-            for entry in corrected_history_entries(raw_entries)
-            if is_question_history_entry(entry)
-        }
-        totals = history_score_totals(raw_entries)
-        correction_lines = []
-        for correction in sorted(
-            corrections, key=lambda correction: correction["question_number"]
-        ):
-            question_number = correction["question_number"]
-            entry = effective_entries.get(question_number)
-            if entry is None:
-                continue
-            current_results = clue_player_results(entry)
-            current_states = {
-                player.player_number: current_results.get(
-                    player.player_number, NO_ANSWER_RESULT
-                )
-                for player in self.players
-            }
-            corrected_states = {
-                int(player_index): result
-                for player_index, result in correction["player_states"].items()
-            }
-            current_value = int(entry.get("value", 0) or 0)
-            corrected_value = (
-                int(correction["value"])
-                if entry.get("is_daily_double")
-                else current_value
-            )
-            if corrected_states == current_states and corrected_value == current_value:
-                continue
-            current_effects = clue_score_effects(entry)
-            adjustments = []
-            for player_index in sorted(set(current_effects) | set(corrected_states)):
-                change = ruling_score_effect(
-                    corrected_states.get(player_index, NO_ANSWER_RESULT),
-                    corrected_value,
-                ) - current_effects.get(player_index, 0)
-                if not change:
-                    continue
-                score_before = totals.get(player_index, 0)
-                totals[player_index] = score_before + change
-                adjustments.append(
-                    {
-                        "player_index": player_index,
-                        "score_before": score_before,
-                        "score_after": score_before + change,
-                    }
-                )
-            correction_line = {
-                "type": SCORE_CORRECTION_TYPE,
-                "question_number": question_number,
-                "timestamp": time.time(),
-                "player_states": {
-                    str(player_index): result
-                    for player_index, result in sorted(corrected_states.items())
-                },
-            }
-            if entry.get("is_daily_double"):
-                correction_line["value"] = corrected_value
-            correction_line["adjustments"] = adjustments
-            correction_lines.append(correction_line)
-
+        correction_lines = build_score_correction_lines(
+            self._load_question_history(),
+            corrections,
+            [player.player_number for player in self.players],
+            time.time(),
+        )
         players_by_number = {player.player_number: player for player in self.players}
         for correction_line in correction_lines:
             self._append_history_entry(correction_line)
@@ -1793,22 +1720,6 @@ class Game(QObject):
         """
         self._flush_pending_history()
         return load_question_history(self)
-
-    def _reconstruct_score_history(self) -> object:
-        """Rebuild player score progressions from saved history.
-
-        Returns:
-            A mapping from player index to score-by-question lists.
-        """
-        return reconstruct_score_history(self)
-
-    def _load_general_state(self) -> object:
-        """Load saved high-level metadata for the current session.
-
-        Returns:
-            A dictionary containing persisted general session state.
-        """
-        return load_general_state(self)
 
     def close_game(self) -> None:
         """Reset runtime state so the app can return to the lobby.

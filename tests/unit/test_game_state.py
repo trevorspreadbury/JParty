@@ -8,9 +8,13 @@ import pytest
 from jparty.domain.models import Board, FinalBoard, GameData, Question
 from jparty.domain.state import (
     build_end_game_summary,
+    build_score_correction_lines,
+    get_current_game_state,
+    history_score_totals,
     load_general_state,
     load_question_history,
     question_for_history_entry,
+    reconstruct_score_history,
 )
 
 pytestmark = pytest.mark.unit
@@ -21,7 +25,7 @@ def test_reconstruct_score_history_from_question_history(
 ) -> None:
     """Test test reconstruct score history from question history."""
     game._game_state_dir = sample_saved_game_dir
-    score_history = game._reconstruct_score_history()
+    score_history = reconstruct_score_history(game)
     assert score_history[0] == [0, 200, 200, 0]
     assert score_history[1] == [0, 0, 200, 400]
 
@@ -31,7 +35,7 @@ def test_load_general_state_reads_fixture(
 ) -> None:
     """Test test load general state reads fixture."""
     game._game_state_dir = sample_saved_game_dir
-    state = game._load_general_state()
+    state = load_general_state(game)
     assert state["game_id"] == "4453"
     assert len(state["players"]) == 2
 
@@ -117,7 +121,7 @@ def test_get_current_game_state_uses_started_at_and_players(
     game.set_session_game_id("8888")
     time_controller.set(2000.0)
     game._game_started_at = 1234.0
-    state = game._get_current_game_state()
+    state = get_current_game_state(game)
     assert state["game_id"] == "8888"
     assert state["started_at"] == 1234.0
     assert state["last_updated"] == 2000.0
@@ -128,13 +132,13 @@ def test_get_current_game_state_records_history_format_only_when_known(
     game: object, players: object
 ) -> None:
     """Test the format fields are omitted for sessions with no recorded format."""
-    state = game._get_current_game_state()
+    state = get_current_game_state(game)
     assert "history_format" not in state
     assert "jparty_version" not in state
 
     game._history_format = 2
     game._started_by_version = "9.9.9"
-    state = game._get_current_game_state()
+    state = get_current_game_state(game)
     assert state["history_format"] == 2
     assert state["jparty_version"] == "9.9.9"
 
@@ -535,7 +539,11 @@ def test_build_end_game_summary_computes_game_stats(
                             {
                                 "phase_type": "main",
                                 "buzz_attempts": [
-                                    {"player_index": 0, "in_timeout": False},
+                                    {
+                                        "player_index": 0,
+                                        "is_success": True,
+                                        "in_timeout": False,
+                                    },
                                     {"player_index": 1, "in_timeout": False},
                                 ],
                             }
@@ -572,7 +580,11 @@ def test_build_end_game_summary_computes_game_stats(
                                 "phase_type": "main",
                                 "buzz_attempts": [
                                     {"player_index": 0, "in_timeout": False},
-                                    {"player_index": 1, "in_timeout": False},
+                                    {
+                                        "player_index": 1,
+                                        "is_success": True,
+                                        "in_timeout": False,
+                                    },
                                 ],
                             }
                         ],
@@ -643,7 +655,7 @@ def test_reconstruct_score_history_includes_manual_adjustments(
         )
         + "\n"
     )
-    score_history = game._reconstruct_score_history()
+    score_history = reconstruct_score_history(game)
     assert score_history[0] == [0, 200, 900]
 
 
@@ -1236,3 +1248,161 @@ def test_negative_round_index_does_not_mark_or_show_another_clue(
     game._mark_completed_questions([entry])
     assert game.data.rounds[-1].question.complete is False
     assert game._question_from_history_entry(entry) is None
+
+
+def _ledger_history() -> list[dict]:
+    """Return a saved history touching every kind of score-changing line.
+
+    It has standard clues, a Daily Double, manual adjustments, an earlier
+    correction, a seat swap (``player_renumber``) and a Final Jeopardy entry.
+    Lines before the seat swap use the numbers the players had then.
+    """
+    return [
+        _clue(1, 200, [_attempt(0, False, 0, -200), _attempt(1, True, 0, 200)]),
+        {
+            "type": "manual_score_adjustment",
+            "player_index": 2,
+            "timestamp": 2.0,
+            "score_before": 0,
+            "score_after": 500,
+            "new_score": 500,
+        },
+        _clue(2, 1000, [_attempt(1, True, 200, 1200)], is_daily_double=True),
+        {
+            "type": "score_correction",
+            "question_number": 1,
+            "timestamp": 4.0,
+            "player_states": {"0": "no answer", "1": "correct", "2": "no answer"},
+            "adjustments": [
+                {"player_index": 0, "score_before": -200, "score_after": 0}
+            ],
+        },
+        {"type": "player_renumber", "mapping": {"0": 1, "1": 0, "2": 2}},
+        _clue(3, 400, [_attempt(2, False, 500, 100), _attempt(1, True, 0, 400)]),
+        _clue(4, 600, [_attempt(0, True, 1200, 1800)]),
+        {
+            "question_index": [1, [0, 0]],
+            "question_number": 5,
+            "round_index": 1,
+            "is_daily_double": False,
+            "value": 0,
+            "answer_attempts": [
+                _attempt(2, False, 100, 100),
+                _attempt(1, False, 400, 0),
+                _attempt(0, True, 1800, 3000),
+            ],
+        },
+        {
+            "type": "manual_score_adjustment",
+            "player_index": 1,
+            "timestamp": 9.0,
+            "score_before": 0,
+            "score_after": 250,
+            "new_score": 250,
+        },
+    ]
+
+
+LEDGER_CORRECTIONS = [
+    {
+        "question_number": 3,
+        "player_states": {0: "correct", 1: "incorrect", 2: "no answer"},
+        "value": 400,
+    },
+    {
+        "question_number": 99,
+        "player_states": {0: "correct", 1: "no answer", 2: "no answer"},
+        "value": 200,
+    },
+    {
+        "question_number": 4,
+        "player_states": {"0": "correct", "1": "no answer", "2": "no answer"},
+        "value": 600,
+    },
+    {
+        "question_number": 2,
+        "player_states": {0: "incorrect", 1: "no answer", 2: "no answer"},
+        "value": 1500,
+    },
+    {
+        "question_number": 1,
+        "player_states": {0: "correct", 1: "incorrect", 2: "correct"},
+        "value": 200,
+    },
+]
+
+
+def test_score_corrections_write_the_same_lines_as_before(
+    game_with_players: object,
+) -> None:
+    """Characterize the ``score_correction`` lines the score editor appends.
+
+    The expected lines were recorded from the implementation that built
+    them inside ``Game``; moving that math into ``state.py`` must not
+    change a single value.
+    """
+    game = game_with_players
+    _write_history(game._game_state_dir, _ledger_history())
+    for player, score in zip(game.players, [3000, 250, 100], strict=True):
+        player.score = score
+
+    changed = game.apply_question_history_corrections(LEDGER_CORRECTIONS)
+
+    history_file = game._game_state_dir / "question_history.jsonl"
+    lines = history_file.read_text(encoding="utf-8").splitlines()
+    assert changed is True
+    assert lines[len(_ledger_history()) :] == EXPECTED_LEDGER_CORRECTION_LINES
+    assert [player.score for player in game.players] == [900, -750, 700]
+    assert reconstruct_score_history(game) == {
+        0: [0, 200, 200, -1300, -900, -300, 900, 900],
+        1: [0, -200, -200, -200, -600, -600, -1000, -750],
+        2: [0, 200, 700, 700, 700, 700, 700, 700],
+    }
+
+
+def test_build_score_correction_lines_matches_the_recorded_lines(
+    game: object,
+) -> None:
+    """The pure correction builder gives the lines ``Game`` used to build."""
+    _write_history(game._game_state_dir, _ledger_history())
+
+    lines = build_score_correction_lines(
+        load_question_history(game), LEDGER_CORRECTIONS, [0, 1, 2], 1000.0
+    )
+
+    assert [json.dumps(line) for line in lines] == EXPECTED_LEDGER_CORRECTION_LINES
+
+
+def test_score_history_replay_matches_before(game: object) -> None:
+    """Characterize the score graph data rebuilt from a mixed history."""
+    _write_history(game._game_state_dir, _ledger_history())
+
+    assert reconstruct_score_history(game) == {
+        0: [0, 200, 200, 1200, 1200, 1800, 3000, 3000],
+        1: [0, 0, 0, 0, 400, 400, 0, 250],
+        2: [0, 0, 500, 500, 100, 100, 100, 100],
+    }
+    assert history_score_totals(load_question_history(game)) == {
+        0: 3000,
+        1: 250,
+        2: 100,
+    }
+
+
+# Recorded from the implementation in ``Game.apply_question_history_corrections``
+# before the correction math moved to ``build_score_correction_lines``.
+EXPECTED_LEDGER_CORRECTION_LINES = [
+    '{"type": "score_correction", "question_number": 1, "timestamp": 1000.0, '
+    '"player_states": {"0": "correct", "1": "incorrect", "2": "correct"}, '
+    '"adjustments": [{"player_index": 1, "score_before": 250, "score_after": 50}, '
+    '{"player_index": 2, "score_before": 100, "score_after": 300}]}',
+    '{"type": "score_correction", "question_number": 2, "timestamp": 1000.0, '
+    '"player_states": {"0": "incorrect", "1": "no answer", "2": "no answer"}, '
+    '"value": 1500, "adjustments": [{"player_index": 0, "score_before": 3000, '
+    '"score_after": 500}]}',
+    '{"type": "score_correction", "question_number": 3, "timestamp": 1000.0, '
+    '"player_states": {"0": "correct", "1": "incorrect", "2": "no answer"}, '
+    '"adjustments": [{"player_index": 0, "score_before": 500, "score_after": 900}, '
+    '{"player_index": 1, "score_before": 50, "score_after": -750}, '
+    '{"player_index": 2, "score_before": 300, "score_after": 700}]}',
+]

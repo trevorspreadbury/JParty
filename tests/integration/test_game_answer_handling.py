@@ -7,6 +7,8 @@ import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
+from jparty.domain.state import reconstruct_score_history
+
 pytestmark = pytest.mark.integration
 
 
@@ -244,7 +246,7 @@ def test_apply_question_history_correction_appends_one_line_and_updates_scores(
         "adjustments": [{"player_index": 0, "score_before": 0, "score_after": -400}],
     }
     # Graphs and stats see the clue as it should have been.
-    assert game._reconstruct_score_history()[0] == [0, -200, -200, -400]
+    assert reconstruct_score_history(game)[0] == [0, -200, -200, -400]
     assert game.get_recent_score_corrections()[-1]["player_states"][0] == "incorrect"
 
 
@@ -278,7 +280,7 @@ def test_apply_question_history_correction_can_add_missing_correct_attempt(
     assert lines[1]["adjustments"] == [
         {"player_index": 0, "score_before": 0, "score_after": question.value}
     ]
-    assert game._reconstruct_score_history()[0] == [0, question.value]
+    assert reconstruct_score_history(game)[0] == [0, question.value]
 
 
 def test_apply_question_history_correction_updates_daily_double_value(
@@ -337,7 +339,7 @@ def test_adjust_score_logs_manual_override(
     assert lines[0]["type"] == "manual_score_adjustment"
     assert lines[0]["player_index"] == 0
     assert lines[0]["score_after"] == 900
-    assert game._reconstruct_score_history()[0] == [0, 900]
+    assert reconstruct_score_history(game)[0] == [0, 900]
 
 
 def test_score_editor_daily_double_entry_carries_the_real_wager_cap(

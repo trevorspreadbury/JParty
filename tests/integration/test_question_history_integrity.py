@@ -11,6 +11,7 @@ from jparty.domain.state import (
     build_end_game_summary,
     history_score_totals,
     read_history_file,
+    reconstruct_score_history,
 )
 
 pytestmark = pytest.mark.integration
@@ -169,8 +170,8 @@ def test_correction_updates_totals_stats_and_graph(game_with_players: object) ->
     assert (alice.right_count, alice.wrong_count, alice.coryat) == (0, 2, -400)
     assert (bob.right_count, bob.wrong_count, bob.coryat) == (1, 0, 200)
     assert summary.game_stats.triple_stumpers == 1
-    assert game._reconstruct_score_history()[0] == [0, -200, -400]
-    assert game._reconstruct_score_history()[1] == [0, 200, 200]
+    assert reconstruct_score_history(game)[0] == [0, -200, -400]
+    assert reconstruct_score_history(game)[1] == [0, 200, 200]
 
 
 def test_resume_after_correction_restores_corrected_totals(
