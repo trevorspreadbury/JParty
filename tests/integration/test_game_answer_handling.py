@@ -338,3 +338,79 @@ def test_adjust_score_logs_manual_override(
     assert lines[0]["player_index"] == 0
     assert lines[0]["score_after"] == 900
     assert game._reconstruct_score_history()[0] == [0, 900]
+
+
+def test_score_editor_daily_double_entry_carries_the_real_wager_cap(
+    game_with_players: object, monkeypatch: object
+) -> None:
+    """The editor's wager range uses the score before the clue and the board."""
+    game = game_with_players
+    game.apply_manual_score_override(game.players[0], 1200)
+    game.apply_manual_score_override(game.players[1], 300)
+    first = game.current_round.get_question(0, 0)
+    second = game.current_round.get_question(1, 0)
+    first.dd = second.dd = True
+    monkeypatch.setattr(
+        "jparty.domain.game_engine.QInputDialog.getInt",
+        lambda *args, **kwargs: (700, True),
+    )
+    game.load_question(first)
+    game.get_dd_wager(game.players[0])
+    game.correct_answer()
+    game.load_question(second)
+    game.get_dd_wager(game.players[1])
+    game.incorrect_answer()
+
+    entries = game.get_recent_score_corrections()
+
+    # Bob had 300, so his cap is the board's top value. Alice had 1200.
+    assert [entry["wager_bounds"] for entry in entries] == [(5, 1000), (5, 1200)]
+
+
+def test_score_editor_button_does_not_read_the_history_file(
+    game_with_players: object, monkeypatch: object
+) -> None:
+    """Refreshing the Edit Score button must not re-read the saved history."""
+    from jparty.domain import state
+
+    game = game_with_players
+    assert game.can_open_score_editor() is False
+    game.load_question(game.current_round.get_question(0, 0))
+    game.open_responses()
+    game.buzz(0)
+    game.correct_answer()
+
+    reads = []
+    real_read = state.read_history_file
+    monkeypatch.setattr(
+        state, "read_history_file", lambda path: reads.append(path) or real_read(path)
+    )
+
+    assert game.can_open_score_editor() is True
+    assert reads == []
+    assert len(game.get_recent_score_corrections()) == 1
+    assert len(reads) == 1
+
+
+def test_score_editor_button_ignores_final_and_manual_history(
+    game_with_players: object,
+) -> None:
+    """Only a played non-Final clue enables the score editor."""
+    game = game_with_players
+    game.apply_manual_score_override(game.players[0], 500)
+    assert game.can_open_score_editor() is False
+    game.current_round = game.data.rounds[2]
+    game.active_question = game.current_round.question
+    for player in game.players:
+        player.wager = 0
+        player.finalanswer = "Paris"
+    game.final_open_responses()
+    for _player in game.players:
+        game.final_next_player()
+        game.final_show_answer()
+        game.final_correct_answer()
+    game.final_next_player()
+    history_file = game._game_state_dir / "question_history.jsonl"
+    assert len(history_file.read_text().splitlines()) == 2
+    game.active_question = None
+    assert game.can_open_score_editor() is False

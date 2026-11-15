@@ -265,7 +265,7 @@ Each player's result can be changed to:
 - `Correct`
 - `Incorrect`
 
-For Daily Doubles, the dialog also exposes the wagered clue value so you can fix an incorrect wager amount.
+For Daily Doubles, the dialog also exposes the wager so you can fix an incorrect amount. It allows the same range as the wager prompt during the game: $5 up to the player's score before that clue or the board's top clue value, whichever is larger. A saved wager outside that range (from an older save) is kept as it is unless you change it.
 
 Saving these changes records a correction in the saved clue history and adjusts the affected players' scores, which is much better than manually patching a total when the real problem was an earlier ruling.
 
@@ -277,7 +277,7 @@ The `Edit Score` button is disabled when:
 
 ### Clicking a player's podium
 
-When no clue is active, clicking a player's podium opens a manual score override flow for that player.
+When a game is running and no clue is active, clicking a player's podium opens a manual score override flow for that player. Podium clicks do nothing in the lobby, before Start or after Close Game, because there is no game to save the change in.
 
 Use this when:
 

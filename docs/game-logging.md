@@ -324,10 +324,13 @@ Hosts can correct scoring in two ways once a game is in progress:
 - Click `Edit Score` on the host scoreboard to review the previous five played
   clues. Each clue shows its category, value, correct response, and one
   selector per player with `no answer`, `correct`, and `incorrect`. Daily
-  Doubles also expose an editable clue value so the wager can be fixed. Saving
+  Doubles also expose an editable wager, limited to the same range as the
+  in-game wager prompt (a saved wager outside it is kept). Saving
   appends one `score_correction` line for each clue whose ruling changed.
 - Click a player's podium when no clue is active to enter a manual score
-  override directly. These overrides are appended to `question_history.jsonl`
+  override directly. This only works once the game has started; podium clicks
+  in the lobby are ignored, so nothing is written to a save before Start or to
+  the previous save after Close Game. These overrides are appended to `question_history.jsonl`
   as `manual_score_adjustment` events so resumed games preserve the manual
   total.
 

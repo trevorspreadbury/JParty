@@ -47,6 +47,20 @@ and this project follows [Semantic Versioning](https://semver.org/).
   `environment.yml` installs from `pyproject.toml` (#75, #83).
 
 ### Fixed
+- Clicking a podium in the lobby no longer changes a score. Before Start this
+  made a stray save folder and broke the new save, and after Close Game it
+  wrote into the previous game's save. Either way that save would no longer
+  load. Close Game now also forgets the old save folder.
+- The Edit Score dialog now limits a Daily Double wager to the same range as
+  the in-game wager prompt: $5 up to the player's score before that clue or
+  the board's top value, whichever is larger. Before, it allowed up to 50,000
+  for anyone. A board whose clues are all under $5 no longer breaks the wager
+  prompt.
+- The Edit Score dialog is readable on a light Windows theme. Player names
+  were white on a light background, and the clue value ran into the Daily
+  Double label. Scrolling over a wager no longer changes it.
+- The Edit Score button no longer re-reads the whole clue history file every
+  time the host screen updates.
 - Closing JParty during a clue or Final now exits at once. A cancelled clue
   timer kept the app, and the buzzer server's port, running for up to 31 s,
   so a quick relaunch moved to the next port (#115).

@@ -260,6 +260,86 @@ def test_fresh_starts_in_the_same_minute_get_separate_save_folders(
     assert third_dir.name == "4453-20260418T1435-3"
 
 
+def _set_score_by_podium_click(
+    game: object, monkeypatch: object, player: object, score: int
+) -> list:
+    """Click ``player``'s podium and type ``score``; return the prompts shown."""
+    from jparty.domain import game_engine
+
+    prompts = []
+
+    def fake_get_int(*args: object, **kwargs: object) -> tuple[int, bool]:
+        prompts.append(args)
+        return (score, True)
+
+    monkeypatch.setattr(game_engine.QInputDialog, "getInt", fake_get_int)
+    game.adjust_score(player)
+    return prompts
+
+
+def test_podium_score_edit_before_start_is_ignored(
+    game: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """A lobby score edit must not create a save or break the new one's history."""
+    from jparty.domain import game_engine
+    from jparty.domain.state import read_history_file
+    from jparty.services import archive_client
+
+    monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
+    states_dir = temp_dir / "game_states"
+    monkeypatch.setattr(game_engine, "GAME_STATES_DIR", states_dir)
+    _freeze_save_folder_clock(monkeypatch, "20260418T1435")
+    # A freshly opened app: no game started and no save folder yet.
+    game.current_round = None
+    game._game_state_dir = None
+    game.set_session_game_id("4453")
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.buzzer_controller.connected_players = players
+    game.players = players
+
+    prompts = _set_score_by_podium_click(game, monkeypatch, players[0], 900)
+
+    assert prompts == []
+    assert players[0].score == 0
+    assert not states_dir.exists() or list(states_dir.iterdir()) == []
+
+    saved_dir = _start_fresh_game(game, players, game.data)
+    _answer_correctly(game, _first_plain_clue(game.current_round), 0)
+
+    assert saved_dir.name == "4453-20260418T1435"
+    assert [path.name for path in states_dir.iterdir()] == [saved_dir.name]
+    assert len(read_history_file(saved_dir / "question_history.jsonl")) == 1
+
+
+def test_podium_score_edit_after_close_game_leaves_previous_save_alone(
+    game: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """A score edit in the lobby after Close Game must not write to the old save."""
+    from jparty.domain import game_engine
+    from jparty.domain.state import read_history_file
+    from jparty.services import archive_client
+
+    monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
+    monkeypatch.setattr(game_engine, "GAME_STATES_DIR", temp_dir / "game_states")
+    _freeze_save_folder_clock(monkeypatch, "20260418T1435")
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    saved_dir = _start_fresh_game(game, players, game.data)
+    _answer_correctly(game, _first_plain_clue(game.current_round), 0)
+    history_file = saved_dir / "question_history.jsonl"
+    history_before = history_file.read_text()
+    game.close_game()
+
+    assert game._game_state_dir is None
+    lobby_player = Player("Carol", DummyWaiter(), 0)
+    game.players = [lobby_player]
+    prompts = _set_score_by_podium_click(game, monkeypatch, lobby_player, 900)
+
+    assert prompts == []
+    assert lobby_player.score == 0
+    assert history_file.read_text() == history_before
+    assert len(read_history_file(history_file)) == 1
+
+
 def test_resume_keeps_writing_to_an_old_style_save_folder(
     game: object,
     monkeypatch: object,
@@ -287,7 +367,10 @@ def test_resume_keeps_writing_to_an_old_style_save_folder(
     assert game._game_state_dir == old_dir
     assert saved["game_id"] == "4453"
     assert [path.name for path in states_dir.iterdir()] == ["4453-20260422T2130"]
+    # The resumed clues can be corrected; a fresh game has none yet.
+    assert game.can_open_score_editor() is True
     game.close_game()
+    assert game.can_open_score_editor() is False
     game.clear_resume_state()
 
     fresh_dir = _start_fresh_game(
