@@ -8,7 +8,9 @@ import re
 import pytest
 import requests
 
+from jparty.app import bootstrap
 from jparty.services import archive_client
+from jparty.services.game_loader import find_random_game
 from jparty.services.game_parser import GameParser
 from jparty.services.game_sources import GameSourceFetcher
 
@@ -17,6 +19,7 @@ pytestmark = pytest.mark.unit
 CDX_URL = re.compile(r"^http://web\.archive\.org/cdx/search/cdx\?")
 SNAPSHOT_URL = re.compile(r"^http://web\.archive\.org/web/")
 JARCHIVE_GAME_URL = "http://www.j-archive.com/showgame.php?game_id=4453"
+BAD_JARCHIVE_GAME_URL = "http://www.j-archive.com/showgame.php?game_id=9999"
 SHEET_URL = re.compile(r"^https://docs\.google\.com/spreadsheet/ccc\?")
 CDX_HEADER = ["urlkey", "timestamp", "original", "mimetype", "statuscode"]
 CDX_ROW = [
@@ -133,6 +136,53 @@ def test_get_game_returns_none_when_both_sources_send_errors(
 
     assert archive_client.get_game("4453") is None
     assert archive_client._LOADED_GAME_HTML_CACHE == {}
+
+
+def test_download_skips_an_id_jarchive_errors_on_and_keeps_going(
+    requests_mock: object,
+    fixture_dir: object,
+    no_saved_games: None,
+    temp_dir: object,
+    monkeypatch: object,
+    capsys: object,
+) -> None:
+    """``jparty download`` should skip an id that errors and save the next one."""
+    saved_dir = temp_dir / "saved_games"
+    saved_dir.mkdir()
+    monkeypatch.setattr(bootstrap, "SAVED_GAMES", saved_dir)
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    requests_mock.get(CDX_URL, status_code=429, text="Too Many Requests")
+    requests_mock.get(BAD_JARCHIVE_GAME_URL, status_code=503, text="Unavailable")
+    requests_mock.get(JARCHIVE_GAME_URL, text=html)
+
+    downloaded = bootstrap.download_games(["9999", "4453"], delay_seconds=0)
+
+    assert downloaded == ["4453"]
+    assert "Skipping 9999" in capsys.readouterr().out
+    assert not (saved_dir / "9999.html").exists()
+    assert (saved_dir / "4453.html").read_text(encoding="utf-8") == html
+
+
+def test_random_search_treats_a_jarchive_http_error_as_one_failed_try(
+    requests_mock: object, fixture_dir: object, no_saved_games: None
+) -> None:
+    """An HTTP error for one random game should cost a try, not end the search."""
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    requests_mock.get(CDX_URL, status_code=429, text="Too Many Requests")
+    requests_mock.get(BAD_JARCHIVE_GAME_URL, status_code=503, text="Unavailable")
+    requests_mock.get(JARCHIVE_GAME_URL, text=html)
+    game_ids = iter(["9999", "4453"])
+
+    game_id, data = find_random_game(
+        lambda data: True,
+        max_attempts=2,
+        pick_game_id=lambda: next(game_ids),
+        load_game=archive_client.get_game,
+    )
+
+    assert game_id == "4453"
+    assert data is not None
+    assert len(data.rounds) == 3
 
 
 def test_google_sheet_rows_handle_crlf_and_multiline_cells(

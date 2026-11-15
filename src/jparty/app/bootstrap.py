@@ -200,6 +200,8 @@ def download_games(inputs: object, delay_seconds: object = 5) -> object:
 
     Returns:
         A list of game ids that were downloaded and written to the local cache.
+        An id that fails to download or parse is skipped, and the rest are
+        still tried.
     """
     downloaded = []
     for game_id in expand_game_id_inputs(inputs):
@@ -208,7 +210,13 @@ def download_games(inputs: object, delay_seconds: object = 5) -> object:
         if saved_path.exists():
             print("Game already saved")
             continue
-        game_html = get_game_html(game_id)
+        try:
+            game_html = get_game_html(game_id)
+        except requests.RequestException as exc:
+            # One bad id, such as a J-Archive HTTP error, must not stop the batch.
+            logging.error("Could not download game %s", game_id, exc_info=True)
+            print(f"Skipping {game_id}: could not download it ({exc})")
+            continue
         game_obj = process_game_board_from_html(game_html, game_id)
         if game_obj is None:
             print(f"Skipping {game_id}: downloaded game is invalid or incomplete")
