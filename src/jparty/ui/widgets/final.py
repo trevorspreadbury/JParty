@@ -6,10 +6,11 @@ summary screen shown after the winner has been revealed.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from math import ceil
 
-from PyQt6.QtCore import QPointF, QRectF, Qt
-from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPalette, QPen
+from PyQt6.QtCore import QPointF, QRect, QRectF, Qt
+from PyQt6.QtGui import QColor, QFontMetrics, QPainter, QPainterPath, QPalette, QPen
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -41,6 +42,8 @@ MAX_SINGLE_COLUMN_PLAYERS = 3
 # Graph margins, in pixels, around the rotated "Score" title and tick labels.
 AXIS_TITLE_MARGIN = 8
 AXIS_LABEL_GAP = 8
+# Horizontal gridlines, and so score tick labels, on the graph's y-axis.
+GRAPH_Y_TICKS = 5
 
 
 def format_money(amount: int) -> str:
@@ -63,6 +66,23 @@ def _set_name_label_dark_text(label: NameLabel) -> None:
     palette = label.palette()
     palette.setColor(QPalette.ColorRole.WindowText, QColor("black"))
     label.setPalette(palette)
+
+
+@dataclass
+class GraphAxisLayout:
+    """Where the score graph puts its plot area and y-axis text.
+
+    Attributes:
+        plot_rect: Area the gridlines and score lines are drawn in.
+        title_rect: Box taken by the rotated "Score" title.
+        tick_labels: Score text for each y-axis tick, top to bottom.
+        tick_label_rects: Box taken by each tick label's text.
+    """
+
+    plot_rect: QRect
+    title_rect: QRectF
+    tick_labels: list[str]
+    tick_label_rects: list[QRectF]
 
 
 class SummaryGraphWidget(QWidget):
@@ -130,6 +150,55 @@ class SummaryGraphWidget(QWidget):
             for index, score in enumerate(series.scores)
         ]
 
+    def axis_layout(self, metrics: QFontMetrics) -> GraphAxisLayout:
+        """Lay out the plot area, "Score" title and y-axis tick labels.
+
+        From the left edge: a margin, the rotated "Score" title, a gap, the
+        tick labels right-aligned to the widest one, another gap, then the
+        plot. The plot starts after the widest label, so the title, labels
+        and plot never overlap however wide the scores get.
+
+        Args:
+            metrics: Metrics of the font the graph text is drawn in.
+
+        Returns:
+            The layout, in widget coordinates.
+        """
+        min_score, max_score = self._score_range()
+        tick_labels = [
+            format_money(
+                int(max_score - ((max_score - min_score) * tick_index / GRAPH_Y_TICKS))
+            )
+            for tick_index in range(GRAPH_Y_TICKS + 1)
+        ]
+        tick_label_left = AXIS_TITLE_MARGIN + metrics.height() + AXIS_LABEL_GAP
+        tick_label_width = max(
+            metrics.horizontalAdvance(label) for label in tick_labels
+        )
+        plot_rect = self.rect().adjusted(
+            tick_label_left + tick_label_width + AXIS_LABEL_GAP, 18, -18, -36
+        )
+        title_width = metrics.horizontalAdvance("Score")
+        title_rect = QRectF(
+            AXIS_TITLE_MARGIN,
+            plot_rect.center().y() - title_width / 2,
+            metrics.height(),
+            title_width,
+        )
+        tick_label_rects = []
+        for tick_index, label in enumerate(tick_labels):
+            y = plot_rect.top() + (plot_rect.height() * tick_index / GRAPH_Y_TICKS)
+            label_width = metrics.horizontalAdvance(label)
+            tick_label_rects.append(
+                QRectF(
+                    tick_label_left + tick_label_width - label_width,
+                    y - metrics.height() / 2,
+                    label_width,
+                    metrics.height(),
+                )
+            )
+        return GraphAxisLayout(plot_rect, title_rect, tick_labels, tick_label_rects)
+
     def paintEvent(self, event: object) -> None:
         """Render axes, gridlines, and player score traces."""
         painter = QPainter(self)
@@ -137,25 +206,11 @@ class SummaryGraphWidget(QWidget):
 
         painter.fillRect(self.rect(), CARDPAL.color(QPalette.ColorRole.Window))
 
-        min_score, max_score = self._score_range()
-        max_points = self._max_points()
-        y_ticks = 5
-        tick_labels = [
-            format_money(
-                int(max_score - ((max_score - min_score) * tick_index / y_ticks))
-            )
-            for tick_index in range(y_ticks + 1)
-        ]
-        # Leave room for the rotated "Score" title, then the widest tick label,
-        # so the two never overlap however wide the scores get.
         metrics = painter.fontMetrics()
-        tick_label_left = AXIS_TITLE_MARGIN + metrics.height() + AXIS_LABEL_GAP
-        tick_label_width = max(
-            metrics.horizontalAdvance(label) for label in tick_labels
-        )
-        rect = self.rect().adjusted(
-            tick_label_left + tick_label_width + AXIS_LABEL_GAP, 18, -18, -36
-        )
+        axis = self.axis_layout(metrics)
+        rect = axis.plot_rect
+        max_points = self._max_points()
+        y_ticks = GRAPH_Y_TICKS
 
         def x_pos(index: int) -> float:
             if max_points <= 1:
@@ -179,22 +234,17 @@ class SummaryGraphWidget(QWidget):
         painter.drawText(rect.left(), rect.bottom() + 28, "Question #")
         painter.save()
         painter.translate(
-            AXIS_TITLE_MARGIN + metrics.ascent(),
-            rect.center().y() + metrics.horizontalAdvance("Score") / 2,
+            axis.title_rect.left() + metrics.ascent(), axis.title_rect.bottom()
         )
         painter.rotate(-90)
         painter.drawText(0, 0, "Score")
         painter.restore()
 
-        for tick_index, label in enumerate(tick_labels):
-            y = rect.top() + (rect.height() * tick_index / y_ticks)
+        for label, label_rect in zip(
+            axis.tick_labels, axis.tick_label_rects, strict=True
+        ):
             painter.drawText(
-                QRectF(
-                    tick_label_left,
-                    y - metrics.height(),
-                    tick_label_width,
-                    2 * metrics.height(),
-                ),
+                label_rect,
                 int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
                 label,
             )
