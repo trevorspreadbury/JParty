@@ -85,7 +85,7 @@ python -m playwright install chromium
 ```
 
 ## Development
-To keep downloads, saved state, logs, and graphs in a predictable repo-local location, create a `.env` file with:
+To keep downloads, saved state and logs in a predictable repo-local location, create a `.env` file with:
 
 ```
 DATA_DIR=.jparty-data

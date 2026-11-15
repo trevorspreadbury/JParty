@@ -79,7 +79,7 @@ python -m playwright install chromium
 
 ## Local Runtime Configuration
 
-For development, it is helpful to keep saved games, logs, graphs, and runtime
+For development, it is helpful to keep saved games, logs and runtime
 state inside the repository rather than in a user profile directory. Create a
 `.env` file with:
 

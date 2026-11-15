@@ -6,6 +6,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-14
+
+First stable 3.0 release. It contains everything since the May 2026
+tournament build (3.0.0-rc.1), plus the fixes from the post-tournament
+reviews.
+
 ### Security
 - Phones no longer receive the Final Jeopardy answer before the host reveals
   it (#86).
@@ -263,5 +269,6 @@ internally because the version string was not bumped before the event.
 - Infinite recursion on Frankengames with media.
 - Audio thread handling; added a silent buffer to `stumped.wav`.
 
-[Unreleased]: https://github.com/trevorspreadbury/JParty/compare/v3.0.0-rc.1...dev
+[Unreleased]: https://github.com/trevorspreadbury/JParty/compare/v3.0.0...dev
+[3.0.0]: https://github.com/trevorspreadbury/JParty/compare/v3.0.0-rc.1...v3.0.0
 [3.0.0-rc.1]: https://github.com/trevorspreadbury/JParty/releases/tag/v3.0.0-rc.1
