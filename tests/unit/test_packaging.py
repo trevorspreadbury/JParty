@@ -298,3 +298,76 @@ def test_load_summary_counts_race_when_saved_player_buzzes_early_in_same_phase(
     assert stats_by_player[0].race_opportunities == 1
     assert stats_by_player[2].race_wins == 0
     assert stats_by_player[2].race_opportunities == 1
+
+
+def test_data_dir_override_prefers_jparty_data_dir(temp_dir: object) -> None:
+    """``JPARTY_DATA_DIR`` should win over the generic ``DATA_DIR``."""
+    from jparty.app import paths
+
+    override = paths.data_dir_override(
+        {
+            "DATA_DIR": str(temp_dir / "generic"),
+            "JPARTY_DATA_DIR": str(temp_dir / "app"),
+        },
+        dotenv_path="",
+        preset_env_names={"DATA_DIR", "JPARTY_DATA_DIR"},
+    )
+
+    assert override == temp_dir / "app"
+
+
+def test_data_dir_override_resolves_relative_dotenv_path_against_dotenv(
+    temp_dir: object,
+) -> None:
+    """A relative ``.env`` path must not depend on the folder JParty starts in."""
+    from jparty.app import paths
+
+    override = paths.data_dir_override(
+        {"DATA_DIR": ".jparty-data"},
+        dotenv_path=str(temp_dir / ".env"),
+        preset_env_names=set(),
+    )
+
+    assert override == temp_dir.resolve() / ".jparty-data"
+
+
+def test_data_dir_override_keeps_shell_relative_path_relative(
+    temp_dir: object,
+) -> None:
+    """A relative path set in the shell keeps following the current folder."""
+    from jparty.app import paths
+
+    override = paths.data_dir_override(
+        {"DATA_DIR": "shell-data"},
+        dotenv_path=str(temp_dir / ".env"),
+        preset_env_names={"DATA_DIR"},
+    )
+
+    assert override == Path("shell-data")
+
+
+def test_relative_dotenv_data_dir_is_found_from_a_subfolder(temp_dir: object) -> None:
+    """Starting JParty from a subfolder must use the ``.env`` folder's data.
+
+    Running from ``src/`` used to create ``src/.jparty-data``.
+    """
+    src_dir = Path(__file__).resolve().parents[2] / "src"
+    (temp_dir / ".env").write_text("DATA_DIR=.jparty-data\n", encoding="utf-8")
+    subfolder = temp_dir / "src"
+    subfolder.mkdir()
+    script = f"import os, sys; os.chdir(r'{subfolder}'); sys.path.insert(0, r'{src_dir}'); import jparty.app.paths as paths; print(paths.USER_DATA_ROOT)"
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={
+            key: value
+            for (key, value) in {**os.environ, "QT_QPA_PLATFORM": "offscreen"}.items()
+            if key not in {"DATA_DIR", "JPARTY_DATA_DIR"}
+        },
+    )
+
+    root = Path(completed.stdout.strip().splitlines()[-1])
+    assert root.resolve() == (temp_dir / ".jparty-data").resolve()
+    assert not (subfolder / ".jparty-data").exists()

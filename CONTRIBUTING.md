@@ -16,8 +16,8 @@ The source code lives under `src/jparty` and is organized by responsibility:
   path resolution for local data and packaged assets.
 - `src/jparty/services`
   Data-loading and integration helpers. These modules fetch and normalize game
-  data from J-Archive, Google Sheets, and cached files, and also expose
-  lightweight media and persistence-related service interfaces.
+  data from J-Archive, Google Sheets, and cached files, and find local
+  question media.
 - `src/jparty/domain`
   Core gameplay state and rules. This is where the main `Game` engine lives,
   along with domain models, keyboard/timer primitives, and helpers for saving

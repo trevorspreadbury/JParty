@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from jparty.services import archive_client as retrieve
+from jparty.services import question_media
 
 pytestmark = pytest.mark.unit
 
@@ -33,14 +34,19 @@ def test_get_game_html_prefers_saved_local_html(
 
 
 def test_get_game_html_falls_back_to_wayback(
-    temp_dir: object, monkeypatch: object
+    temp_dir: object, monkeypatch: object, fixture_dir: object
 ) -> None:
     """Test test get game html falls back to wayback."""
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
     monkeypatch.setattr(retrieve, "SAVED_GAMES", temp_dir / "missing")
+    monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
+    monkeypatch.setattr(retrieve, "get_wayback_game_html", lambda game_id: html)
     monkeypatch.setattr(
-        retrieve, "get_wayback_game_html", lambda game_id: "<html>wayback</html>"
+        retrieve,
+        "get_jarchive_game_html",
+        lambda game_id: pytest.fail("j-archive should not be called"),
     )
-    assert retrieve.get_game_html(1234) == "<html>wayback</html>"
+    assert retrieve.get_game_html(1234) == html
 
 
 def test_get_game_html_falls_back_to_jarchive_when_wayback_fails(
@@ -48,6 +54,7 @@ def test_get_game_html_falls_back_to_jarchive_when_wayback_fails(
 ) -> None:
     """Test test get game html falls back to jarchive when wayback fails."""
     monkeypatch.setattr(retrieve, "SAVED_GAMES", temp_dir / "missing")
+    monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
     monkeypatch.setattr(
         retrieve,
         "get_wayback_game_html",
@@ -183,7 +190,7 @@ def test_find_question_media_returns_matching_file(
     game_media_dir.mkdir(parents=True)
     media_file = game_media_dir / "1-0-0.png"
     media_file.write_bytes(b"fake")
-    monkeypatch.setattr(retrieve, "QUESTION_MEDIA", media_root)
+    monkeypatch.setattr(question_media, "QUESTION_MEDIA", media_root)
     assert retrieve.find_question_media(1234, 1, (0, 0)) == str(media_file)
 
 
@@ -295,16 +302,62 @@ def test_get_game_fetches_when_html_in_memory_is_not_a_game(
     assert retrieve._LOADED_GAME_HTML_CACHE["4453"] == html
 
 
-def test_get_game_returns_none_for_unparseable_remote_html(
+def test_get_game_returns_none_when_neither_source_returns_a_game(
     temp_dir: object, monkeypatch: object, fixture_dir: object
 ) -> None:
-    """A fetched page that is not a game should return ``None``, not raise."""
+    """``None`` (not an error) when Wayback and J-Archive both send non-games."""
+    invalid_html = (fixture_dir / "invalid_game.html").read_text(encoding="utf-8")
+    calls = []
+
+    def fake_jarchive(game_id: object) -> str:
+        calls.append(game_id)
+        return invalid_html
+
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", temp_dir / "missing")
+    monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
+    monkeypatch.setattr(retrieve, "get_wayback_game_html", lambda game_id: invalid_html)
+    monkeypatch.setattr(retrieve, "get_jarchive_game_html", fake_jarchive)
+
+    assert retrieve.get_game("9999") is None
+    assert calls == ["9999"]
+    assert "9999" not in retrieve._LOADED_GAME_HTML_CACHE
+
+
+def test_get_game_falls_back_to_jarchive_when_wayback_page_is_not_a_game(
+    temp_dir: object, monkeypatch: object, fixture_dir: object
+) -> None:
+    """A Wayback error page that isn't a game should not block the load."""
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    monkeypatch.setattr(retrieve, "SAVED_GAMES", temp_dir / "missing")
+    monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
+    monkeypatch.setattr(
+        retrieve,
+        "get_wayback_game_html",
+        lambda game_id: "<html><body>Too Many Requests</body></html>",
+    )
+    monkeypatch.setattr(retrieve, "get_jarchive_game_html", lambda game_id: html)
+
+    game = retrieve.get_game("4453")
+
+    assert game is not None
+    assert len(game.rounds) == 3
+    assert retrieve._LOADED_GAME_HTML_CACHE["4453"] == html
+
+
+def test_get_game_html_does_not_keep_a_page_that_is_not_a_game(
+    temp_dir: object, monkeypatch: object, fixture_dir: object
+) -> None:
+    """An error page must not be held in memory and reused or saved later."""
     invalid_html = (fixture_dir / "invalid_game.html").read_text(encoding="utf-8")
     monkeypatch.setattr(retrieve, "SAVED_GAMES", temp_dir / "missing")
     monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
     monkeypatch.setattr(retrieve, "get_wayback_game_html", lambda game_id: invalid_html)
+    monkeypatch.setattr(
+        retrieve, "get_jarchive_game_html", lambda game_id: invalid_html
+    )
 
-    assert retrieve.get_game("9999") is None
+    assert retrieve.get_game_html("9999") == invalid_html
+    assert retrieve._LOADED_GAME_HTML_CACHE == {}
 
 
 def test_get_game_propagates_google_sheet_failures(monkeypatch: object) -> None:
@@ -412,6 +465,9 @@ def test_get_game_keeps_cached_game_when_refetch_is_not_a_game(
     monkeypatch.setattr(retrieve, "SAVED_GAMES", saved_dir)
     monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
     monkeypatch.setattr(retrieve, "get_wayback_game_html", lambda game_id: invalid_html)
+    monkeypatch.setattr(
+        retrieve, "get_jarchive_game_html", lambda game_id: invalid_html
+    )
 
     game = retrieve.get_game("4453")
 
@@ -431,6 +487,7 @@ def test_get_game_keeps_cached_game_when_refetch_fails_to_parse(
     monkeypatch.setattr(retrieve, "SAVED_GAMES", saved_dir)
     monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
     monkeypatch.setattr(retrieve, "get_wayback_game_html", lambda game_id: "BROKEN")
+    monkeypatch.setattr(retrieve, "get_jarchive_game_html", lambda game_id: "BROKEN")
     real_parse = retrieve.process_game_board_from_html
 
     def parse(game_html: object, game_id: object) -> object:
@@ -500,20 +557,19 @@ def test_get_game_leaves_unreadable_cache_when_offline(
 
 
 def test_save_game_html_fetches_when_not_loaded(
-    temp_dir: object, monkeypatch: object
+    temp_dir: object, monkeypatch: object, fixture_dir: object
 ) -> None:
     """Saving a game that was never loaded should fetch it, then write it."""
     saved_dir = temp_dir / "saved"
     saved_dir.mkdir()
     monkeypatch.setattr(retrieve, "SAVED_GAMES", saved_dir)
     monkeypatch.setattr(retrieve, "_LOADED_GAME_HTML_CACHE", {})
-    monkeypatch.setattr(
-        retrieve, "get_wayback_game_html", lambda game_id: "<html>wayback</html>"
-    )
+    html = (fixture_dir / "4453.html").read_text(encoding="utf-8")
+    monkeypatch.setattr(retrieve, "get_wayback_game_html", lambda game_id: html)
 
     saved_path = retrieve.save_game_html("4453")
 
-    assert saved_path.read_text(encoding="utf-8") == "<html>wayback</html>"
+    assert saved_path.read_text(encoding="utf-8") == html
 
 
 def test_save_game_html_skips_google_sheet_ids(

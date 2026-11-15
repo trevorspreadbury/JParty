@@ -102,3 +102,20 @@ def test_module_entry_point_passes_exit_code_to_the_os() -> None:
         check=False,
     )
     assert result.returncode == 1, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "expected"),
+    [
+        ("3.0.0", "3.0.0", True),
+        ("3.0.0rc1", "3.0.0-rc.1", True),
+        ("3.0.0", "3.0.1", False),
+        ("not a version", "3.0.0", False),
+    ],
+)
+def test_same_version_accepts_differently_spelled_releases(
+    first: str, second: str, expected: bool
+) -> None:
+    """Metadata's ``3.0.0rc1`` must match ``_version.py``'s ``3.0.0-rc.1``."""
+    pytest.importorskip("packaging")
+    assert self_check._same_version(first, second) is expected

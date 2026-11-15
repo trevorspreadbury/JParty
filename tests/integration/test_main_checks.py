@@ -11,26 +11,35 @@ from jparty.app import config
 pytestmark = pytest.mark.integration
 
 
-def test_check_internet_exits_when_request_fails(monkeypatch: object) -> None:
-    """Test test check internet exits when request fails."""
+@pytest.mark.parametrize(
+    "error",
+    [
+        main.requests.exceptions.ConnectionError(),
+        main.requests.exceptions.ReadTimeout(),
+        main.requests.exceptions.TooManyRedirects(),
+    ],
+)
+def test_check_internet_exits_when_request_fails(
+    monkeypatch: object, error: Exception
+) -> None:
+    """Any request failure, including a slow J-Archive, shows the error dialog.
+
+    A read timeout used to escape to the crash dialog instead.
+    """
     critical_calls = []
     monkeypatch.setattr(
         main.requests,
         "get",
-        lambda url, **kwargs: (_ for _ in ()).throw(
-            main.requests.exceptions.ConnectionError()
-        ),
+        lambda url, **kwargs: (_ for _ in ()).throw(error),
     )
     monkeypatch.setattr(
         main.QMessageBox,
         "critical",
         lambda *args, **kwargs: critical_calls.append((args, kwargs)),
     )
-    monkeypatch.setattr(
-        "builtins.exit", lambda code=0: (_ for _ in ()).throw(SystemExit(code))
-    )
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as raised:
         main.check_internet()
+    assert raised.value.code == 1
     assert critical_calls
 
 

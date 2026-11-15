@@ -16,10 +16,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import requests
-from PyQt6.QtGui import QFont, QFontDatabase
+from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtGui import QFont, QFontDatabase, QPixmap
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from jparty.app.config import PORT, debug_mode_enabled, set_debug_mode
+from jparty.app.config import debug_mode_enabled, set_debug_mode
 from jparty.app.logging import install_crash_reporting
 from jparty.app.paths import SAVED_GAMES
 from jparty.domain.game_engine import Game
@@ -109,8 +110,8 @@ def check_internet() -> None:
     """
     try:
         requests.get("http://www.j-archive.com/", timeout=REQUEST_TIMEOUT_SECONDS)
-    except requests.exceptions.ConnectionError:
-        logging.error("Connection Error")
+    except requests.RequestException:
+        logging.error("Cannot reach J-Archive", exc_info=True)
         QMessageBox.critical(
             None,
             "Cannot connect!",
@@ -118,23 +119,7 @@ def check_internet() -> None:
             buttons=QMessageBox.StandardButton.Abort,
             defaultButton=QMessageBox.StandardButton.Abort,
         )
-        exit(1)
-
-
-def permission_error() -> None:
-    """Show an error dialog for a socket binding permission failure.
-
-    Returns:
-        ``None``.
-    """
-    logging.error(f"Cannot access port {PORT}")
-    QMessageBox.critical(
-        None,
-        "Permission Error",
-        f"JParty encountered a permissions error when trying to listen on port {PORT}.",
-        buttons=QMessageBox.StandardButton.Abort,
-        defaultButton=QMessageBox.StandardButton.Abort,
-    )
+        sys.exit(1)
 
 
 def audio_error() -> None:
@@ -215,6 +200,8 @@ def download_games(inputs: object, delay_seconds: object = 5) -> object:
 
     Returns:
         A list of game ids that were downloaded and written to the local cache.
+        An id that fails to download or parse is skipped, and the rest are
+        still tried.
     """
     downloaded = []
     for game_id in expand_game_id_inputs(inputs):
@@ -223,7 +210,13 @@ def download_games(inputs: object, delay_seconds: object = 5) -> object:
         if saved_path.exists():
             print("Game already saved")
             continue
-        game_html = get_game_html(game_id)
+        try:
+            game_html = get_game_html(game_id)
+        except requests.RequestException as exc:
+            # One bad id, such as a J-Archive HTTP error, must not stop the batch.
+            logging.error("Could not download game %s", game_id, exc_info=True)
+            print(f"Skipping {game_id}: could not download it ({exc})")
+            continue
         game_obj = process_game_board_from_html(game_html, game_id)
         if game_obj is None:
             print(f"Skipping {game_id}: downloaded game is invalid or incomplete")
@@ -274,7 +267,7 @@ def build_parser() -> object:
     )
     self_check_parser = subparsers.add_parser(
         "self-check",
-        help="check sounds, QR code, charts, and assets without opening windows",
+        help="check package metadata, assets, sounds, and the QR code without opening windows",
     )
     self_check_parser.add_argument(
         "--report",
@@ -357,6 +350,28 @@ def load_summary_from_game_state_directory(game_state_directory: object) -> obje
     return build_end_game_summary(summary_game)
 
 
+def build_summary_image_widget(summary: object) -> EndGameSummaryDisplay:
+    """Build the summary widget at the exact ``jparty summary`` image size.
+
+    The widget is never placed on a real screen. A visible window is limited
+    to the screen's free area, so on a laptop screen, or with Windows display
+    scaling, a 1920x1080 window would be squeezed smaller and the Game Stats
+    values would wrap out of sight.
+
+    Args:
+        summary: ``EndGameSummary`` payload to show.
+
+    Returns:
+        The laid-out summary widget, sized to ``SUMMARY_IMAGE_SIZE``.
+    """
+    widget = EndGameSummaryDisplay(summary)
+    widget.hide()
+    widget.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    widget.setFixedSize(*SUMMARY_IMAGE_SIZE)
+    widget.show()
+    return widget
+
+
 def render_summary_image(summary: object, output_file: object) -> Path:
     """Render an end-game summary payload to an image file.
 
@@ -380,12 +395,15 @@ def render_summary_image(summary: object, output_file: object) -> Path:
         QFontDatabase.addApplicationFont(resource_path("ITC_ Korinna Normal.ttf"))
     output_path = Path(output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    widget = EndGameSummaryDisplay(summary)
-    widget.resize(*SUMMARY_IMAGE_SIZE)
-    widget.show()
+    widget = build_summary_image_widget(summary)
     app.processEvents()
-    pixmap = widget.grab()
+    # Paint into a pixmap of exactly the image size. ``grab()`` would scale by
+    # the screen's device pixel ratio, giving an oddly sized image.
+    pixmap = QPixmap(QSize(*SUMMARY_IMAGE_SIZE))
+    pixmap.setDevicePixelRatio(1.0)
+    widget.render(pixmap)
     widget.close()
+    widget.deleteLater()
     if not pixmap.save(str(output_path)):
         raise ValueError(f"Could not save summary image to {output_path}")
     return output_path
@@ -429,17 +447,13 @@ def launch_gui() -> None:
     game = Game()
     socket_controller = BuzzerController(game)
     game.setBuzzerController(socket_controller)
-    try:
-        socket_controller.start()
-    except PermissionError:
-        permission_error()
-        exit(1)
+    socket_controller.start()
     main_window = DisplayWindow(game)
     host_window = HostDisplayWindow(game)
     game.setDisplays(host_window, main_window)
     if not has_audio_output():
         audio_error()
-        exit(1)
+        sys.exit(1)
     game.begin()
     song_player = game.song_player
     r = 1

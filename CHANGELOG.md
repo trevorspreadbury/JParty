@@ -52,6 +52,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Python 3.11 or newer is required (#82).
 - PyInstaller moved to a `build` extra, `requirements.txt` was removed, and
   `environment.yml` installs from `pyproject.toml` (#75, #83).
+- `JPARTY_DATA_DIR` now wins over `DATA_DIR` when both are set, and a
+  relative data folder in `.env` is found next to the `.env` file instead
+  of in whatever folder JParty was started from.
 
 ### Fixed
 - Clicking a podium in the lobby no longer changes a score. Before Start this
@@ -86,6 +89,22 @@ and this project follows [Semantic Versioning](https://semver.org/).
   already answered no longer gets a rebound race. A race is credited to the
   player who won the buzz, even if the host later changes that player's
   ruling to "no answer".
+- When the Wayback Machine rate-limits JParty (HTTP 429) or sends a page that
+  isn't a game, the game is now loaded straight from J-Archive. Before, every
+  game that wasn't already saved failed to load. Error pages are no longer
+  kept in memory, and only snapshots J-Archive served successfully are used.
+- Google Sheets games no longer lose or shift rows at random, and a line
+  break inside a cell is kept. A Sheets error page is reported as an error
+  instead of being read as a game.
+- The `jparty summary` image is always 1920x1080 and shows every Game Stats
+  value. On a smaller or scaled screen the stats wrapped and their numbers
+  were cut off, and the graph's "Score" label overlapped a tick label.
+- The end-of-game summary shows its "Game Summary" title again, and negative
+  amounts read `-$200` instead of `$-200`.
+- A slow J-Archive at startup shows the "Cannot connect" message instead of
+  the crash dialog.
+- A J-Archive clue with no recorded response loads with a blank response
+  instead of failing the whole game.
 - Closing JParty during a clue or Final now exits at once. A cancelled clue
   timer kept the app, and the buzzer server's port, running for up to 31 s,
   so a quick relaunch moved to the next port (#115).
@@ -199,6 +218,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   (#120).
 
 ### Removed
+- Unused code: the `jparty.services.persistence` re-export module, the
+  unused Google Sheets text parser, and an unused in-memory copy of cached
+  game pages.
 - The crash dialog no longer offers to email a report. It shows the error and
   where the log file is instead (#109).
 - The unused matplotlib score graph, the `game_scores` folder and the
