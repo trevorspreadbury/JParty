@@ -5,6 +5,7 @@ game, plus the QR-code display shown on the audience screen so players can join
 the buzzer web app.
 """
 
+import itertools
 import logging
 from functools import partial
 from pathlib import Path
@@ -32,20 +33,20 @@ from PyQt6.QtWidgets import (
 from jparty import __version__ as version
 from jparty.app.helptext import helpmsg
 from jparty.app.paths import GAME_STATES_DIR
-from jparty.domain.models import FinalBoard, GameData
+from jparty.domain.models import GameData
 from jparty.services.game_loader import (
+    QUESTION_INDEX_PART_COUNT,
     RANDOM_GAME_MAX_ATTEMPTS,
-    clone_round,
+    advanced_standard_board_selection,
     compose_game_from_resolved_board_selections,
     default_board_row_values,
+    describe_source_round,
+    final_board_selection,
     find_random_game,
     get_game,
     get_random_game,
-    normalize_standard_board_daily_doubles,
-    original_board_row_values,
+    original_board_selection,
     round_matches_board_type,
-    select_advanced_daily_double_indices,
-    standard_board_daily_double_indices,
 )
 from jparty.services.question_media import (
     detect_question_media,
@@ -54,7 +55,7 @@ from jparty.services.question_media import (
     local_media_questions,
 )
 from jparty.ui.styles import WINDOWPAL
-from jparty.ui.welcome_loader import WelcomeLoader
+from jparty.ui.welcome_loader import LatestRequest, WelcomeLoader
 from jparty.ui.welcome_presenter import WelcomePresenter
 from jparty.ui.widgets.common import (
     DynamicButton,
@@ -86,12 +87,6 @@ QLabel {
 }
 """
 
-STANDARD_ROUND_LABELS = [
-    "Jeopardy!",
-    "Double Jeopardy!",
-    "Triple Jeopardy!",
-]
-
 MISSING_DAILY_DOUBLE_WARNING = "CRITICAL: Missing Daily Double"
 ADVANCED_BOARD_SLOT_COUNT_MIN = 1
 ADVANCED_BOARD_SLOT_COUNT_MAX = 5
@@ -102,12 +97,81 @@ ADVANCED_DAILY_DOUBLE_COUNT_MAX = 6
 ADVANCED_ROW_DEBOUNCE_MS = 2000
 # Random games a row's Random button tries before giving up.
 ADVANCED_RANDOM_MAX_ATTEMPTS = RANDOM_GAME_MAX_ATTEMPTS
-QUESTION_INDEX_PART_COUNT = 2
 
 
 def _is_playable_game_data(data: object) -> bool:
     """Return whether loaded game data has at least one playable round."""
     return data is not None and bool(getattr(data, "rounds", None))
+
+
+def find_random_game_with_media(
+    accept: object, is_cancelled: object, max_attempts: int
+) -> tuple[str, object, object]:
+    """Find a random game and its local media status, on a worker thread.
+
+    Both Random buttons use this. It never touches widgets.
+
+    Args:
+        accept: Returns whether a loaded game can be used.
+        is_cancelled: Returns ``True`` once a newer request replaced this one.
+        max_attempts: Most games to try.
+
+    Returns:
+        ``(game_id, data, media_status)``, or ``("", None, None)`` when every
+        try failed or the search was cancelled.
+    """
+    game_id, data = find_random_game(
+        accept,
+        max_attempts=max_attempts,
+        is_cancelled=is_cancelled,
+        pick_game_id=get_random_game,
+        load_game=get_game,
+    )
+    media_status = detect_question_media(game_id) if game_id else None
+    return game_id, data, media_status
+
+
+def random_game_failure_text(wanted: str, max_attempts: int) -> str:
+    """Return the message shown when Random found no usable game.
+
+    Args:
+        wanted: What the game had to have, such as ``"playable random game"``.
+        max_attempts: How many games were tried.
+
+    Returns:
+        The message.
+    """
+    return f"Could not find a {wanted} after {max_attempts} tries. Try again."
+
+
+def game_warning_lines(
+    data: object, expected_daily_double_counts: list[int] | None = None
+) -> list[str]:
+    """Return the missing-clue warnings for a game shown on the welcome screen.
+
+    The regular summary, each advanced row and the advanced summary all use
+    this, so the warnings read the same everywhere.
+
+    Args:
+        data: Game, or rounds of one, to check.
+        expected_daily_double_counts: Daily Doubles each standard round should
+            have, or ``None`` for the regular-game rule.
+
+    Returns:
+        Zero or more warning lines.
+    """
+    lines = []
+    missing_question_count = getattr(data, "missing_question_count", lambda: 0)()
+    if missing_question_count:
+        lines.append(
+            f"WARNING: Missing {missing_question_count} question"
+            f"{'' if missing_question_count == 1 else 's'}"
+        )
+    if getattr(data, "has_missing_daily_double", lambda *_: False)(
+        expected_daily_double_counts
+    ):
+        lines.append(MISSING_DAILY_DOUBLE_WARNING)
+    return lines
 
 
 class Image(qrcode.image.base.BaseImage):
@@ -257,7 +321,9 @@ class Welcome(StartWidget):
         self.resume_path = None
         self._base_summary_text = ""
         self._loading_summary = False
-        self._summary_request_id = 0
+        # Newest single-game load (typed id, Random, Load Saved). Results
+        # from older requests are dropped.
+        self._summary_request = LatestRequest()
         # Request id of a reload started by a media import, or ``None``.
         self._media_reload_request_id = None
         # Shown in the summary after a failed media reload or Random kept the
@@ -270,8 +336,9 @@ class Welcome(StartWidget):
         self._advanced_rows = []
         self._advanced_game_cache = {}
         self._advanced_media_status_cache = {}
-        # Shared by all rows, so a result can never match a rebuilt row.
-        self._advanced_request_counter = 0
+        # Each row tracks its newest load, with ids from this one counter so
+        # a result can never match a rebuilt row.
+        self._advanced_request_ids = itertools.count(1)
         self._advanced_mode_summary_text = ""
         self._resetting_advanced_configuration = False
         main_layout = QVBoxLayout()
@@ -606,11 +673,11 @@ QCheckBox {{
         Returns:
             The new request id.
         """
-        self._summary_request_id += 1
+        request_id = self._summary_request.begin()
         self._media_reload_warning = ""
         self._loading_summary = loading
         self.presenter.set_loading(loading)
-        return self._summary_request_id
+        return request_id
 
     def _load_random_game(self, request_id: int) -> None:
         """Pick and load a random game on a worker thread.
@@ -626,19 +693,18 @@ QCheckBox {{
         Returns:
             ``None``.
         """
-        game_id, data = find_random_game(
+        game_id, data, media_status = find_random_game_with_media(
             _is_playable_game_data,
-            is_cancelled=lambda: request_id != self._summary_request_id,
-            pick_game_id=get_random_game,
-            load_game=get_game,
+            lambda: not self._summary_request.is_current(request_id),
+            RANDOM_GAME_MAX_ATTEMPTS,
         )
         error = None
         if not game_id:
             error = LookupError(
-                f"Could not find a playable random game after "
-                f"{RANDOM_GAME_MAX_ATTEMPTS} tries. Try again."
+                random_game_failure_text(
+                    "playable random game", RANDOM_GAME_MAX_ATTEMPTS
+                )
             )
-        media_status = detect_question_media(game_id) if game_id else None
         self.summary_load_result_trigger.emit(
             request_id, game_id, data, error, media_status, True
         )
@@ -731,7 +797,7 @@ QCheckBox {{
         Returns:
             ``None``.
         """
-        if request_id != self._summary_request_id:
+        if not self._summary_request.is_current(request_id):
             return
         if self.advanced_options_checkbox.isChecked():
             return
@@ -885,22 +951,10 @@ QCheckBox {{
         if not summary_data:
             return ""
         summary_lines = [summary_data.date, summary_data.comments]
-        missing_question_count = getattr(
-            summary_data, "missing_question_count", lambda: 0
-        )()
-        if missing_question_count:
-            summary_lines.extend(
-                [
-                    "",
-                    f"WARNING: Missing {missing_question_count} question"
-                    f"{'' if missing_question_count == 1 else 's'}",
-                ]
-            )
-        has_missing_daily_double = getattr(
-            summary_data, "has_missing_daily_double", lambda *_: False
-        )(self._summary_daily_double_counts())
-        if has_missing_daily_double:
-            summary_lines.extend(["", MISSING_DAILY_DOUBLE_WARNING])
+        for warning in game_warning_lines(
+            summary_data, self._summary_daily_double_counts()
+        ):
+            summary_lines.extend(["", warning])
         media_status = self.question_media_summary_text()
         if media_status:
             summary_lines.extend(["", media_status])
@@ -1030,6 +1084,11 @@ QCheckBox {{
             if self._resetting_advanced_configuration
             else self.snapshot_advanced_rows()
         )
+        for old_row in self._advanced_rows:
+            # A row Random's worker checks its own row's request id, so this
+            # stops it before its next fetch.
+            old_row["load_timer"].stop()
+            old_row["request"].cancel()
         while self.advanced_rows_layout.count():
             item = self.advanced_rows_layout.takeAt(0)
             widget = item.widget()
@@ -1061,14 +1120,6 @@ QCheckBox {{
         snapshots = {"standard": [], "final": []}
         for row in self._advanced_rows:
             board_type = row["board_type"]
-            selected_round_index = next(
-                (
-                    int(radio.property("source_round_index"))
-                    for radio in row["board_radios"]
-                    if radio.isChecked()
-                ),
-                None,
-            )
             snapshots.setdefault(board_type, []).append(
                 {
                     "game_id": row["gameid_edit"].text(),
@@ -1080,18 +1131,12 @@ QCheckBox {{
                             row["value_edits"], row["default_values"], strict=False
                         )
                     ],
-                    "selected_round_index": selected_round_index,
                     "daily_double_count": (
                         row["daily_double_spinbox"].value()
                         if row.get("daily_double_spinbox") is not None
                         else None
                     ),
-                    "daily_double_indices": [
-                        list(index) for index in row.get("daily_double_indices", [])
-                    ],
-                    "daily_double_source_round_index": row.get(
-                        "daily_double_source_round_index"
-                    ),
+                    **self.advanced_row_selection(row),
                 }
             )
         return snapshots
@@ -1132,14 +1177,7 @@ QCheckBox {{
             A dictionary that ``reload_advanced_row`` can re-apply.
         """
         return {
-            "selected_round_index": next(
-                (
-                    int(radio.property("source_round_index"))
-                    for radio in row["board_radios"]
-                    if radio.isChecked()
-                ),
-                None,
-            ),
+            "selected_round_index": self._selected_source_round(row),
             "daily_double_indices": [
                 list(index) for index in row.get("daily_double_indices", [])
             ],
@@ -1147,6 +1185,25 @@ QCheckBox {{
                 "daily_double_source_round_index"
             ),
         }
+
+    def _selected_source_round(self, row: dict) -> int | None:
+        """Return the source round index picked in one advanced row.
+
+        Args:
+            row: Advanced row state.
+
+        Returns:
+            Index into the row's source game rounds, or ``None`` when no
+            round is picked (or the row has not loaded).
+        """
+        return next(
+            (
+                int(radio.property("source_round_index"))
+                for radio in row["board_radios"]
+                if radio.isChecked()
+            ),
+            None,
+        )
 
     def reload_advanced_row(self, row_index: int, selection: object = None) -> None:
         """Load one row's source game again on a worker thread.
@@ -1167,6 +1224,9 @@ QCheckBox {{
         self._clear_advanced_row_loaded_state(row)
         row["pending_selection"] = selection
         self.load_advanced_row_async(row_index)
+        # The row is empty until its load finishes, so Start must turn off
+        # now rather than wait for the next sync.
+        self.sync_active_configuration()
 
     def clear_advanced_configuration(self) -> None:
         """Discard advanced configuration and reset the welcome screen."""
@@ -1282,11 +1342,14 @@ QCheckBox {{
             "board_radio_group": board_radio_group,
             "board_radios": [],
             "load_timer": load_timer,
-            "load_request_id": 0,
+            "request": LatestRequest(self._advanced_request_ids),
             "loading": False,
             "status_label": status_label,
             "loaded_data": None,
             "pending_selection": None,
+            # Note kept under the row's summary until the row changes, such
+            # as "Kept game X" after a failed Random.
+            "notice": "",
         }
         row_index = row["index"]
         load_timer.timeout.connect(partial(self.load_advanced_row_async, row_index))
@@ -1314,8 +1377,9 @@ QCheckBox {{
         row = self._advanced_rows[row_index]
         row["load_timer"].stop()
         self._clear_advanced_row_loaded_state(row)
+        row["notice"] = ""
         # Typing drops any load in flight, including a row Random.
-        self._next_advanced_request_id(row)
+        row["request"].cancel()
         if not row["gameid_edit"].text().strip():
             row["status_label"].setText("Enter a source game id.")
             self.sync_active_configuration()
@@ -1343,7 +1407,7 @@ QCheckBox {{
             row["status_label"].setText("Enter a source game id.")
             self.sync_active_configuration()
             return
-        request_id = self._next_advanced_request_id(row)
+        request_id = row["request"].begin()
         row["loading"] = True
         row["status_label"].setText("Loading...")
         if (
@@ -1372,19 +1436,6 @@ QCheckBox {{
             )
 
         self.loader.run_async(_load)
-
-    def _next_advanced_request_id(self, row: dict) -> int:
-        """Invalidate any load in flight for ``row`` and return a new request id.
-
-        Args:
-            row: Advanced row state.
-
-        Returns:
-            The row's new request id.
-        """
-        self._advanced_request_counter += 1
-        row["load_request_id"] = self._advanced_request_counter
-        return row["load_request_id"]
 
     def _cache_advanced_game(
         self, game_id: str, data: object, media_status: object
@@ -1418,7 +1469,7 @@ QCheckBox {{
         if not 0 <= row_index < len(self._advanced_rows):
             return
         row = self._advanced_rows[row_index]
-        if request_id != row["load_request_id"]:
+        if not row["request"].is_current(request_id):
             return
         if str(game_id).strip() != row["gameid_edit"].text().strip():
             return
@@ -1434,6 +1485,8 @@ QCheckBox {{
         Skips the debounce. The load runs on a worker thread unless the game
         is already cached.
         """
+        if 0 <= row_index < len(self._advanced_rows):
+            self._advanced_rows[row_index]["notice"] = ""
         self.reload_advanced_row(row_index)
 
     def _apply_advanced_row_loaded_data(
@@ -1446,6 +1499,7 @@ QCheckBox {{
         pending_selection = row.get("pending_selection") or {}
         row["pending_selection"] = None
         if data is None:
+            row["notice"] = ""
             row["status_label"].setText(
                 "\n".join(
                     [
@@ -1462,6 +1516,7 @@ QCheckBox {{
             if round_matches_board_type(round_data, row["board_type"])
         ]
         if not matching_rounds:
+            row["notice"] = ""
             expected_label = self.expected_board_type_label(row["board_type"])
             row["status_label"].setText(
                 "\n".join(
@@ -1492,9 +1547,9 @@ QCheckBox {{
             row["daily_double_source_round_index"] = pending_selection.get(
                 "daily_double_source_round_index"
             )
-        for radio_index, (round_index, round_data) in enumerate(matching_rounds):
+        for radio_index, (round_index, _) in enumerate(matching_rounds):
             radio = QRadioButton(
-                self.describe_round_for_data(data, round_data, round_index),
+                describe_source_round(data, round_index),
                 row["board_radio_widget"],
             )
             radio.setProperty("source_round_index", round_index)
@@ -1503,16 +1558,14 @@ QCheckBox {{
             row["board_radio_group"].addButton(radio)
             row["board_radio_layout"].addWidget(radio)
             row["board_radios"].append(radio)
-        if matching_rounds:
-            selected_round_index = matching_rounds[default_selection][0]
-            row["status_label"].setText(
-                self.build_source_game_summary_text(
-                    game_id,
-                    data,
-                    media_status,
-                    selected_round_index=selected_round_index,
-                )
+        row["status_label"].setText(
+            self.build_source_game_summary_text(
+                game_id,
+                data,
+                media_status,
+                selected_round_index=matching_rounds[default_selection][0],
             )
+        )
         self.resizeEvent(None)
         self.sync_active_configuration()
 
@@ -1535,26 +1588,25 @@ QCheckBox {{
             else None
         )
         self._clear_advanced_row_loaded_state(row)
-        request_id = self._next_advanced_request_id(row)
+        row["notice"] = ""
+        request = row["request"]
+        request_id = request.begin()
         row["loading"] = True
         row["status_label"].setText("Loading...")
         self.sync_active_configuration()
         board_type = row["board_type"]
 
         def _load() -> None:
-            game_id, data = find_random_game(
+            game_id, data, media_status = find_random_game_with_media(
                 lambda candidate: any(
                     round_matches_board_type(round_data, board_type)
                     for round_data in candidate.rounds
                 ),
-                max_attempts=ADVANCED_RANDOM_MAX_ATTEMPTS,
-                is_cancelled=lambda: request_id != row["load_request_id"],
-                pick_game_id=get_random_game,
-                load_game=get_game,
+                lambda: not request.is_current(request_id),
+                ADVANCED_RANDOM_MAX_ATTEMPTS,
             )
-            if request_id != row["load_request_id"]:
+            if not request.is_current(request_id):
                 return
-            media_status = detect_question_media(game_id) if game_id else None
             self.advanced_row_random_result_trigger.emit(
                 row_index, request_id, game_id, data, media_status
             )
@@ -1584,16 +1636,15 @@ QCheckBox {{
         if not 0 <= row_index < len(self._advanced_rows):
             return
         row = self._advanced_rows[row_index]
-        if request_id != row["load_request_id"]:
+        if not row["request"].is_current(request_id):
             return
         row["loading"] = False
         fallback = row.pop("random_fallback", None)
         game_id = str(game_id).strip()
         if not game_id:
             expected_label = self.expected_board_type_label(row["board_type"])
-            failure_text = (
-                f"Could not find a random game with a {expected_label} after "
-                f"{ADVANCED_RANDOM_MAX_ATTEMPTS} tries. Try again."
+            failure_text = random_game_failure_text(
+                f"random game with a {expected_label}", ADVANCED_RANDOM_MAX_ATTEMPTS
             )
             if (
                 fallback is not None
@@ -1603,16 +1654,10 @@ QCheckBox {{
                 # round and Daily Doubles. It is usually cached, so this is
                 # immediate; otherwise it reloads on the worker thread.
                 previous_game_id, selection = fallback
+                # The note stays under the row's summary until the row
+                # changes, so later syncs don't wipe it.
+                row["notice"] = f"{failure_text} Kept game {previous_game_id}."
                 self.reload_advanced_row(row_index, selection)
-                if not row["loading"]:
-                    row["status_label"].setText(
-                        "\n\n".join(
-                            [
-                                row["status_label"].text(),
-                                f"{failure_text} Kept game {previous_game_id}.",
-                            ]
-                        )
-                    )
                 return
             row["status_label"].setText(failure_text)
             self.sync_active_configuration()
@@ -1673,49 +1718,6 @@ QCheckBox {{
                 widget.deleteLater()
         row["board_radios"] = []
 
-    def describe_round_for_data(
-        self, game_data: object, round_data: object, index: int
-    ) -> str:
-        """Return a user-facing label for a round in an arbitrary game payload."""
-        if isinstance(round_data, FinalBoard):
-            return "Final Jeopardy!"
-        standard_round_index = sum(
-            1
-            for prior_round in game_data.rounds[:index]
-            if not isinstance(prior_round, FinalBoard)
-        )
-        if standard_round_index < len(STANDARD_ROUND_LABELS):
-            return STANDARD_ROUND_LABELS[standard_round_index]
-        return f"Round {standard_round_index + 1}"
-
-    def build_standard_board_selection(
-        self,
-        game_id: str,
-        round_data: object,
-        source_round_index: int,
-        source_round_label: str,
-        row_values: list[int],
-        requested_daily_double_count: int | None = None,
-        existing_daily_double_indices: object = None,
-    ) -> dict:
-        """Return one standard-board selection with stable Daily Double coords."""
-        round_copy = clone_round(round_data)
-        normalize_standard_board_daily_doubles(
-            round_copy,
-            requested_count=requested_daily_double_count,
-            daily_double_indices=existing_daily_double_indices,
-        )
-        daily_double_indices = standard_board_daily_double_indices(round_copy)
-        return {
-            "game_id": game_id,
-            "source_round_index": int(source_round_index),
-            "source_round_label": source_round_label,
-            "board_type": "standard",
-            "row_values": list(row_values),
-            "daily_double_count": len(daily_double_indices),
-            "daily_double_indices": daily_double_indices,
-        }
-
     def sync_active_configuration(self) -> None:
         """Push either the regular or advanced startup config into the game."""
         if self.advanced_options_checkbox.isChecked():
@@ -1747,37 +1749,14 @@ QCheckBox {{
         source_data = self.game.data
         board_selections = []
         resolved_boards = []
-        for round_index in selected_indices:
-            if not 0 <= int(round_index) < len(source_data.rounds):
+        for round_index in (int(index) for index in selected_indices):
+            if not 0 <= round_index < len(source_data.rounds):
                 continue
-            round_data = source_data.rounds[int(round_index)]
-            row_values = original_board_row_values(source_data, int(round_index))
-            if isinstance(round_data, FinalBoard):
-                selection = {
-                    "game_id": game_id,
-                    "source_round_index": int(round_index),
-                    "source_round_label": self.describe_round(
-                        round_data, int(round_index)
-                    ),
-                    "board_type": "final",
-                    "row_values": row_values,
-                }
-            else:
-                selection = self.build_standard_board_selection(
-                    game_id=game_id,
-                    round_data=round_data,
-                    source_round_index=int(round_index),
-                    source_round_label=self.describe_round(
-                        round_data, int(round_index)
-                    ),
-                    row_values=row_values,
-                    requested_daily_double_count=round_data.daily_double_count(),
-                    existing_daily_double_indices=standard_board_daily_double_indices(
-                        round_data
-                    ),
-                )
+            selection = original_board_selection(game_id, source_data, round_index)
             board_selections.append(selection)
-            resolved_boards.append((selection, source_data, round_data))
+            resolved_boards.append(
+                (selection, source_data, source_data.rounds[round_index])
+            )
         if hasattr(self.game, "set_board_selection_configs"):
             self.game.set_board_selection_configs(board_selections)
         if hasattr(self.game, "set_composed_game_data"):
@@ -1797,14 +1776,7 @@ QCheckBox {{
             game_id = row["gameid_edit"].text().strip()
             if not game_id or row["loaded_data"] is None:
                 continue
-            selected_round_index = next(
-                (
-                    int(radio.property("source_round_index"))
-                    for radio in row["board_radios"]
-                    if radio.isChecked()
-                ),
-                None,
-            )
+            selected_round_index = self._selected_source_round(row)
             if selected_round_index is None:
                 continue
             try:
@@ -1814,61 +1786,52 @@ QCheckBox {{
                     "Point values must be whole numbers for this board slot."
                 )
                 continue
-            source_round_label = next(
-                (radio.text() for radio in row["board_radios"] if radio.isChecked()),
-                "",
+            source_round_label = describe_source_round(
+                row["loaded_data"], selected_round_index
             )
+            source_round = row["loaded_data"].rounds[selected_round_index]
             media_status = self._advanced_media_status_cache.get(game_id)
             row["status_label"].setText(
-                self.build_source_game_summary_text(
-                    game_id,
-                    row["loaded_data"],
-                    media_status,
-                    selected_round_index=selected_round_index,
+                "\n\n".join(
+                    text
+                    for text in [
+                        self.build_source_game_summary_text(
+                            game_id,
+                            row["loaded_data"],
+                            media_status,
+                            selected_round_index=selected_round_index,
+                        ),
+                        row["notice"],
+                    ]
+                    if text
                 )
             )
             if row["board_type"] == "final":
-                selection = {
-                    "game_id": game_id,
-                    "source_round_index": selected_round_index,
-                    "source_round_label": source_round_label,
-                    "board_type": row["board_type"],
-                    "row_values": row_values,
-                }
-                board_selections.append(selection)
-                resolved_boards.append(
-                    (
-                        selection,
-                        row["loaded_data"],
-                        row["loaded_data"].rounds[selected_round_index],
-                    )
+                selection = final_board_selection(
+                    game_id, selected_round_index, source_round_label
                 )
-                continue
-            source_round = row["loaded_data"].rounds[selected_round_index]
-            existing_daily_double_indices = (
-                row.get("daily_double_indices")
-                if row.get("daily_double_source_round_index") == selected_round_index
-                else None
-            )
-            baseline_daily_double_indices = select_advanced_daily_double_indices(
-                source_round,
-                row["daily_double_spinbox"].value(),
-                existing_daily_double_indices=existing_daily_double_indices,
-            )
-            selection = self.build_standard_board_selection(
-                game_id=game_id,
-                round_data=source_round,
-                source_round_index=selected_round_index,
-                source_round_label=source_round_label,
-                row_values=row_values,
-                requested_daily_double_count=row["daily_double_spinbox"].value(),
-                existing_daily_double_indices=baseline_daily_double_indices,
-            )
-            row["daily_double_indices"] = [
-                tuple(index) for index in selection.get("daily_double_indices", [])
-            ]
-            row["daily_double_source_round_index"] = selected_round_index
-            requested_daily_double_counts.append(row["daily_double_spinbox"].value())
+            else:
+                existing_daily_double_indices = (
+                    row.get("daily_double_indices")
+                    if row.get("daily_double_source_round_index")
+                    == selected_round_index
+                    else None
+                )
+                requested_daily_double_count = row["daily_double_spinbox"].value()
+                selection = advanced_standard_board_selection(
+                    game_id,
+                    source_round,
+                    selected_round_index,
+                    source_round_label,
+                    row_values,
+                    requested_daily_double_count,
+                    existing_daily_double_indices=existing_daily_double_indices,
+                )
+                row["daily_double_indices"] = [
+                    tuple(index) for index in selection["daily_double_indices"]
+                ]
+                row["daily_double_source_round_index"] = selected_round_index
+                requested_daily_double_counts.append(requested_daily_double_count)
             board_selections.append(selection)
             resolved_boards.append((selection, row["loaded_data"], source_round))
         configuration_complete = len(board_selections) == len(self._advanced_rows)
@@ -1881,12 +1844,18 @@ QCheckBox {{
             self.game.set_session_game_id(session_game_id)
         if hasattr(self.game, "set_selected_round_indices"):
             self.game.set_selected_round_indices(list(range(len(board_selections))))
-        composed_data = compose_game_from_resolved_board_selections(resolved_boards)
+        # A partial board set is never a playable game, so ``game.data`` stays
+        # empty until every row is filled.
+        composed_data = (
+            compose_game_from_resolved_board_selections(resolved_boards)
+            if configuration_complete
+            else None
+        )
         self.game.data = composed_data
         if hasattr(self.game, "set_composed_game_data"):
             self.game.set_composed_game_data(
                 board_selections if configuration_complete else None,
-                composed_data if configuration_complete else None,
+                composed_data,
             )
         if configuration_complete and composed_data is not None:
             self._advanced_mode_summary_text = self.build_advanced_summary_text(
@@ -1928,21 +1897,13 @@ QCheckBox {{
                 [data.rounds[selected_round_index]], data.date, data.comments
             )
         summary_lines = [f"{game_id}: {summary_data.date}", str(summary_data.comments)]
-        missing_question_count = getattr(
-            summary_data, "missing_question_count", lambda: 0
-        )()
-        if missing_question_count:
-            summary_lines.append(f"Missing questions: {missing_question_count}")
         expected_daily_doubles = None
         if summary_data is not data:
             # One round picked from the source: hold it to its own place there.
             expected_daily_doubles = data.source_daily_double_counts(
                 [selected_round_index]
             )
-        if getattr(summary_data, "has_missing_daily_double", lambda *_: False)(
-            expected_daily_doubles
-        ):
-            summary_lines.append(MISSING_DAILY_DOUBLE_WARNING)
+        summary_lines.extend(game_warning_lines(summary_data, expected_daily_doubles))
         if media_status is not None:
             summary_lines.append(media_status.summary_text())
         return "\n".join(line for line in summary_lines if line)
@@ -1987,19 +1948,8 @@ QCheckBox {{
                 f"{board_label}: {selection.get('game_id')} - {selection.get('source_round_label')}"
                 + (f" ({values}{suffix})" if values or suffix else "")
             )
-        missing_question_count = getattr(
-            composed_data, "missing_question_count", lambda: 0
-        )()
-        if missing_question_count:
-            summary_lines.extend(
-                [
-                    "",
-                    f"WARNING: Missing {missing_question_count} question"
-                    f"{'' if missing_question_count == 1 else 's'}",
-                ]
-            )
-        if composed_data.has_missing_daily_double(requested_daily_double_counts):
-            summary_lines.extend(["", MISSING_DAILY_DOUBLE_WARNING])
+        for warning in game_warning_lines(composed_data, requested_daily_double_counts):
+            summary_lines.extend(["", warning])
         return "\n".join(str(line) for line in summary_lines if line is not None)
 
     def start_debounce_timer(self, text: object) -> None:
@@ -2046,8 +1996,22 @@ QCheckBox {{
         self.loader.run_async(partial(self._load_summary_game, request_id, game_id))
 
     def on_start_clicked(self, checked: object = False) -> None:
-        """Start the game or open the local-media preview when available."""
+        """Start the game or open the local-media preview when available.
+
+        The configuration is synced again first, and nothing happens unless
+        Start is enabled for the current mode afterwards. So a click that
+        lands while a row reloads, a load is pending, or a point value is
+        invalid can't start a partial game.
+        """
         self.sync_active_configuration()
+        self.check_start()
+        active_start_button = (
+            self.advanced_start_button
+            if self.advanced_options_checkbox.isChecked()
+            else self.start_button
+        )
+        if not active_start_button.isEnabled():
+            return
         if self.resume_path is None:
             preview_questions = self.preview_questions()
             if preview_questions and hasattr(
@@ -2077,9 +2041,8 @@ QCheckBox {{
             QMessageBox.warning(self, "Question Media", str(e))
             return
         self._question_media_status = detect_question_media(game_id)
-        if (
-            self._loading_summary
-            and self._media_reload_request_id != self._summary_request_id
+        if self._loading_summary and not self._summary_request.is_current(
+            self._media_reload_request_id
         ):
             # A load (or the debounce before one) is pending, and ``game.data``
             # still holds the previous game. Show only the new media status;
@@ -2190,7 +2153,7 @@ QCheckBox {{
         Returns:
             ``None``.
         """
-        if request_id != self._summary_request_id:
+        if not self._summary_request.is_current(request_id):
             return
         if self.advanced_options_checkbox.isChecked():
             return
@@ -2250,7 +2213,7 @@ QCheckBox {{
         if state.status_text:
             self.summary_label.setText(state.status_text)
         self.start_button.setEnabled(state.start_enabled)
-        self.advanced_start_button.setEnabled(state.advanced_start_enabled)
+        self.advanced_start_button.setEnabled(state.start_enabled)
 
     def restart(self) -> None:
         """Reset the welcome screen to its initial fresh-game state.
@@ -2325,13 +2288,13 @@ QCheckBox {{
         rounds_label.setStyleSheet(ROUNDS_LABEL_STYLE)
         self.rounds_layout.addWidget(rounds_label)
         saved_labels = self.resumed_board_labels()
-        for index, round_data in enumerate(self.game.data.rounds):
+        for index in range(len(self.game.data.rounds)):
             checkbox = QCheckBox("", self.rounds_widget)
             checkbox.setProperty(
                 "round_label",
                 saved_labels[index]
                 if saved_labels
-                else self.describe_round(round_data, index),
+                else describe_source_round(self.game.data, index),
             )
             checkbox.setStyleSheet(ROUND_CHECKBOX_STYLE)
             checkbox.setChecked(index in selected_indices)
@@ -2341,18 +2304,6 @@ QCheckBox {{
             self.round_checkboxes.append(checkbox)
         self.rounds_widget.setVisible(True)
         self.update_selected_rounds()
-
-    def describe_round(self, round_data: object, index: int) -> str:
-        """Return a user-facing label for a game round.
-
-        Args:
-            round_data: Round object being described.
-            index: Zero-based round index within the loaded game data.
-
-        Returns:
-            Human-readable round label for the checkbox UI.
-        """
-        return self.describe_round_for_data(self.game.data, round_data, index)
 
     def resumed_board_labels(self) -> list[str] | None:
         """Return source-round labels for a resumed regular-mode subset save.

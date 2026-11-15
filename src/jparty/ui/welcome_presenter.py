@@ -12,7 +12,6 @@ class WelcomeState:
     summary_text: str = ""
     loading_summary: bool = False
     resume_path: str | None = None
-    regular_game_id: str = ""
     advanced_enabled: bool = False
     selected_rounds: list[int] = field(default_factory=list)
     board_selection_configs: list[dict] = field(default_factory=list)
@@ -20,7 +19,6 @@ class WelcomeState:
     resume_claimed: int = 0
     resume_total: int = 0
     start_enabled: bool = False
-    advanced_start_enabled: bool = False
     status_text: str = ""
 
 
@@ -40,11 +38,6 @@ class WelcomePresenter:
     def set_resume_path(self, resume_path: str | None) -> WelcomeState:
         """Store the current resume path when resuming a saved session."""
         self.state.resume_path = resume_path
-        return self.state
-
-    def set_regular_game_id(self, game_id: str) -> WelcomeState:
-        """Store the current single-game id text input."""
-        self.state.regular_game_id = game_id
         return self.state
 
     def set_advanced_enabled(self, enabled: bool) -> WelcomeState:
@@ -92,8 +85,8 @@ class WelcomePresenter:
             self.state.loading_summary and not self.state.advanced_enabled
         )
         start_enabled = startable and rounds_selected and not regular_load_pending
+        # Only one mode's Start button is shown, so both use this.
         self.state.start_enabled = start_enabled
-        self.state.advanced_start_enabled = start_enabled
 
         status_text = self.state.summary_text
         if self.state.resume_path is not None and status_text:

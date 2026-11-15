@@ -64,7 +64,6 @@ def test_presenter_enables_start_for_complete_advanced_config() -> None:
     state = presenter.sync_from_game()
 
     assert state.start_enabled is True
-    assert state.advanced_start_enabled is True
 
 
 def test_presenter_resume_status_includes_claim_progress() -> None:
@@ -106,4 +105,4 @@ def test_presenter_loading_flag_does_not_block_advanced_start() -> None:
     presenter.set_advanced_enabled(True)
     presenter.set_loading(True)
 
-    assert presenter.sync_from_game().advanced_start_enabled is True
+    assert presenter.sync_from_game().start_enabled is True
