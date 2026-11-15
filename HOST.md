@@ -11,6 +11,7 @@ For the saved-state and clue-history file format, see
 - [Before You Start](#before-you-start)
 - [Welcome Screen Overview](#welcome-screen-overview)
 - [Pre-Game Image Preview](#pre-game-image-preview)
+- [Planning a Tournament](#planning-a-tournament)
 - [Resume Flow](#resume-flow)
 - [Core Game Flow](#core-game-flow)
 - [Editing Scores](#editing-scores)
@@ -145,6 +146,39 @@ That preview screen shows:
 - A `Start Game` button
 
 Use this as a last sanity check before contestants see the board.
+
+## Planning a Tournament
+
+The `Tournament` button at the bottom of the welcome screen opens the
+Tournament Designer. Use it to try bracket shapes before you run a tournament.
+It only plans the bracket; you still start each game from the welcome screen.
+
+Every tournament ends with a three-player Final. With 9 players, three
+Semifinal winners meet in the Final. With more, a first round fills the nine
+Semifinal spots:
+
+- Each game's winner advances. Leftover spots go to wildcards: the
+  highest-scoring players who did not win their game.
+- With `3n + 2` players, `n` regular games are played first, then one chase
+  game. Its two new players advance by winning. The third seat goes to the
+  chaser, the first player who would miss out on a wildcard. A chaser who wins
+  opens one more wildcard spot, but their chase-game score does not count, so
+  other players can still overtake their original score.
+- With `3n + 1` players, there are two chase games, played one after the other.
+
+For larger fields, turn on `Add a second round before the Semifinals`:
+
+- `Semifinal byes`: the top-scoring preliminary winners who skip the second
+  round.
+- `Second-round players`: how many other players advance from the
+  preliminaries. It resets to fill the remaining Semifinal spots with
+  winners whenever you change the byes.
+
+The designer shows each round's games and where every seat comes from, along
+with the total games, how many players get more than one game, and how many
+games the champion plays. Ranges such as `9-10` depend on whether chasers win.
+If the options cannot work (for example, 28 players with no second round), the
+designer explains why.
 
 ## Resume Flow
 

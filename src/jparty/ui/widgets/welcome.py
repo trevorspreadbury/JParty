@@ -63,6 +63,7 @@ from jparty.ui.widgets.common import (
     add_shadow,
     resource_path,
 )
+from jparty.ui.widgets.tournament import TournamentDesigner
 
 ROUND_CHECKBOX_STYLE = """
 QCheckBox {
@@ -486,11 +487,16 @@ class Welcome(StartWidget):
         self.quit_button.clicked.connect(self.game.close)
         self.help_button = DynamicButton("Show help", self)
         self.help_button.clicked.connect(self.show_help)
+        self.tournament_button = DynamicButton("Tournament", self)
+        self.tournament_button.clicked.connect(self.show_tournament_designer)
+        self.tournament_designer = None
         footer_layout = QHBoxLayout()
         footer_layout.addStretch(5)
         footer_layout.addWidget(self.quit_button, 3)
         footer_layout.addStretch(1)
         footer_layout.addWidget(self.help_button, 3)
+        footer_layout.addStretch(1)
+        footer_layout.addWidget(self.tournament_button, 3)
         footer_layout.addStretch(5)
         main_layout.addStretch(3)
         main_layout.addLayout(self.icon_layout, 6)
@@ -537,6 +543,19 @@ class Welcome(StartWidget):
             self,
         )
         msgbox.exec()
+
+    def show_tournament_designer(self) -> None:
+        """Open the tournament bracket designer, reusing it if already open.
+
+        Returns:
+            ``None``.
+        """
+        logging.info("Showing tournament designer")
+        if self.tournament_designer is None:
+            self.tournament_designer = TournamentDesigner(self)
+        self.tournament_designer.show()
+        self.tournament_designer.raise_()
+        self.tournament_designer.activateWindow()
 
     def resizeEvent(self, event: object) -> None:
         """Resize the game-id textbox to match the current layout.
