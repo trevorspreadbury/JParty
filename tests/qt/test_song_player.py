@@ -86,9 +86,63 @@ def test_song_player_loads_every_packaged_clip(fake_player: tuple) -> None:
     """Each clip should point at an existing packaged wav file."""
     _player, clips = fake_player
 
-    assert set(clips) == {"intro.wav", "final.wav", "stumped.wav", "dd.wav"}
+    assert set(clips) == {
+        "intro.wav",
+        "final.wav",
+        "stumped.wav",
+        "dd.wav",
+        "silence.wav",
+    }
     for effect in clips.values():
         assert Path(effect.source.toLocalFile()).is_file()
+
+
+def test_keep_output_awake_loops_silence_until_released(fake_player: tuple) -> None:
+    """The silent keep-awake loop runs forever, survives stop, and ends on release.
+
+    HDMI audio sleeps after a few seconds of silence and swallowed the short
+    triple-stumper cue, so a game keeps the output awake the whole time.
+    """
+    player, clips = fake_player
+    silence = clips["silence.wav"]
+    assert silence.loop_count == INFINITE_LOOPS
+    assert silence.play_calls == 0
+
+    player.keep_output_awake()
+    player.keep_output_awake()
+    player.play(repeat=True)
+    player.stop()
+
+    assert silence.play_calls == 1
+    assert silence.stop_calls == 0
+
+    player.let_output_sleep()
+    player.let_output_sleep()
+
+    assert silence.stop_calls == 1
+
+
+def test_silence_clip_is_silent_and_matches_the_other_clips() -> None:
+    """The keep-awake clip must be truly silent and use the cues' format."""
+    import wave
+
+    data_dir = Path(common.resource_path("silence.wav")).parent
+    with wave.open(str(data_dir / "silence.wav")) as silence:
+        frames = silence.readframes(silence.getnframes())
+        silence_format = (
+            silence.getnchannels(),
+            silence.getsampwidth(),
+            silence.getframerate(),
+        )
+    with wave.open(str(data_dir / "stumped.wav")) as stumped:
+        stumped_format = (
+            stumped.getnchannels(),
+            stumped.getsampwidth(),
+            stumped.getframerate(),
+        )
+
+    assert frames and not any(frames)
+    assert silence_format == stumped_format
 
 
 def test_intro_loops_until_stopped(fake_player: tuple) -> None:
@@ -172,7 +226,7 @@ def test_real_clips_load_without_errors(qapp: object, qtbot: object) -> None:
         for name, effect in vars(player).items()
         if isinstance(effect, QSoundEffect)
     ]
-    assert len(effects) == len(["intro", "final", "stumped", "dd"])
+    assert len(effects) == len(["intro", "final", "stumped", "dd", "silence"])
 
     qtbot.waitUntil(
         lambda: all(

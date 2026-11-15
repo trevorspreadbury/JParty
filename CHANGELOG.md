@@ -57,6 +57,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   of in whatever folder JParty was started from.
 
 ### Fixed
+- The triple-stumper sound now plays on a TV or monitor connected by HDMI.
+  HDMI audio goes to sleep after a few seconds of silence and takes up to a
+  second to wake, which swallowed the whole sound. JParty now keeps the audio
+  output awake with a silent loop from Start until Close Game or quitting.
 - Clicking a podium in the lobby no longer changes a score. Before Start this
   made a stray save folder and broke the new save, and after Close Game it
   wrote into the previous game's save. Either way that save would no longer

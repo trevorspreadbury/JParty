@@ -603,6 +603,7 @@ class Game(QObject):
         self.dc.hide_welcome_widgets()
         self.buzzer_controller.accepting_players = False
         self.song_player.stop()
+        self.song_player.keep_output_awake()
         self._game_started_at = time.time()
         self._history_format = HISTORY_FORMAT
         self._started_by_version = __version__
@@ -827,6 +828,7 @@ class Game(QObject):
         self.dc.hide_welcome_widgets()
         self.buzzer_controller.accepting_players = False
         self.song_player.stop()
+        self.song_player.keep_output_awake()
         self.dc.scoreboard.refresh_players()
         for player in self.players:
             self.dc.player_widget(player).update_score()
@@ -1756,6 +1758,7 @@ class Game(QObject):
         if self.timer:
             self.timer.cancel()
         self.timer = None
+        self.song_player.let_output_sleep()
         self.accepting_responses = False
         self.data = None
         self._judgement_round = 0
@@ -1979,4 +1982,5 @@ class Game(QObject):
             self.timer.cancel()
         self.timer = None
         self.song_player.stop()
+        self.song_player.let_output_sleep()
         QApplication.quit()

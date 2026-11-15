@@ -88,6 +88,7 @@ def _check_assets() -> str:
             "final.wav",
             "stumped.wav",
             "dd.wav",
+            "silence.wav",
             "ITC_ Korinna Normal.ttf",
         )
     ]

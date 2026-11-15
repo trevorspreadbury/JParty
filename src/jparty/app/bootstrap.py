@@ -463,6 +463,7 @@ def launch_gui() -> None:
         logging.info("terminated")
         if song_player:
             song_player.stop()
+            song_player.let_output_sleep()
         sys.exit(r)
 
 

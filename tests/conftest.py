@@ -61,6 +61,15 @@ class FakeSongPlayer:
         self.stumped_calls = 0
         self.daily_double_calls = 0
         self.stop_calls = 0
+        self.keeping_output_awake = False
+
+    def keep_output_awake(self) -> None:
+        """Record that the silent keep-awake loop is running."""
+        self.keeping_output_awake = True
+
+    def let_output_sleep(self) -> None:
+        """Record that the silent keep-awake loop stopped."""
+        self.keeping_output_awake = False
 
     def play(self, repeat: object = False) -> None:
         """Test play."""
