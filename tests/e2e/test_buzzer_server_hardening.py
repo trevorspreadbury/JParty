@@ -19,6 +19,7 @@ from jparty.domain.models import Player
 from jparty.web import controller as controller_module
 from jparty.web.controller import BuzzerController
 from jparty.web.handlers import (
+    BUZZER_REPLACED_CLOSE_CODE,
     LECTERN_REPLACED_CLOSE_CODE,
     MAX_ANSWER_LENGTH,
     MAX_NAME_LENGTH,
@@ -520,8 +521,11 @@ class BuzzerServerHardeningTest(TornadoAsyncHTTPTestCase):
         assert second_handler is not first_handler
 
         # The old lectern closing must leave the live lectern in place.
+        # Wait for the old handler's ``on_close`` itself. Tornado clears
+        # ``ws_connection`` before ``on_close`` runs, so waiting on that
+        # would pass even if ``on_close`` removed the new lectern.
         first.close()
-        await self.wait_until(lambda: first_handler.ws_connection is None)
+        await self.wait_until(lambda: first_handler._on_close_called)
         assert self.controller.lectern_connections.get(0) is second_handler
 
         self.controller.broadcast_to_lecterns(0, {"name": "Alice"})
@@ -573,6 +577,8 @@ class BuzzerServerHardeningTest(TornadoAsyncHTTPTestCase):
 
         assert old_handler.player is None
         assert await old_ws.read_message() is None
+        # Its own close code tells the old page to stay closed, not reload.
+        assert old_ws.close_code == BUZZER_REPLACED_CLOSE_CODE
         await self.wait_for_socket_count(1)
         assert player.waiter is not old_handler
         assert player.connected is True

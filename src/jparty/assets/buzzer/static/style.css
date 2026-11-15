@@ -97,6 +97,13 @@ button:active {
 .chooser-page {
     display: None;
 }
+.replaced-page {
+    display: None;
+}
+#play-here-button {
+    width: 100%;
+    margin-top: 20px;
+}
 
 .chooser-grid {
     display: grid;

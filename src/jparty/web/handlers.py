@@ -31,6 +31,11 @@ MAX_ANSWER_LENGTH = 500
 # Websocket close code sent to a lectern page when another page takes its slot.
 # lectern.js checks for it, so keep the two in step.
 LECTERN_REPLACED_CLOSE_CODE = 4000
+# Websocket close code sent to a buzzer page when the same player reconnects
+# from another tab or screen. buzzer.js checks for it and stops reloading, so
+# two tabs with one player's cookie don't keep taking the player from each
+# other. Keep the two in step.
+BUZZER_REPLACED_CLOSE_CODE = 4001
 
 
 def clean_player_name(text: object) -> str | None:
@@ -196,11 +201,16 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
         player.waiter = self
         if old is not None and old is not self:
             # The old socket must not buzz or answer for the player any more.
+            # It is closed with its own code so the old page shows a message
+            # and stays closed. If it reloaded instead, it would take the
+            # player back, and two tabs would keep reloading each other.
             if getattr(old, "player", None) is player:
                 old.player = None
             close = getattr(old, "close", None)
             if close is not None:
-                self.controller.run_on_loop(close)
+                self.controller.run_on_loop(
+                    close, BUZZER_REPLACED_CLOSE_CODE, "Opened in another tab"
+                )
         self.send("EXISTS", tornado.escape.json_encode(player.state()))
 
     def on_message(self, message: str) -> None:

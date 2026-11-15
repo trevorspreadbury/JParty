@@ -222,11 +222,24 @@ $(document).ready(function() {
 
 var updater = {
     socket: null,
+    // Close code the server sends when this player reconnects from another
+    // tab or screen. Keep in step with BUZZER_REPLACED_CLOSE_CODE in
+    // handlers.py.
+    replacedCloseCode: 4001,
 
     start: function() {
         var url = "ws://" + location.host + "/buzzersocket";
         updater.socket = new WebSocket(url);
-        updater.socket.onclose = function(event) { location.reload(true); };
+        updater.socket.onclose = function(event) {
+            if (event.code === updater.replacedCloseCode) {
+                // Reloading here would take the player back from the other
+                // tab, which would then reload too, forever. Stay closed and
+                // let the player choose this tab again by hand.
+                load_page("replaced");
+                return;
+            }
+            location.reload(true);
+        };
         updater.socket.onmessage = function(event) {
             jsondata = JSON.parse(event.data);
             switch (jsondata.message) {

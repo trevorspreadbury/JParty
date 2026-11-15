@@ -71,7 +71,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Final answers are stored on the game's main thread, like buzzes and
   wagers, instead of on the buzzer server's thread (#117).
 - When a phone reconnects, its old connection is closed and can no longer
-  buzz or answer for the player (#117).
+  buzz or answer for the player. If the same player has the buzzer open in
+  two tabs (for example after scanning the QR code again), the older tab
+  says "Opened in another tab or screen" and offers a Play here button,
+  instead of the two tabs reloading each other (#117).
 - A garbled message from a phone is logged and ignored. It used to drop the
   phone's connection (#117).
 - The lectern page no longer opens a second connection when it is shown

@@ -8,6 +8,8 @@ from tests.e2e.test_browser_smoke import (  # noqa: F401  (pytest fixtures)
     FakeWaiter,
     browser_page,
     live_browser_server,
+    prepare_page,
+    wait_until,
 )
 
 pytestmark = pytest.mark.e2e
@@ -177,6 +179,10 @@ def test_replaced_lectern_stops_reconnecting(
     browser_page.wait_for_function("updater.socket.readyState === 3")
     browser_page.wait_for_timeout(500)
 
+    # Showing the replaced page again must not reopen its socket either.
+    browser_page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+    browser_page.wait_for_timeout(300)
+
     # Only the second page's socket was opened; the replaced page did not
     # reconnect and take the slot back.
     assert browser_page.evaluate("window.__opened") == 1
@@ -185,3 +191,58 @@ def test_replaced_lectern_stops_reconnecting(
         browser_page.locator("#player-name").text_content()
         == "Opened on another screen"
     )
+
+
+SOCKET_OPEN = (
+    "window.updater && window.updater.socket && window.updater.socket.readyState === 1"
+)
+
+
+def test_second_buzzer_tab_takes_over_without_reload_loop(
+    live_browser_server: object,  # noqa: F811
+    browser_page: object,  # noqa: F811
+) -> None:
+    """Two tabs with one player's cookie don't keep reloading each other.
+
+    The newest tab gets the player. The old tab says it was opened somewhere
+    else and stays closed until the player taps "Play here".
+    """
+    controller = live_browser_server.controller
+    first = browser_page
+    first.goto(f"{live_browser_server.url}/")
+    first.wait_for_function(SOCKET_OPEN)
+    first.evaluate("nameForm('Alice')")
+    first.wait_for_function("() => document.cookie.includes('token=')")
+
+    loads = {"first": 0, "second": 0}
+    first.on("load", lambda _page: loads.__setitem__("first", loads["first"] + 1))
+    second = first.context.new_page()
+    prepare_page(second)
+    second.on("load", lambda _page: loads.__setitem__("second", loads["second"] + 1))
+    second.goto(f"{live_browser_server.url}/")
+    second.wait_for_function(SOCKET_OPEN)
+    # Before the fix both tabs reloaded about 8 times a second.
+    second.wait_for_timeout(1500)
+    first.wait_for_timeout(100)
+
+    assert loads == {"first": 0, "second": 1}
+    # The test page stubs jQuery, so check which page buzzer.js chose.
+    assert first.evaluate("current_page") == "replaced"
+    assert first.evaluate("updater.socket.readyState") == 3
+    assert second.evaluate("current_page") == "buzz"
+    second.evaluate("buzz()")
+    wait_until(lambda: controller.buzzed_players == ["Alice"])
+
+    # "Play here" moves the player back to the first tab, once.
+    with first.expect_navigation():
+        first.evaluate("document.getElementById('play-here-button').click()")
+    first.wait_for_function(SOCKET_OPEN)
+    first.wait_for_function("current_page === 'buzz'")
+    first.wait_for_timeout(1500)
+    second.wait_for_timeout(100)
+
+    assert loads == {"first": 1, "second": 1}
+    assert second.evaluate("current_page") == "replaced"
+    first.evaluate("buzz()")
+    wait_until(lambda: controller.buzzed_players == ["Alice", "Alice"])
+    assert len(controller.connected_players) == 1
