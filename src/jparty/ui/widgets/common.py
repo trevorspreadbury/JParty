@@ -47,6 +47,12 @@ class SongPlayer:
     Every clip is a preloaded ``QSoundEffect``. Qt plays and loops them on its
     own audio backend, so no Python threads are involved. Create and use this
     object on the Qt GUI thread.
+
+    HDMI and DisplayPort audio (a TV or monitor) goes to sleep after a few
+    seconds of silence and takes up to a second to wake. That swallowed the
+    whole triple-stumper cue, which is under a second long. While a game is
+    running, ``keep_output_awake`` loops a silent clip so the output never
+    sleeps and every cue starts on time.
     """
 
     def __init__(self) -> None:
@@ -59,7 +65,10 @@ class SongPlayer:
         self.__final = self.__load("final.wav")
         self.__stumped = self.__load("stumped.wav")
         self.__daily_double = self.__load("dd.wav")
+        self.__silence = self.__load("silence.wav")
+        self.__silence.setLoopCount(QSoundEffect.Loop.Infinite.value)
         self.__music = None
+        self.__keeping_output_awake = False
 
     @staticmethod
     def __load(file_name: str) -> QSoundEffect:
@@ -145,6 +154,31 @@ class SongPlayer:
             ``None``.
         """
         self.__daily_double.play()
+
+    def keep_output_awake(self) -> None:
+        """Loop a silent clip so HDMI or DisplayPort audio doesn't go to sleep.
+
+        Safe to call again while already running. ``stop`` leaves the loop
+        running; ``let_output_sleep`` ends it.
+
+        Returns:
+            ``None``.
+        """
+        if self.__keeping_output_awake:
+            return
+        self.__silence.play()
+        self.__keeping_output_awake = True
+
+    def let_output_sleep(self) -> None:
+        """Stop the silent loop started by ``keep_output_awake``.
+
+        Returns:
+            ``None``.
+        """
+        if not self.__keeping_output_awake:
+            return
+        self.__silence.stop()
+        self.__keeping_output_awake = False
 
 
 class CompoundObject:

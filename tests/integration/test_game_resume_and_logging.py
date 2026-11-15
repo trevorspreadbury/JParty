@@ -1100,6 +1100,54 @@ def test_close_game_resets_state(game_with_players: object) -> None:
     assert game.dc.restart_calls == 1
 
 
+def test_game_keeps_audio_output_awake_from_start_until_close(
+    game_with_players: object,
+) -> None:
+    """A fresh game keeps HDMI audio awake until Close Game or quit.
+
+    The audio output must not sleep during a clue, or the short
+    triple-stumper cue is lost on a TV or monitor.
+    """
+    game = game_with_players
+    assert game.song_player.keeping_output_awake is False
+
+    game.start_game()
+    assert game.song_player.keeping_output_awake is True
+
+    game.close_game()
+    assert game.song_player.keeping_output_awake is False
+
+    game.song_player.keep_output_awake()
+    monkeypatch_quit = []
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "jparty.domain.game_engine.QApplication.quit",
+            lambda: monkeypatch_quit.append(True),
+        )
+        game.close()
+    assert monkeypatch_quit == [True]
+    assert game.song_player.keeping_output_awake is False
+
+
+def test_resumed_game_keeps_audio_output_awake(
+    game: object, monkeypatch: object, sample_saved_game_dir: object
+) -> None:
+    """Resuming a saved game also keeps HDMI audio awake."""
+    from jparty.services import game_loader
+
+    restored_data = game.data
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    game.prepare_resume_from_dir(sample_saved_game_dir)
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+
+    game.start_game()
+
+    assert game.song_player.keeping_output_awake is True
+
+
 class _RecordingTimer:
     """Stand-in clue timer that records cancels."""
 
