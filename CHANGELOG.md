@@ -6,6 +6,26 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Lectern pages no longer need a manual refresh (#46):
+  - They keep reconnecting for as long as they are open, through JParty
+    restarts, instead of giving up after about 30 seconds with "Connection
+    lost". They never reload themselves, so a full-screen lectern stays full
+    screen.
+  - The server sends each lectern a heartbeat every 3 seconds. A lectern
+    that hears nothing for 10 seconds drops the dead connection and
+    reconnects.
+  - A lectern shows the logo whenever its seat is empty. That includes the
+    last seat after a player is removed in the lobby (it used to keep the
+    removed player's name), and any lectern 5 seconds after JParty closes.
+  - In the resume lobby, a lectern shows the player in its seat. It used to
+    show whoever was at that position in the roster, which was wrong after a
+    seat was released.
+  - The lectern page no longer loads jQuery from the internet, so it starts
+    on a laptop with no internet access.
+  - On restart, JParty waits up to 3 seconds for port 8080 to free up before
+    moving to the next port, where open lecterns would never find it.
+
 ## [3.0.0] - 2026-11-14
 
 First stable 3.0 release. It contains everything since the May 2026

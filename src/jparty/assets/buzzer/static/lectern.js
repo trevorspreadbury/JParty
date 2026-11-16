@@ -1,9 +1,14 @@
+// The lectern page is left open for hours, across many JParty restarts, so it
+// never gives up and never reloads itself (a reload would leave full screen).
+// It keeps retrying until the server is back, and the server then sends the
+// seat's current state.
 var updater = {
     socket: null,
     playerNumber: null,
     reconnectAttempts: 0,
-    maxReconnectAttempts: 10,
-    reconnectDelay: 3000,
+    // First retry delay. Each failed try doubles it, up to maxReconnectDelay.
+    reconnectDelay: 1000,
+    maxReconnectDelay: 5000,
     lightsInterval: null,
     lightsRunning: false,
     currentLightStage: 0,
@@ -12,6 +17,20 @@ var updater = {
     // Close code the server sends when another lectern page takes this slot.
     // Matches LECTERN_REPLACED_CLOSE_CODE in handlers.py.
     replacedCloseCode: 4000,
+    // The server sends a HEARTBEAT every 3 seconds (LECTERN_HEARTBEAT_SECONDS
+    // in handlers.py). Hearing nothing for this long means the connection
+    // died without closing, so the page drops it and reconnects.
+    staleAfter: 10000,
+    // A connection attempt that hasn't opened by now is dropped and retried.
+    connectTimeout: 5000,
+    // After losing the server, keep showing the player this long before
+    // falling back to the logo. Short Wi-Fi blips don't blank the screen, but
+    // closing JParty does.
+    logoAfter: 5000,
+    lastMessageAt: 0,
+    socketStartedAt: 0,
+    logoTimer: null,
+    watchdogTimer: null,
 
     // True while a socket is connecting or open, or a reconnect is waiting.
     isConnectingOrConnected: function() {
@@ -37,13 +56,19 @@ var updater = {
         var url = "ws://" + location.host + "/lecternsocket?player=" + this.playerNumber;
         var socket = new WebSocket(url);
         updater.socket = socket;
+        updater.socketStartedAt = Date.now();
 
         socket.onopen = function(event) {
             console.log("Lectern WebSocket connected for player " + updater.playerNumber);
             updater.reconnectAttempts = 0;
+            updater.lastMessageAt = Date.now();
         };
 
         socket.onmessage = function(event) {
+            if (updater.socket !== socket) {
+                return;
+            }
+            updater.lastMessageAt = Date.now();
             var jsondata = JSON.parse(event.data);
             updater.handleMessage(jsondata);
         };
@@ -64,17 +89,84 @@ var updater = {
                 nameElement.style.display = "";
                 return;
             }
-            updater.handleReconnect();
+            updater.connectionLost();
         };
+    },
+
+    // Start the logo countdown and schedule the next connection attempt.
+    connectionLost: function() {
+        if (updater.logoTimer === null) {
+            updater.logoTimer = setTimeout(function() {
+                updater.logoTimer = null;
+                updater.showNoPlayer();
+            }, updater.logoAfter);
+        }
+        updater.handleReconnect();
+    },
+
+    // Stop the logo countdown once the server has sent this seat's state.
+    connectionRestored: function() {
+        if (updater.logoTimer !== null) {
+            clearTimeout(updater.logoTimer);
+            updater.logoTimer = null;
+        }
+    },
+
+    // Abandon a socket that has gone quiet or never opened. Its handlers are
+    // detached first, because closing a dead connection can take a long time
+    // to report back.
+    dropSocket: function() {
+        var socket = updater.socket;
+        if (!socket) {
+            return;
+        }
+        console.log("Lectern connection went quiet, reconnecting");
+        socket.onopen = null;
+        socket.onmessage = null;
+        socket.onclose = null;
+        socket.onerror = null;
+        updater.socket = null;
+        try {
+            socket.close();
+        } catch (error) {
+            console.error("Error closing stale socket:", error);
+        }
+        updater.connectionLost();
+    },
+
+    // Runs every second and drops a connection that has stopped working.
+    checkConnection: function() {
+        var socket = updater.socket;
+        if (updater.replaced || !socket) {
+            return;
+        }
+        var now = Date.now();
+        if (socket.readyState === WebSocket.OPEN &&
+                now - updater.lastMessageAt > updater.staleAfter) {
+            updater.dropSocket();
+        } else if (socket.readyState === WebSocket.CONNECTING &&
+                now - updater.socketStartedAt > updater.connectTimeout) {
+            updater.dropSocket();
+        }
+    },
+
+    startWatchdog: function() {
+        if (updater.watchdogTimer === null) {
+            updater.watchdogTimer = setInterval(updater.checkConnection, 1000);
+        }
     },
 
     handleMessage: function(jsondata) {
         switch (jsondata.message) {
             case "PLAYER_STATE":
+                updater.connectionRestored();
                 updater.updatePlayerState(JSON.parse(jsondata.text));
                 break;
             case "NO_PLAYER":
+                updater.connectionRestored();
                 updater.showNoPlayer();
+                break;
+            case "HEARTBEAT":
                 break;
             default:
                 console.log("Unknown message:", jsondata.message);
@@ -238,17 +330,18 @@ var updater = {
         if (updater.reconnectTimer !== null) {
             return;
         }
-        if (updater.reconnectAttempts < updater.maxReconnectAttempts) {
-            updater.reconnectAttempts++;
-            console.log("Attempting to reconnect (" + updater.reconnectAttempts + "/" + updater.maxReconnectAttempts + ")...");
-            updater.reconnectTimer = setTimeout(function() {
-                updater.reconnectTimer = null;
-                updater.start();
-            }, updater.reconnectDelay);
-        } else {
-            console.error("Max reconnection attempts reached");
-            document.getElementById("player-name").textContent = "Connection lost";
-        }
+        // Retry forever: the page may sit through a JParty restart or a long
+        // break. Waits double from reconnectDelay up to maxReconnectDelay.
+        var delay = Math.min(
+            updater.reconnectDelay * Math.pow(2, updater.reconnectAttempts),
+            updater.maxReconnectDelay
+        );
+        updater.reconnectAttempts++;
+        console.log("Reconnecting in " + delay + " ms (try " + updater.reconnectAttempts + ")");
+        updater.reconnectTimer = setTimeout(function() {
+            updater.reconnectTimer = null;
+            updater.start();
+        }, delay);
     }
 };
 
@@ -284,9 +377,10 @@ function positionAnsweringBox() {
     console.log('Target border position: ' + targetBorderPosition + 'px, Actual: ' + actualBorderPosition + 'px');
 }
 
-$(document).ready(function() {
+function startLectern() {
     updater.start();
-    
+    updater.startWatchdog();
+
     // Position answering box initially and on resize
     setTimeout(function() {
         positionAnsweringBox();
@@ -304,5 +398,13 @@ $(document).ready(function() {
         }
         setTimeout(positionAnsweringBox, 100);
     });
-});
+}
+
+// No jQuery here: the page has to start even when the laptop can't reach the
+// internet.
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", startLectern);
+} else {
+    startLectern();
+}
 

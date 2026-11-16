@@ -374,6 +374,7 @@ class FakeBuzzerController:
         self.prompt_answers_calls = 0
         self.toolate_calls = 0
         self.broadcasts = []
+        self.cleared_lecterns = []
         self.restart_calls = 0
         self.lectern_connections = {}
         self.saved_player_profiles = {}
@@ -425,6 +426,14 @@ class FakeBuzzerController:
     def broadcast_to_lecterns(self, player_number: object, state_dict: object) -> None:
         """Test broadcast to lecterns."""
         self.broadcasts.append((player_number, state_dict))
+
+    def clear_empty_lecterns(self) -> None:
+        """Test clear empty lecterns: record each empty seat that is cleared."""
+        taken = {player.player_number for player in self.game.players}
+        for player_number in sorted(self.lectern_connections):
+            if player_number not in taken:
+                self.cleared_lecterns.append(player_number)
+                self.lectern_connections[player_number].send("NO_PLAYER", "")
 
     def restart(self) -> None:
         """Test restart."""

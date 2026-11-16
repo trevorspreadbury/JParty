@@ -29,6 +29,11 @@ if TYPE_CHECKING:
     from jparty.web.handlers import BuzzerSocketHandler, LecternSocketHandler
 
 MAX_PORT_TRIES = 10
+# How long to keep trying the usual port before moving to the next one, and
+# how long to wait between tries. A port JParty just closed is usually free
+# again within about a second.
+PORT_BUSY_WAIT_SECONDS = 3.0
+PORT_BUSY_RETRY_SECONDS = 0.25
 DEFAULT_HTTP_PORT = 80
 # Seconds after ``TOOLATE`` during which a phone may resubmit its answer box.
 # Phones reply at once, so this only needs to cover a slow local network.
@@ -143,7 +148,7 @@ class BuzzerController:
                 limit.
         """
         try:
-            self.app.listen(self.port)
+            self._listen()
         except OSError as err:
             if tries > MAX_PORT_TRIES:
                 raise Exception("Cannot find open port") from err
@@ -158,6 +163,34 @@ class BuzzerController:
         else:
             self._loop_thread_id = threading.get_ident()
             self.loop.start()
+
+    def _listen(self) -> None:
+        """Listen on ``self.port``, waiting briefly if it is the usual port.
+
+        Lecterns stay open on the usual port across JParty restarts. Right
+        after a restart that port can still be held for a moment by the old
+        process's connections, and moving to the next port would leave every
+        lectern trying the old one. So the usual port gets a few seconds
+        before ``start`` moves on.
+
+        Returns:
+            ``None``.
+
+        Raises:
+            OSError: If the port is still busy once the wait is over.
+        """
+        deadline = time.monotonic()
+        if self.port == PORT:
+            deadline += PORT_BUSY_WAIT_SECONDS
+        while True:
+            try:
+                self.app.listen(self.port)
+                return
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise
+                logging.info("Port %s is busy, trying it again", self.port)
+                time.sleep(PORT_BUSY_RETRY_SECONDS)
 
     def run_on_loop(self, callback: Callable[..., object], *args: object) -> None:
         """Run ``callback`` on the Tornado loop thread.
@@ -800,15 +833,44 @@ class BuzzerController:
     def get_player_by_number(self, player_number: int) -> Player | None:
         """Return the current game player assigned to a lectern slot.
 
+        Players are matched on their seat number, not their place in the
+        roster. In the resume lobby a released seat leaves a gap, so the
+        roster position and the seat number can differ.
+
         Args:
             player_number: Zero-based player slot number.
 
         Returns:
             Matching player object, or ``None`` when the slot is empty.
         """
-        if self.game and player_number < len(self.game.players):
-            return self.game.players[player_number]
+        if not self.game:
+            return None
+        for player in self.game.players:
+            if player.player_number == player_number:
+                return player
         return None
+
+    def clear_empty_lecterns(self) -> None:
+        """Show the logo on every lectern whose seat has no player.
+
+        Runs on the Tornado loop thread, where the lectern registry and the
+        sockets are safe to use. Lecterns with a player are left alone; the
+        game sends those their full state.
+
+        Returns:
+            ``None``.
+        """
+        self.run_on_loop(self._clear_empty_lecterns)
+
+    def _clear_empty_lecterns(self) -> None:
+        """Send ``NO_PLAYER`` to each lectern whose seat is empty.
+
+        Returns:
+            ``None``.
+        """
+        for player_number, lectern in list(self.lectern_connections.items()):
+            if self.get_player_by_number(player_number) is None:
+                lectern.send("NO_PLAYER", "")
 
     def get_player_state_dict(
         self, player: Player, show_final_answer: bool = False
