@@ -526,7 +526,8 @@ def test_resume_finished_board_without_final_can_end_game(
     events = game.keystroke_manager._KeystrokeManager__events
     assert events["NEXT_ROUND"].active is True
     game.keystroke_manager.call(Qt.Key.Key_Space)
-    assert events["GENERATE_GRAPHS"].active is True
+    # Alice and Bob end tied at 0, so the game ends on the tiebreaker offer.
+    assert events["START_TIEBREAKER"].active is True
 
 
 def test_resume_after_final_goes_to_end_of_game(
@@ -1651,7 +1652,8 @@ def test_resume_with_two_finals_picks_first_unjudged_final(
     assert bool(game.buzzer_controller.open_wagers_calls) is expect_wagers
     assert game.dc.loaded_final_judgement == (0 if expect_wagers else 1)
     events = game.keystroke_manager._KeystrokeManager__events
-    assert events["GENERATE_GRAPHS"].active is not expect_wagers
+    # Both players end tied at 0, so a finished game offers a tiebreaker.
+    assert events["START_TIEBREAKER"].active is not expect_wagers
 
 
 def test_resume_with_two_finals_before_any_final_opens_the_first(

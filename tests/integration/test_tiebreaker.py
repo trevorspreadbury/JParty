@@ -1,10 +1,16 @@
 """Tests for the tiebreaker played when players tie for first (#44)."""
 
+import json
+
 import pytest
 from PyQt6.QtCore import Qt
 
 from jparty.domain.models import Question
-from jparty.domain.state import build_end_game_summary
+from jparty.domain.state import (
+    build_end_game_summary,
+    history_score_totals,
+    read_history_file,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -78,13 +84,25 @@ def test_tie_offers_tiebreaker_instead_of_summary(tied_game: object) -> None:
 
 
 @pytest.mark.parametrize("scores", [(0, 0, -200), (-400, -400, -800)])
-def test_tie_at_zero_or_below_has_no_tiebreaker(
+def test_tie_at_zero_or_below_still_offers_tiebreaker(
     game_with_players: object, scores: tuple
 ) -> None:
-    """Nobody wins when the top score is not positive, so nothing to break."""
+    """The two leaders can break a tie whatever their score."""
     game = game_with_players
     for player, score in zip(game.players, scores, strict=True):
         player.score = score
+    game.end_game()
+    assert game.keystroke_manager._events["START_TIEBREAKER"].active
+    assert not game.keystroke_manager._events["GENERATE_GRAPHS"].active
+    assert game.tiebreaker_flow.contenders == game.players[:2]
+
+
+def test_no_tiebreaker_for_a_single_leader(game_with_players: object) -> None:
+    """A clear winner goes straight to the summary."""
+    game = game_with_players
+    game.players[0].score = -200
+    game.players[1].score = -400
+    game.players[2].score = -400
     game.end_game()
     assert game.keystroke_manager._events["GENERATE_GRAPHS"].active
     assert not game.keystroke_manager._events["START_TIEBREAKER"].active
@@ -240,3 +258,116 @@ def test_summary_names_the_tiebreaker_winner(tied_game: object) -> None:
     summary = build_end_game_summary(game)
     assert summary.is_tie is False
     assert summary.winner_player_numbers == [game.players[0].player_number]
+
+
+def _tiebreaker_lines(game: object) -> list[dict]:
+    """Return the saved ``tiebreaker_clue`` lines."""
+    path = game._game_state_dir / "question_history.jsonl"
+    lines = [json.loads(line) for line in path.read_text("utf-8").splitlines()]
+    return [line for line in lines if line.get("type") == "tiebreaker_clue"]
+
+
+def test_each_tiebreaker_clue_is_saved_to_history(
+    tied_game: object, time_controller: object
+) -> None:
+    """A missed clue and the winning clue each get a tiebreaker_clue line."""
+    game = tied_game
+    game.question_number = 62
+    _start_first_clue(game)
+    time_controller.advance(2)
+    game.buzz(0)
+    time_controller.advance(2)
+    game.incorrect_answer()
+    time_controller.advance(2)
+    game.buzz(1)
+    time_controller.advance(2)
+    game.incorrect_answer()
+    _space(game)  # Next clue.
+    _space(game)
+    _space(game)
+    game.buzz(1)
+    game.correct_answer()
+
+    missed, won = _tiebreaker_lines(game)
+    assert missed["question_number"] == 62
+    assert missed["source_game_id"] == "1234"
+    assert missed["source_question_index"] == [1, 4]
+    assert missed["category"] == "Tiebreaker category 1"
+    assert missed["text"] == "Tiebreaker clue 1"
+    assert missed["answer"] == "Tiebreaker answer 1"
+    assert missed["value"] == 2000
+    assert missed["contenders"] == [0, 1]
+    assert missed["winner"] is None
+    assert [
+        (attempt["player_index"], attempt["answer_correct"])
+        for attempt in missed["answer_attempts"]
+    ] == [(0, False), (1, False)]
+    assert [phase["phase_type"] for phase in missed["buzz_phases"]] == [
+        "main",
+        "rebound",
+    ]
+    assert missed["buzz_phases"][0]["buzz_attempts"][0]["question_index"] is None
+
+    assert won["question_number"] == 63
+    assert won["winner"] == 1
+    assert won["answer_attempts"][0]["answer_correct"] is True
+
+
+def test_unanswered_tiebreaker_clue_is_saved(tied_game: object) -> None:
+    """A clue that times out with no buzz is saved with no winner."""
+    game = tied_game
+    _start_first_clue(game)
+    game.timer.fire()
+    (line,) = _tiebreaker_lines(game)
+    assert line["winner"] is None
+    assert line["answer_attempts"] == []
+    assert line["buzz_phases"] == []
+
+
+def test_tiebreaker_lines_leave_scores_and_stats_alone(tied_game: object) -> None:
+    """Tiebreaker rulings stay out of the score chain and per-clue stats."""
+    game = tied_game
+    game._save_general_state()
+    _start_first_clue(game)
+    game.buzz(0)
+    game.correct_answer()
+
+    entries = read_history_file(game._game_state_dir / "question_history.jsonl")
+    assert history_score_totals(entries) == {}
+    summary = build_end_game_summary(game)
+    alice = summary.current_players[0]
+    assert (alice.right_count, alice.questions_buzzed_on) == (0, 0)
+    assert summary.question_count == 0
+
+
+def test_summary_winner_is_read_from_history(tied_game: object) -> None:
+    """The saved winner decides the summary, even without the live game."""
+    game = tied_game
+    game._save_general_state()
+    _start_first_clue(game)
+    game.buzz(1)
+    game.correct_answer()
+    game.tiebreaker_winner = None
+    summary = build_end_game_summary(game)
+    assert summary.winner_player_numbers == [1]
+
+
+def test_seat_change_renumbers_tiebreaker_players(tied_game: object) -> None:
+    """A later player_renumber line remaps contenders and the winner."""
+    game = tied_game
+    _start_first_clue(game)
+    game.buzz(1)
+    game.correct_answer()
+    path = game._game_state_dir / "question_history.jsonl"
+    with path.open("a", encoding="utf-8") as history:
+        renumber = {"type": "player_renumber", "mapping": {"0": 2, "1": 0, "2": 1}}
+        history.write(json.dumps(renumber) + "\n")
+
+    (line,) = [
+        entry
+        for entry in read_history_file(path)
+        if entry.get("type") == "tiebreaker_clue"
+    ]
+    assert line["contenders"] == [2, 0]
+    assert line["winner"] == 0
+    assert line["answer_attempts"][0]["player_index"] == 0

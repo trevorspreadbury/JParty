@@ -11,8 +11,10 @@ from jparty.app.config import EARLY_BUZZ_PENALTY, FJTIME, QUESTIONTIME
 from jparty.domain.models import BuzzAttempt, FinalBoard
 from jparty.domain.state import (
     MANUAL_SCORE_ADJUSTMENT_TYPE,
+    TIEBREAKER_CLUE_TYPE,
     HistoryFileError,
     build_end_game_summary,
+    classify_buzz_phases,
 )
 
 
@@ -507,7 +509,7 @@ class FinalJeopardyFlow:
         else:
             self.game.dc.final_window.show_tie()
         logging.info("Game over!")
-        if self.game.tiebreaker_flow.can_offer(winners, top_score):
+        if self.game.tiebreaker_flow.can_offer(winners):
             self.game.tiebreaker_flow.contenders = winners
             self.game.keystroke_manager.activate("START_TIEBREAKER")
         else:
@@ -530,13 +532,16 @@ class FinalJeopardyFlow:
 class TiebreakerFlow:
     """Own the tiebreaker played when players tie for first (#44).
 
-    When the game ends with two or more players tied on a positive score,
-    the host can play tossups from another game. The host is asked for a
+    When the game ends with two or more players tied for first, whatever
+    the score, the host can play tossups from another game. The host is asked for a
     game id (blank picks a random game). That game's highest-value clues
     are then asked one at a time, in random order. Each clue first shows
     its category, like Final Jeopardy, and is then played like a normal
     clue, except that only the tied players can buzz and no ruling changes
     a score. The first correct response wins the game.
+
+    Each clue is saved to ``question_history.jsonl`` as a
+    ``tiebreaker_clue`` line when it is won or nobody gets it.
     """
 
     def __init__(self, game: object) -> None:
@@ -551,18 +556,17 @@ class TiebreakerFlow:
         # arrive for an earlier request are ignored.
         self._load_token = 0
 
-    def can_offer(self, winners: list, top_score: int) -> bool:
+    def can_offer(self, winners: list) -> bool:
         """Return whether a tiebreaker can settle this result.
 
         Args:
             winners: Players sharing the top score.
-            top_score: The top score.
 
         Returns:
-            ``True`` when two or more players tie on a positive score. When
-            nobody finishes above $0 there is no winner to decide.
+            ``True`` when two or more players tie for first, at any score,
+            including $0 or below.
         """
-        return len(winners) > 1 and top_score > 0
+        return len(winners) > 1
 
     def reset(self) -> None:
         """Forget any tiebreaker, including one still loading."""
@@ -673,6 +677,7 @@ class TiebreakerFlow:
             return
         clue = self.clues.pop(0)
         self.game.active_question = clue
+        self.game._question_start_time = time.time()
         # Only the tied players may buzz. ClueFlow.buzz ignores anyone who
         # has already answered, so everyone else starts in that set.
         self.game.previous_answerers = {
@@ -696,6 +701,8 @@ class TiebreakerFlow:
         logging.info("%s won the tiebreaker", winner)
         if self.game.timer:
             self.game.timer.cancel()
+        self._append_answer_attempt(winner, True)
+        self._record_clue(winner)
         self.game.dc.borders.lights(False)
         self.game.clue_flow.answer_given()
         self.finish(winner)
@@ -703,6 +710,7 @@ class TiebreakerFlow:
     def incorrect_answer(self) -> None:
         """Reopen buzzing for the other tied players, or move on."""
         logging.info("%s missed the tiebreaker clue", self.game.answering_player)
+        self._append_answer_attempt(self.game.answering_player, False)
         self.game.clue_flow.answer_given()
         if all(player in self.game.previous_answerers for player in self.contenders):
             if self.game.timer:
@@ -717,12 +725,64 @@ class TiebreakerFlow:
     def stumped(self) -> None:
         """Handle a tiebreaker clue nobody got."""
         self.game.accepting_responses = False
+        self._record_clue(None)
         self.game.song_player.stumped()
         self.game.dc.borders.flash()
         if self.game.reveal_answers_after_triple_stumper_enabled():
             self.game.keystroke_manager.activate("TIEBREAKER_REVEAL_ANSWER")
         else:
             self.game.keystroke_manager.activate("TIEBREAKER_NEXT_CLUE")
+
+    def _append_answer_attempt(self, player: object, answer_correct: bool) -> None:
+        """Record one tiebreaker ruling, which never changes a score.
+
+        Unlike a clue's ``answer_attempts``, these have no ``score_before``
+        or ``score_after``, so they are not part of the score chain.
+
+        Args:
+            player: Player who was ruled on.
+            answer_correct: Whether the response was ruled correct.
+        """
+        if player is None:
+            return
+        self.game._answer_attempts.append(
+            {
+                "player_index": player.player_number,
+                "answer_correct": answer_correct,
+                "timestamp": time.time(),
+            }
+        )
+
+    def _record_clue(self, winner: object) -> None:
+        """Append the active tiebreaker clue's ``tiebreaker_clue`` line.
+
+        Args:
+            winner: Player who answered correctly, or ``None`` when nobody
+                did.
+        """
+        clue = self.game.active_question
+        if clue is None:
+            return
+        if not self.game._game_state_dir:
+            self.game._initialize_game_state_dir()
+        self.game._append_history_entry(
+            {
+                "type": TIEBREAKER_CLUE_TYPE,
+                "question_number": self.game.question_number,
+                "source_game_id": self.source_game_id,
+                "source_question_index": list(clue.index),
+                "category": clue.category,
+                "value": clue.value,
+                "text": clue.text,
+                "answer": clue.answer,
+                "contenders": [player.player_number for player in self.contenders],
+                "buzz_phases": classify_buzz_phases(self.game),
+                "answer_attempts": self.game._answer_attempts.copy(),
+                "winner": winner.player_number if winner is not None else None,
+                "completed_at": time.time(),
+            }
+        )
+        self.game.question_number += 1
 
     def reveal_answer(self) -> None:
         """Show the missed clue's answer before the next clue."""

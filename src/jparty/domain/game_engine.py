@@ -307,8 +307,8 @@ class Game(QObject):
         self.clue_flow = ClueFlow(self)
         self.final_jeopardy_flow = FinalJeopardyFlow(self)
         self.tiebreaker_flow = TiebreakerFlow(self)
-        # Player who won a tiebreaker, or None. Scores stay tied, so the
-        # end-of-game summary reads the winner from here.
+        # Player who won a tiebreaker, or None. The scores stay tied; the
+        # saved tiebreaker_clue line is what records the win.
         self.tiebreaker_winner = None
         # Replaced in tests so loading runs without a thread or network.
         self.load_tiebreaker_clues = load_tiebreaker_clues
@@ -923,9 +923,14 @@ class Game(QObject):
 
         Returns:
             A ``(round_index, question_index)`` tuple for the active clue, or
-            ``None`` when no active clue is available.
+            ``None`` when no active clue is available or a tiebreaker clue
+            is being played.
         """
         if not self.active_question or not self.data:
+            return None
+        # A tiebreaker clue comes from another game, so it has no place in
+        # this game's rounds.
+        if self.tiebreaker_flow.active:
             return None
         try:
             round_index = self.data.rounds.index(self.current_round)

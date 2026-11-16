@@ -244,9 +244,8 @@ and a wager that arrives after you press `Enter` is ignored.
 
 ### Tiebreaker
 
-If two or more players finish tied for first with more than $0, JParty
-shows the tie and offers a tiebreaker. (If nobody finishes above $0, there
-is no winner and no tiebreaker.)
+If two or more players finish tied for first, at any score (including $0
+or below), JParty shows the tie and offers a tiebreaker.
 
 1. Press `Space`. JParty asks for a J-Archive game ID to take the
    tiebreaker clues from. Leave it blank for a random game, or press
@@ -263,7 +262,9 @@ is no winner and no tiebreaker.)
    triple-stumper reveal is on).
 
 Tiebreaker rulings never change a score. The scores stay tied, and the
-end-of-game summary names the tiebreaker winner. If the game runs out of
+end-of-game summary names the tiebreaker winner. Each tiebreaker clue is
+saved in the game's clue history; see
+[Game Logging](docs/game-logging.md#tiebreaker-clues-and-tiebreaker_clue). If the game runs out of
 clues or can't be loaded, press `Space` to pick another game.
 
 ## Editing Scores
