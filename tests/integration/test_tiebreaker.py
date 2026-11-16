@@ -46,8 +46,9 @@ def tied_game(game_with_players: object, monkeypatch: object) -> object:
         game.prompt_requests += 1
         return "1234"
 
-    def load(game_id: str) -> tuple[str, list]:
+    def load(game_id: str, is_cancelled: object) -> tuple[str, list]:
         game.loaded_game_ids.append(game_id)
+        game.load_is_cancelled = is_cancelled
         return game_id, list(game.tiebreaker_clue_queue)
 
     monkeypatch.setattr(game, "prompt_tiebreaker_game_id", prompt)
@@ -243,6 +244,120 @@ def test_clues_for_an_old_request_are_ignored(
     pending[0]()
     assert game.dc.loaded_tiebreakers == []
     assert game.tiebreaker_flow.active is False
+
+
+def test_closing_the_game_cancels_a_random_game_search(tied_game: object) -> None:
+    """The load's cancel check turns on once the request is no longer needed."""
+    game = tied_game
+    _space(game)
+    assert game.load_is_cancelled() is False
+    game.tiebreaker_flow.reset()
+    assert game.load_is_cancelled() is True
+
+
+def _page(player: object) -> str:
+    """Return the page a player's phone is showing."""
+    return player.page
+
+
+def test_only_tied_players_phones_show_the_buzzer(tied_game: object) -> None:
+    """Tied players get the buzz button; everyone else sees they sit out."""
+    game = tied_game
+    alice, bob, cara = game.players
+    _start_first_clue(game)
+    assert [_page(alice), _page(bob), _page(cara)] == ["buzz", "buzz", "sitout"]
+
+    game.buzz(1)
+    game.correct_answer()
+    assert [_page(alice), _page(bob), _page(cara)] == ["null", "null", "null"]
+
+
+def test_phones_clear_when_the_tiebreaker_runs_out(tied_game: object) -> None:
+    """Running out of clues takes the buzz button away until the next game."""
+    game = tied_game
+    game.tiebreaker_clue_queue = [_clue(1)]
+    _start_first_clue(game)
+    game.timer.fire()
+    _space(game)
+    assert {player.page for player in game.players} == {"null"}
+
+
+def test_failed_load_leaves_phones_alone(tied_game: object) -> None:
+    """A load that gives no clues never hands out the buzz button."""
+    game = tied_game
+    for player in game.players:
+        player.page = "null"
+    game.tiebreaker_clue_queue = []
+    _space(game)
+    assert {player.page for player in game.players} == {"null"}
+
+
+def _forbid_score_dialog(monkeypatch: object) -> None:
+    """Fail the test if the manual score override dialog opens."""
+
+    def get_int(*args: object, **kwargs: object) -> tuple:
+        raise AssertionError("the score override dialog should not open")
+
+    monkeypatch.setattr("jparty.domain.game_engine.QInputDialog.getInt", get_int)
+
+
+def test_scores_are_locked_from_the_tie_offer(
+    tied_game: object, monkeypatch: object
+) -> None:
+    """Edit Score and podium overrides stay off at the tie and after run-out.
+
+    The tied players are fixed when the tie is offered, so a later score
+    change could leave players who are no longer tied in the tiebreaker.
+    """
+    game = tied_game
+    game._has_editable_clue = True
+    _forbid_score_dialog(monkeypatch)
+    assert game.can_open_score_editor() is False
+    game.adjust_score(game.players[1])
+
+    game.tiebreaker_clue_queue = [_clue(1)]
+    _start_first_clue(game)
+    game.timer.fire()
+    _space(game)
+    assert game.active_question is None
+    assert game.can_open_score_editor() is False
+    game.adjust_score(game.players[1])
+    assert [player.score for player in game.players] == [1000, 1000, 200]
+
+
+def test_scores_stay_locked_after_a_win(tied_game: object, monkeypatch: object) -> None:
+    """A won tiebreaker keeps the scores, so the winner card matches the summary."""
+    game = tied_game
+    game._has_editable_clue = True
+    _forbid_score_dialog(monkeypatch)
+    _start_first_clue(game)
+    game.buzz(0)
+    game.correct_answer()
+    assert game.keystroke_manager._events["GENERATE_GRAPHS"].active
+    assert game.can_open_score_editor() is False
+    game.adjust_score(game.players[1])
+    assert [player.score for player in game.players] == [1000, 1000, 200]
+
+
+def test_scores_stay_locked_after_a_declined_tiebreaker(
+    tied_game: object, monkeypatch: object
+) -> None:
+    """Declining keeps the tie the tie card shows."""
+    game = tied_game
+    game._has_editable_clue = True
+    monkeypatch.setattr(game, "prompt_tiebreaker_game_id", lambda: None)
+    _space(game)
+    assert game.keystroke_manager._events["GENERATE_GRAPHS"].active
+    assert game.can_open_score_editor() is False
+
+
+def test_single_leader_keeps_scores_editable(game_with_players: object) -> None:
+    """With no tie for first, the end of the game leaves Edit Score alone."""
+    game = game_with_players
+    game.players[0].score = 1000
+    game._has_editable_clue = True
+    game.end_game()
+    assert game.can_open_score_editor() is True
 
 
 def test_summary_names_the_tiebreaker_winner(tied_game: object) -> None:

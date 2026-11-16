@@ -309,6 +309,11 @@ var updater = {
                 case "TOOLATE":
                     answerForm();
                     break;
+                case "SHOW_PAGE":
+                    // Sent when a tiebreaker starts or ends, so only the
+                    // tied players see the buzz button.
+                    load_page(jsondata.text);
+                    break;
             }
         }
     }

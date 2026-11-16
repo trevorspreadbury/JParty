@@ -376,7 +376,9 @@ def test_tiebreaker_clue_replaces_final_and_winner_returns(
     game.players[1].score = 1000
     clue = Question((0, 4), "Tiebreaker clue", "Tiebreaker answer", "Rivers", 2000)
     monkeypatch.setattr(game, "prompt_tiebreaker_game_id", lambda: "")
-    monkeypatch.setattr(game, "load_tiebreaker_clues", lambda gid: ("9", [clue]))
+    monkeypatch.setattr(
+        game, "load_tiebreaker_clues", lambda gid, is_cancelled: ("9", [clue])
+    )
     monkeypatch.setattr(game, "run_in_background", lambda work: work())
     game.current_round = game.data.rounds[-1]
     game.active_question = game.current_round.question

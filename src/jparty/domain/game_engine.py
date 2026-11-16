@@ -1193,6 +1193,11 @@ class Game(QObject):
         """
         if self.active_question is not None or self.soliciting_player:
             return False
+        # A tie for first fixes who plays the tiebreaker, so a later edit
+        # could leave the wrong players in it or a winner the summary
+        # disagrees with.
+        if self.tiebreaker_flow.locks_scores():
+            return False
         return self._has_editable_clue
 
     def _is_editable_clue_entry(self, entry: dict) -> bool:
@@ -2095,7 +2100,9 @@ class Game(QObject):
 
         Edits are ignored until a game has started (in the lobby before Start
         and after Close Game). There is no save to record them in yet, and an
-        edited score would break the new save's score chain.
+        edited score would break the new save's score chain. They are also
+        ignored once a tie for first has been offered a tiebreaker, for the
+        same reason as :meth:`can_open_score_editor`.
 
         Args:
             player: Player whose score should be edited.
@@ -2106,6 +2113,8 @@ class Game(QObject):
         if self.current_round is None:
             return
         if self.active_question is not None or self.soliciting_player:
+            return
+        if self.tiebreaker_flow.locks_scores():
             return
         (new_score, answered) = QInputDialog.getInt(
             self.host_display, "Adjust Score", "Enter a new score:", value=player.score

@@ -589,11 +589,21 @@ def test_load_tiebreaker_clues_uses_entered_or_random_game() -> None:
     assert (game_id, loaded) == ("4453", ["4453"])
     assert clues[0].value == 2000
 
-    def find_game(accept: object) -> tuple:
+    def is_cancelled() -> bool:
+        return False
+
+    def find_game(accept: object, is_cancelled: object) -> tuple:
         assert accept(game_data) is True
         assert accept(GameData([], "", "")) is False
+        searches.append(is_cancelled)
         return "777", game_data
 
-    game_id, clues = load_tiebreaker_clues("", find_game=find_game)
+    searches = []
+    game_id, clues = load_tiebreaker_clues(
+        "", find_game=find_game, is_cancelled=is_cancelled
+    )
     assert game_id == "777"
     assert clues
+    # The cancel check reaches the random-game search, so Close Game can
+    # stop it fetching more games.
+    assert searches == [is_cancelled]

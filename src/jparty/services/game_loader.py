@@ -740,6 +740,7 @@ def load_tiebreaker_clues(
     game_id: object,
     load_game: Callable[[object], object] | None = None,
     find_game: Callable[..., tuple[str, object]] | None = None,
+    is_cancelled: Callable[[], bool] = lambda: False,
 ) -> tuple[str, list[Question]]:
     """Load the clues for a tiebreaker from one game, or a random game.
 
@@ -749,6 +750,9 @@ def load_tiebreaker_clues(
         game_id: Game id the host entered. Blank picks a random game.
         load_game: Loads one game id. Defaults to ``get_game``.
         find_game: Finds a random game. Defaults to ``find_random_game``.
+        is_cancelled: Checked before each random game is tried, so a search
+            the host no longer needs (for example after Close Game) stops
+            fetching from J-Archive.
 
     Returns:
         ``(game_id, clues)`` with the game actually used and its clues in
@@ -761,7 +765,9 @@ def load_tiebreaker_clues(
     if game_id:
         game_data = load_game(game_id)
     else:
-        game_id, game_data = find_game(lambda data: bool(tiebreaker_clues(data)))
+        game_id, game_data = find_game(
+            lambda data: bool(tiebreaker_clues(data)), is_cancelled=is_cancelled
+        )
     return game_id, tiebreaker_clues(game_data)
 
 

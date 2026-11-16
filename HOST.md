@@ -255,8 +255,10 @@ or below), JParty shows the tie and offers a tiebreaker.
    run out. Final Jeopardy, blank clues, and image clues are skipped.
 3. The category is shown first, like Final Jeopardy. Press `Space` to show
    the clue, then read it and press `Space` again to open buzzing.
-4. Only the tied players can buzz. Judge with `Left Arrow` or `Right Arrow`
-   as usual. A miss reopens buzzing for the other tied players.
+4. Only the tied players can buzz. Their phones show the buzz button again;
+   everyone else's phone says they are sitting out. Judge with `Left Arrow`
+   or `Right Arrow` as usual. A miss reopens buzzing for the other tied
+   players.
 5. The first correct response wins the game. If nobody gets the clue,
    press `Space` for the next one (after revealing the answer, if
    triple-stumper reveal is on).
@@ -266,6 +268,10 @@ end-of-game summary names the tiebreaker winner. Each tiebreaker clue is
 saved in the game's clue history; see
 [Game Logging](docs/game-logging.md#tiebreaker-clues-and-tiebreaker_clue). If the game runs out of
 clues or can't be loaded, press `Space` to pick another game.
+
+Once a tie is offered a tiebreaker, scores are locked: `Edit Score` and
+podium clicks stay off until you close the game. Fix any ruling that caused
+the tie before the game ends.
 
 ## Editing Scores
 
@@ -299,10 +305,11 @@ The `Edit Score` button is disabled when:
 - A clue is currently active
 - JParty is waiting for Daily Double player selection
 - There is no recent clue history yet
+- The game ended in a tie for first (see [Tiebreaker](#tiebreaker))
 
 ### Clicking a player's podium
 
-When a game is running and no clue is active, clicking a player's podium opens a manual score override flow for that player. Podium clicks do nothing in the lobby, before Start or after Close Game, because there is no game to save the change in.
+When a game is running and no clue is active, clicking a player's podium opens a manual score override flow for that player. Podium clicks do nothing in the lobby, before Start or after Close Game, because there is no game to save the change in. They also do nothing once a tie for first has been offered a tiebreaker.
 
 Use this when:
 

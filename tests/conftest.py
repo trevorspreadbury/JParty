@@ -422,6 +422,17 @@ class FakeBuzzerController:
         """Test toolate."""
         self.toolate_calls += 1
 
+    def show_tiebreaker_buzzers(self, contenders: object) -> None:
+        """Test show tiebreaker buzzers: tied players buzz, others sit out."""
+        contenders = list(contenders)
+        for player in self.connected_players:
+            player.page = "buzz" if player in contenders else "sitout"
+
+    def end_tiebreaker_buzzers(self) -> None:
+        """Test end tiebreaker buzzers: every phone is cleared."""
+        for player in self.connected_players:
+            player.page = "null"
+
     def get_player_state_dict(self, player: object) -> object:
         """Test get player state dict."""
         return {

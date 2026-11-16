@@ -518,6 +518,8 @@ class FinalJeopardyFlow:
             self.game.keystroke_manager.activate("START_TIEBREAKER")
         else:
             self.game.keystroke_manager.activate("GENERATE_GRAPHS")
+        # A tie offer locks Edit Score (see TiebreakerFlow.locks_scores).
+        self.game._refresh_score_edit_controls()
 
     def generate_final_score_graphs(self) -> None:
         """Build and show the end-of-game audience summary screen."""
@@ -572,6 +574,19 @@ class TiebreakerFlow:
         """
         return len(winners) > 1
 
+    def locks_scores(self) -> bool:
+        """Return whether score edits are blocked because of a tie for first.
+
+        The tied players are fixed when the tiebreaker is offered, and the
+        winner card has to match the summary. So once a tie is offered a
+        tiebreaker, scores stay as they are until the game closes, whether
+        the host plays it, declines it, or it is already won.
+
+        Returns:
+            ``True`` once a tiebreaker has been offered in this game.
+        """
+        return bool(self.contenders)
+
     def reset(self) -> None:
         """Forget any tiebreaker, including one still loading."""
         self._load_token += 1
@@ -603,7 +618,12 @@ class TiebreakerFlow:
 
         def load() -> None:
             try:
-                loaded_id, clues = self.game.load_tiebreaker_clues(game_id)
+                loaded_id, clues = self.game.load_tiebreaker_clues(
+                    game_id,
+                    # A newer request or Close Game bumps the token, which
+                    # stops a random-game search that is still running.
+                    is_cancelled=lambda: token != self._load_token,
+                )
             except Exception:
                 logging.exception("Could not load tiebreaker clues")
                 loaded_id, clues = game_id, []
@@ -636,7 +656,24 @@ class TiebreakerFlow:
         self.source_game_id = game_id
         self.clues = list(clues)
         self.active = True
+        self._set_buzzer_pages(True)
         self.next_clue()
+
+    def _set_buzzer_pages(self, playing: bool) -> None:
+        """Show or clear the phones for a tiebreaker.
+
+        Args:
+            playing: ``True`` to give the tied players the buzz button and
+                show everyone else that they are sitting out; ``False`` to
+                clear every phone.
+        """
+        controller = self.game.buzzer_controller
+        if not controller:
+            return
+        if playing:
+            controller.show_tiebreaker_buzzers(self.contenders)
+        else:
+            controller.end_tiebreaker_buzzers()
 
     def _show_tie_again(self) -> None:
         """Return to the tie screen so the host can pick another game."""
@@ -671,6 +708,7 @@ class TiebreakerFlow:
             self.game.active_question = None
             self.game.previous_answerers = set()
             self.game.dc.unload_tiebreaker()
+            self._set_buzzer_pages(False)
             self.game.show_host_warning(
                 "Tiebreaker",
                 "That game has no more tiebreaker clues. "
@@ -806,6 +844,7 @@ class TiebreakerFlow:
         self.game.previous_answerers = set()
         self.game.tiebreaker_winner = winner
         self.game.dc.unload_tiebreaker()
+        self._set_buzzer_pages(False)
         for player in self.game.players:
             self.game.dc.player_widget(player).set_lights(player is winner)
         self.game.dc.final_window.show_winner(winner)
