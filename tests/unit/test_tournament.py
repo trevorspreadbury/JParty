@@ -136,15 +136,27 @@ def test_second_round_field_size_can_be_chosen() -> None:
     assert plan.rounds[0].layout.spots == 15
 
 
-def test_byes_cannot_exceed_certain_preliminary_winners() -> None:
-    """Only regular-game winners are guaranteed, so they cap the byes."""
+def test_byes_can_go_to_chase_winners_and_wildcards() -> None:
+    """Byes beyond the regular-game winners go to chase spots, then wildcards."""
     plan = plan_tournament(
         TournamentOptions(
-            14, use_second_round=True, semifinal_byes=5, second_round_players=6
+            14, use_second_round=True, semifinal_byes=6, second_round_players=6
         )
     )
-    assert not plan.valid
-    assert any("byes is too many" in problem for problem in plan.problems)
+    assert plan.valid
+    prelims = plan.rounds[0].layout
+    assert (prelims.regular_games, prelims.chase_games, prelims.wildcards) == (
+        4,
+        1,
+        7,
+    )
+    semifinal_seats = [seat for game in plan.rounds[2].games for seat in game.seats]
+    assert semifinal_seats.count("Bye (Prelim top winner)") == 4
+    assert semifinal_seats.count("Bye (Prelim top winner or wildcard)") == 1
+    assert semifinal_seats.count("Bye (Prelim top wildcard)") == 1
+    second_round_seats = [seat for game in plan.rounds[1].games for seat in game.seats]
+    assert second_round_seats == ["Prelim wildcard"] * 6
+    assert "winners first, then wildcards" in plan.rounds[0].advance_text
 
 
 def test_second_round_needs_more_than_nine_players() -> None:

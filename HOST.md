@@ -168,8 +168,9 @@ Semifinal spots:
 
 For larger fields, turn on `Add a second round before the Semifinals`:
 
-- `Semifinal byes`: the top-scoring preliminary winners who skip the second
-  round.
+- `Semifinal byes`: the top-scoring preliminary players who skip the second
+  round. Byes go to winners first, whether they won a regular or a chase
+  game. If there are more byes than winners, the top wildcards get the rest.
 - `Second-round players`: how many other players advance from the
   preliminaries. It resets to fill the remaining Semifinal spots with
   winners whenever you change the byes.

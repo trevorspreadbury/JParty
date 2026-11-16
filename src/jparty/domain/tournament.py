@@ -15,8 +15,10 @@ rounds in front of the Semifinals:
   overtake their original score for that spot.
 - A field of ``3n + 1`` players plays two chase games, one after the other.
 - An optional second round sits between the preliminaries and the
-  Semifinals. The top-scoring preliminary winners get a bye straight to the
-  Semifinals and everyone else who advanced plays the second round.
+  Semifinals. The top-scoring preliminary winners, from regular or chase
+  games, get a bye straight to the Semifinals. If there are more byes than
+  winners, the top wildcards get the rest. Everyone else who advanced plays
+  the second round.
 
 This module only plans the bracket's shape. It does not track results.
 """
@@ -62,7 +64,8 @@ class TournamentOptions:
         player_count: Number of players in the tournament.
         use_second_round: Whether to add a round between the preliminaries and
             the Semifinals.
-        semifinal_byes: Top preliminary winners who skip the second round.
+        semifinal_byes: Top preliminary advancers who skip the second round.
+            Winners come first, then wildcards.
             Ignored without a second round.
         second_round_players: Players in the second round, not counting byes.
             ``None`` uses :func:`default_second_round_players`. Ignored
@@ -132,7 +135,7 @@ class BracketRound:
         games: Games in the order they are played.
         layout: Qualifying layout, or ``None`` for rounds where only winners
             advance and no wildcards or chase games are used.
-        byes: Winners of this round who skip the next round.
+        byes: Top advancers from this round who skip the next round.
         advance_text: Short description of who moves on from this round.
     """
 
@@ -208,7 +211,7 @@ def default_second_round_players(semifinal_byes: int) -> int:
     """Return a second-round field that fills the Semifinals with winners only.
 
     Args:
-        semifinal_byes: Preliminary winners who skip the second round.
+        semifinal_byes: Preliminary advancers who skip the second round.
 
     Returns:
         Three players for each Semifinal spot the second round must fill.
@@ -411,11 +414,6 @@ def _plan_with_second_round(options: TournamentOptions) -> TournamentPlan:
         "Use more second-round players or more byes.",
     )
     problems = list(prelim_layout.problems) + list(second_layout.problems)
-    if prelim_layout.valid and byes > prelim_layout.regular_games:
-        problems.append(
-            f"Only {prelim_layout.regular_games} Preliminaries winners are "
-            f"certain, so {byes} byes is too many."
-        )
     if problems:
         return TournamentPlan(options, problems=tuple(problems))
     prelims = _qualifying_round(
@@ -465,7 +463,11 @@ def _qualifying_round(
     if layout.wildcards:
         advance_parts.append(f"{layout.wildcards} wildcards")
     advance_text = " + ".join(advance_parts)
-    if byes:
+    if byes > layout.regular_games:
+        advance_text += (
+            f"; top {byes} get a Semifinal bye (winners first, then wildcards)"
+        )
+    elif byes:
         advance_text += f"; top {byes} winners get a Semifinal bye"
     return BracketRound(
         name, tuple(games), layout=layout, byes=byes, advance_text=advance_text
@@ -505,19 +507,35 @@ def _advancers(bracket_round: BracketRound) -> list[str]:
     layout = bracket_round.layout
     if layout is None:
         return [f"{game.name} winner" for game in bracket_round.games]
-    labels = [f"Bye ({short_name} top winner)"] * bracket_round.byes
     if bracket_round.byes:
-        winners = [f"{short_name} winner"] * (layout.regular_games - bracket_round.byes)
-    else:
-        winners = [
-            f"{game.name} winner" for game in bracket_round.games if not game.chase
-        ]
-    labels += winners
+        return _advancers_with_byes(short_name, layout, bracket_round.byes)
+    labels = [f"{game.name} winner" for game in bracket_round.games if not game.chase]
     labels += [
         f"{game.name} winner or wildcard" for game in bracket_round.games if game.chase
     ]
     labels += [f"{short_name} wildcard"] * layout.wildcards
     return labels
+
+
+def _advancers_with_byes(
+    short_name: str, layout: QualifyingLayout, byes: int
+) -> list[str]:
+    """Return advancer labels for a round whose top players get byes.
+
+    Byes go to the top-scoring winners, whether they won a regular or a chase
+    game. When there are more byes than winners, the top wildcards get the
+    rest. Which winner gets a bye depends on scores, so the labels give counts
+    rather than naming games.
+    """
+    winners = [f"{short_name} winner"] * layout.regular_games
+    chase_spots = [f"{short_name} winner or wildcard"] * layout.chase_games
+    wildcards = [f"{short_name} wildcard"] * layout.wildcards
+    bye_labels = (
+        [f"Bye ({short_name} top winner)"] * layout.regular_games
+        + [f"Bye ({short_name} top winner or wildcard)"] * layout.chase_games
+        + [f"Bye ({short_name} top wildcard)"] * layout.wildcards
+    )
+    return bye_labels[:byes] + (winners + chase_spots + wildcards)[byes:]
 
 
 def _deal(entrants: list[str], capacities: list[int]) -> list[list[str]]:

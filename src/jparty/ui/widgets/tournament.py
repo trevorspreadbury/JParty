@@ -76,7 +76,8 @@ class TournamentDesigner(QDialog):
         self.byes_spinbox = QSpinBox(self)
         self.byes_spinbox.setRange(0, SEMIFINAL_FIELD_SIZE - 1)
         self.byes_spinbox.setToolTip(
-            "Top-scoring preliminary winners who skip straight to the Semifinals."
+            "Top-scoring preliminary players who skip straight to the Semifinals."
+            " Winners come first, then wildcards."
         )
         self.second_round_players_spinbox = QSpinBox(self)
         self.second_round_players_spinbox.setRange(1, MAX_TOURNAMENT_PLAYERS)
