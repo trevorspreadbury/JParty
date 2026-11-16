@@ -48,11 +48,13 @@ from jparty.domain.state import (
     current_saved_players,
     history_score_totals,
     is_question_history_entry,
+    is_tiebreaker_clue,
     load_question_history,
     load_saved_game_data,
     question_for_history_entry,
     read_history_file,
     save_general_state,
+    tiebreaker_winner_number,
 )
 from jparty.services.game_loader import (
     build_game_from_board_selection_configs,
@@ -847,12 +849,26 @@ class Game(QObject):
         )
         self._mark_completed_questions(question_history)
         self._restore_player_scores(raw_history)
-        if question_history:
+        # Tiebreaker clues use question numbers too, so continue after them.
+        numbered_entries = question_history + [
+            entry for entry in raw_history if is_tiebreaker_clue(entry)
+        ]
+        if numbered_entries:
             self.question_number = (
-                max(entry.get("question_number", 0) for entry in question_history) + 1
+                max(entry.get("question_number", 0) for entry in numbered_entries) + 1
             )
         else:
             self.question_number = 1
+        # A tiebreaker won before the app closed still decides the game.
+        saved_winner_number = tiebreaker_winner_number(raw_history)
+        self.tiebreaker_winner = next(
+            (
+                player
+                for player in self.players
+                if player.player_number == saved_winner_number
+            ),
+            None,
+        )
         self.current_round = self._get_resume_round()
         self.active_question = None
         self._awaiting_stumped_answer_reveal = False

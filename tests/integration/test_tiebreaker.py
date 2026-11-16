@@ -371,3 +371,118 @@ def test_seat_change_renumbers_tiebreaker_players(tied_game: object) -> None:
     assert line["contenders"] == [2, 0]
     assert line["winner"] == 0
     assert line["answer_attempts"][0]["player_index"] == 0
+
+
+def _write_tied_save(
+    saved_dir: object, game_data: object, tiebreaker_lines: list
+) -> None:
+    """Write a save whose first board is played out to a 3000-3000 tie."""
+    saved_dir.mkdir()
+    general = {
+        "game_id": "4453",
+        "players": [
+            {"name": "Alice", "player_number": 0},
+            {"name": "Bob", "player_number": 1},
+        ],
+        "selected_round_indices": [0],
+    }
+    (saved_dir / "general.json").write_text(json.dumps(general), encoding="utf-8")
+    scores = {0: 0, 1: 0}
+    lines = []
+    for number, question in enumerate(game_data.rounds[0].questions, start=1):
+        player = question.index[0] % 2
+        before = scores[player]
+        scores[player] += question.value
+        lines.append(
+            {
+                "question_index": [0, list(question.index)],
+                "question_number": number,
+                "round_index": 0,
+                "category": question.category,
+                "value": question.value,
+                "is_daily_double": False,
+                "buzz_phases": [],
+                "answer_attempts": [
+                    {
+                        "player_index": player,
+                        "answer_correct": True,
+                        "timestamp": 1700000000.0 + number,
+                        "score_before": before,
+                        "score_after": scores[player],
+                    }
+                ],
+                "completed_at": 1700000000.0 + number,
+            }
+        )
+    lines.extend(tiebreaker_lines)
+    (saved_dir / "question_history.jsonl").write_text(
+        "".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8"
+    )
+
+
+def _tiebreaker_line(question_number: int, winner: int | None) -> dict:
+    """Return one saved tiebreaker_clue line between players 0 and 1."""
+    return {
+        "type": "tiebreaker_clue",
+        "question_number": question_number,
+        "source_game_id": "1234",
+        "source_question_index": [0, 4],
+        "category": "RIVERS",
+        "value": 2000,
+        "text": "Clue",
+        "answer": "Answer",
+        "contenders": [0, 1],
+        "buzz_phases": [],
+        "answer_attempts": [],
+        "winner": winner,
+        "completed_at": 1700001000.0 + question_number,
+    }
+
+
+def _resume(game: object, saved_dir: object, monkeypatch: object) -> None:
+    """Resume ``saved_dir`` with Alice and Bob back in their seats."""
+    from jparty.domain.models import Player
+    from jparty.services import game_loader
+    from tests.conftest import FakeWaiter
+
+    game_data = game.data
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: game_data)
+    players = [Player("Alice", FakeWaiter(), 0), Player("Bob", FakeWaiter(), 1)]
+    game.prepare_resume_from_dir(saved_dir)
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+    game.start_game()
+
+
+def test_resume_after_won_tiebreaker_ends_with_that_winner(
+    game: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """A tiebreaker won before the app closed is not offered again."""
+    saved_dir = temp_dir / "saved-won-tiebreaker"
+    _write_tied_save(
+        saved_dir, game.data, [_tiebreaker_line(31, None), _tiebreaker_line(32, 1)]
+    )
+    _resume(game, saved_dir, monkeypatch)
+    assert [player.score for player in game.players] == [9000, 9000]
+    assert game.tiebreaker_winner is game.players[1]
+
+    game.keystroke_manager.call(Qt.Key.Key_Space)  # Finished board -> end.
+    events = game.keystroke_manager._events
+    assert game.dc.final_window.winner is game.players[1]
+    assert events["GENERATE_GRAPHS"].active
+    assert not events["START_TIEBREAKER"].active
+
+
+def test_resume_mid_tiebreaker_offers_it_and_continues_numbering(
+    game: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """With no winner saved, resume offers a tiebreaker numbered after the last."""
+    saved_dir = temp_dir / "saved-mid-tiebreaker"
+    _write_tied_save(saved_dir, game.data, [_tiebreaker_line(31, None)])
+    _resume(game, saved_dir, monkeypatch)
+    assert game.tiebreaker_winner is None
+    assert game.question_number == 32
+
+    game.keystroke_manager.call(Qt.Key.Key_Space)
+    assert game.keystroke_manager._events["START_TIEBREAKER"].active

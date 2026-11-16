@@ -380,6 +380,11 @@ The end-of-game summary (and `jparty summary`) names the `winner` of the last
 won tiebreaker clue as the game's winner. `player_renumber` lines remap
 `contenders` and `winner` along with every `player_index`.
 
+On resume, question numbering continues after the highest `question_number`
+of the clue and `tiebreaker_clue` lines. If the game's tiebreaker was already
+won, the resumed game ends with that winner. If the app closed before anyone
+won, the end of the game offers the tiebreaker again.
+
 ## Score Corrections and Logging
 
 Hosts can correct scoring in two ways once a game is in progress:

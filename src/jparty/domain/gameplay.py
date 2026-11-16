@@ -502,6 +502,10 @@ class FinalJeopardyFlow:
             self.game.score_recorder.flush_question_history()
         top_score = max(player.score for player in self.game.players)
         winners = [player for player in self.game.players if player.score == top_score]
+        # A resumed game whose tiebreaker was already won ends with that
+        # winner instead of offering another tiebreaker.
+        if len(winners) > 1 and self.game.tiebreaker_winner in winners:
+            winners = [self.game.tiebreaker_winner]
         for winner in winners:
             self.game.dc.player_widget(winner).set_lights(True)
         if len(winners) == 1:
