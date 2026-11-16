@@ -429,7 +429,10 @@ class LecternHandler(tornado.web.RequestHandler):
         """Render the lectern page for the requested player slot.
 
         The player number is written into a script on the page, so anything
-        other than a valid slot number is rejected.
+        other than a valid slot number is rejected. With no ``player`` at
+        all, the page uses the seat it last showed on this browser, or asks
+        for one (press 1 to 6), so every lectern laptop can open the same
+        address.
 
         Returns:
             ``None``.
@@ -437,13 +440,16 @@ class LecternHandler(tornado.web.RequestHandler):
         Raises:
             tornado.web.HTTPError: 400 when ``player`` is not a valid slot.
         """
-        try:
-            player_number = int(self.get_argument("player", "0"))
-        except ValueError:
-            raise tornado.web.HTTPError(400, "Invalid player number") from None
-        if not 0 <= player_number < MAXPLAYERS:
-            raise tornado.web.HTTPError(400, "Player number out of range")
-        self.render("lectern.html", player_number=player_number)
+        raw_player = self.get_argument("player", None)
+        player_number = None
+        if raw_player is not None:
+            try:
+                player_number = int(raw_player)
+            except ValueError:
+                raise tornado.web.HTTPError(400, "Invalid player number") from None
+            if not 0 <= player_number < MAXPLAYERS:
+                raise tornado.web.HTTPError(400, "Player number out of range")
+        self.render("lectern.html", player_number=player_number, max_players=MAXPLAYERS)
 
 
 class LecternSocketHandler(tornado.websocket.WebSocketHandler):

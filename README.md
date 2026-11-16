@@ -53,6 +53,8 @@ workflow for importing and approving image clues, see [HOST.md](HOST.md).
 - macOS, Windows or Linux
 - Two monitors
 - A device with web access for each player
+- Optional: a computer and monitor for each lectern (see
+  [Setting Up Lecterns](HOST.md#setting-up-lecterns))
 
 ### For compiling from source code
 - Python [>=3.11]

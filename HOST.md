@@ -9,6 +9,7 @@ For the saved-state and clue-history file format, see
 ## Table of Contents
 
 - [Before You Start](#before-you-start)
+- [Setting Up Lecterns](#setting-up-lecterns)
 - [Welcome Screen Overview](#welcome-screen-overview)
 - [Pre-Game Image Preview](#pre-game-image-preview)
 - [Resume Flow](#resume-flow)
@@ -24,6 +25,130 @@ For the saved-state and clue-history file format, see
 - Put the audience board on the TV or shared screen. JParty needs two screens unless debug mode is on (see the README).
 - Make sure players are on the same network as the host machine so they can join from the QR code.
 - Three players is the closest to a traditional Jeopardy! game, but JParty supports fewer, or up to 6, if you want a different size of party game.
+
+## Setting Up Lecterns
+
+Lecterns are optional screens, one per player, that show the player's name,
+score, buzz-in lights and countdown. Each one is a web page, so any computer
+on the same network can show it. A common setup is a laptop behind each
+lectern, connected to a monitor.
+
+A lectern page can be left open all evening. It reconnects by itself when
+JParty restarts or the Wi-Fi drops, shows the logo while its seat is empty,
+and never needs a refresh.
+
+### Open the lectern page
+
+On each lectern laptop, open `http://<address>/lectern` in a browser, where
+`<address>` is the address shown on the JParty welcome screen (for example
+`http://192.168.1.20:8080/lectern`). Every lectern can use the same address.
+
+The first time, the page asks which lectern it is. Press `1` to `6` on the
+laptop's keyboard. The browser remembers the choice, so next time the same
+address opens the same lectern.
+
+### Lectern keys
+
+Everything works from the keyboard, so you don't have to find the mouse:
+
+| Key | What it does |
+|-----|--------------|
+| `F` | Full screen on or off |
+| `R` | Turn the lectern a quarter turn clockwise (`Shift+R` turns it back) |
+| `1` to `6` | Change which lectern this screen shows |
+| `H` or `?` | Show which lectern this is and these keys |
+
+The mouse cursor hides itself after two seconds.
+
+### Monitors on their side (portrait)
+
+You don't need to change the laptop's display settings for a monitor mounted
+on its side. Leave the display as it is and press `R` until the lectern is
+upright. The page remembers the rotation.
+
+You can also put the seat and rotation in the address, which is handy for the
+kiosk commands below:
+
+- `player=0` to `player=5`: the seat, counting from 0 (`player=0` is lectern 1)
+- `rotate=90`, `rotate=180`, `rotate=270`, or `rotate=right` / `rotate=left`
+  (a quarter turn clockwise or counterclockwise)
+
+For example: `http://192.168.1.20:8080/lectern?player=1&rotate=right`.
+
+### Show only the external monitor
+
+If a lectern laptop shows a picture on both its own screen and the monitor,
+the mouse and browser windows can end up on the screen you can't see. Set
+each laptop to use only the monitor:
+
+- **Windows:** press `Win+P` and choose **Second screen only**. To close the
+  lid without the laptop going to sleep, open Control Panel → Power Options →
+  **Choose what closing the lid does**, and set **Plugged in** to
+  **Do nothing**.
+- **macOS:** with the power adapter connected, close the lid. Some Macs also
+  need an external keyboard or mouse connected to keep using the monitor with
+  the lid closed. You can also mirror the displays instead (System Settings →
+  Displays): because the lectern page does the rotating, both screens can stay
+  in landscape.
+- **Ubuntu:** press `Super+P` until only the external display is used, or
+  choose **Single Display** in Settings → Displays. With a monitor connected
+  and the power plugged in, closing the lid usually keeps it running. If it
+  goes to sleep instead, set `HandleLidSwitchExternalPower=ignore` in
+  `/etc/systemd/logind.conf` and restart.
+
+### Start in kiosk mode (optional)
+
+A browser started in kiosk mode opens straight into full screen, with no
+address bar, and stays that way. Close the browser before running the
+command. If it is already open, the command may open an ordinary window
+instead. Change the address to match your welcome screen, and add `player=`
+or `rotate=` if you like.
+
+- **Windows** (Microsoft Edge). In Command Prompt, run:
+
+  ```bat
+  start "" msedge --kiosk "http://192.168.1.20:8080/lectern" --edge-kiosk-type=fullscreen --no-first-run --user-data-dir=%USERPROFILE%\jparty-lectern
+  ```
+
+  For Chrome, use `chrome` instead of `msedge` and leave out
+  `--edge-kiosk-type=fullscreen`.
+- **macOS** (Google Chrome). In Terminal, run:
+
+  ```bash
+  open -na "Google Chrome" --args --kiosk --no-first-run --user-data-dir="$HOME/jparty-lectern" "http://192.168.1.20:8080/lectern"
+  ```
+
+  Safari has no kiosk mode. Open the page and press `F` instead.
+- **Ubuntu** (Firefox comes with Ubuntu). In a terminal, run:
+
+  ```bash
+  firefox --kiosk "http://192.168.1.20:8080/lectern"
+  ```
+
+  For Chrome or Chromium, use
+  `google-chrome --kiosk --user-data-dir="$HOME/jparty-lectern" "http://192.168.1.20:8080/lectern"`
+  (or `chromium` instead of `google-chrome`).
+
+The `--user-data-dir` option gives the lectern its own browser profile, so it
+starts in kiosk mode even if you use the same browser for other things. To
+leave kiosk mode, press `Alt+F4` (Windows and Ubuntu) or `Cmd+Q` (macOS).
+
+### Keep the laptops awake
+
+A lectern that goes to sleep or turns its screen off goes dark mid-game. On
+each lectern laptop, plug in the power and turn off sleep and screen
+blanking:
+
+- **Windows:** Settings → System → Power → **Screen and sleep**: set the
+  plugged-in options to **Never**. Or run
+  `powercfg /change monitor-timeout-ac 0` and
+  `powercfg /change standby-timeout-ac 0`.
+- **macOS:** run `caffeinate -d` in Terminal and leave that window open while
+  you play (press `Ctrl+C` to stop it).
+- **Ubuntu:** Settings → Power: set **Screen Blank** to **Never** and turn off
+  **Automatic Suspend** when plugged in. Or run
+  `gsettings set org.gnome.desktop.session idle-delay 0` and
+  `gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'`.
 
 ## Welcome Screen Overview
 

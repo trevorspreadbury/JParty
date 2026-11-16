@@ -6,6 +6,26 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Lecterns can be set up from the keyboard, without the mouse (#46):
+  - `/lectern` with no seat asks which lectern it is (press 1 to 6), and
+    the browser remembers the answer. Every lectern laptop can open the same
+    address.
+  - `F` turns full screen on or off, `1` to `6` change the seat without
+    reloading, and `H` shows which lectern this is.
+  - `R` turns the lectern a quarter turn for monitors mounted on their side,
+    so the laptop's display settings can stay as they are. `rotate=` in the
+    address does the same, and the page remembers it.
+  - The mouse cursor hides itself after two seconds.
+- HOST.md has a new "Setting Up Lecterns" section: showing only the external
+  monitor, kiosk-mode commands and keeping the laptop awake, for Windows,
+  macOS and Ubuntu.
+
+### Changed
+- `/lectern` with no `player` no longer opens lectern 1. It opens the seat
+  this browser used last, or asks for one. `/lectern?player=0` still opens
+  lectern 1.
+
 ### Fixed
 - Lectern pages no longer need a manual refresh (#46):
   - They keep reconnecting for as long as they are open, through JParty
