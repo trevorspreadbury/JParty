@@ -632,3 +632,27 @@ class HostFinalJeopardyWidget(FinalJeopardyWidget, HostQuestionWidget):
         self.hint_label.deleteLater()
         self.hint_label = None
         self.answer_label.setVisible(True)
+
+
+class TiebreakerWidget(FinalJeopardyWidget):
+    """Tiebreaker clue that shows its category first, like Final Jeopardy.
+
+    After the host reveals it, the clue is played like a normal clue.
+    """
+
+
+class HostTiebreakerWidget(HostFinalJeopardyWidget):
+    """Host-side tiebreaker clue with a prompt to reveal it."""
+
+    def __init__(self, question: object, parent: object) -> None:
+        """Initialize the host tiebreaker widget.
+
+        Args:
+            question: Tiebreaker clue.
+            parent: Parent widget.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__(question, parent)
+        self.hint_label.setText("Tiebreaker! Press Space to show the clue.")

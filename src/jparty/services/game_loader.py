@@ -694,6 +694,77 @@ def find_random_game(
     return "", None
 
 
+def tiebreaker_clues(
+    game_data: object, rng: random.Random | None = None
+) -> list[Question]:
+    """Return a game's clues in the order a tiebreaker asks them (#44).
+
+    The highest-value clues come first. Clues of equal value are shuffled,
+    so the tiebreaker asks a random top-value clue and only falls back to a
+    lower value once every higher one has been used. Final Jeopardy, blank
+    clues, and clues that need an image are left out. The returned clues are
+    copies with the Daily Double flag cleared, so the source game is not
+    changed.
+
+    Args:
+        game_data: Loaded game to take clues from. ``None`` gives no clues.
+        rng: Random source for the shuffle. Defaults to a new
+            ``random.Random``.
+
+    Returns:
+        The tiebreaker clues, highest value first.
+    """
+    rng = rng or random.Random()  # noqa: S311
+    clues_by_value = defaultdict(list)
+    for round_data in getattr(game_data, "rounds", None) or []:
+        if isinstance(round_data, FinalBoard):
+            continue
+        for question in round_data.questions:
+            if not str(question.text or "").strip() or question.image:
+                continue
+            if not isinstance(question.value, int) or question.value <= 0:
+                continue
+            clue = clone_question(question)
+            clue.dd = False
+            clue.complete = False
+            clues_by_value[clue.value].append(clue)
+    ordered = []
+    for value in sorted(clues_by_value, reverse=True):
+        clues = clues_by_value[value]
+        rng.shuffle(clues)
+        ordered.extend(clues)
+    return ordered
+
+
+def load_tiebreaker_clues(
+    game_id: object,
+    load_game: Callable[[object], object] | None = None,
+    find_game: Callable[..., tuple[str, object]] | None = None,
+) -> tuple[str, list[Question]]:
+    """Load the clues for a tiebreaker from one game, or a random game.
+
+    This reaches the network, so call it off the UI thread.
+
+    Args:
+        game_id: Game id the host entered. Blank picks a random game.
+        load_game: Loads one game id. Defaults to ``get_game``.
+        find_game: Finds a random game. Defaults to ``find_random_game``.
+
+    Returns:
+        ``(game_id, clues)`` with the game actually used and its clues in
+        tiebreaker order. ``clues`` is empty when the game could not be
+        loaded or has no usable clue.
+    """
+    load_game = load_game or get_game
+    find_game = find_game or find_random_game
+    game_id = str(game_id or "").strip()
+    if game_id:
+        game_data = load_game(game_id)
+    else:
+        game_id, game_data = find_game(lambda data: bool(tiebreaker_clues(data)))
+    return game_id, tiebreaker_clues(game_data)
+
+
 __all__ = [
     "STANDARD_ROUND_LABELS",
     "advanced_standard_board_selection",
@@ -712,6 +783,7 @@ __all__ = [
     "get_game_html",
     "get_jarchive_game_html",
     "get_random_game",
+    "load_tiebreaker_clues",
     "save_game_html",
     "get_wayback_game_html",
     "list_to_game",
@@ -720,4 +792,5 @@ __all__ = [
     "round_matches_board_type",
     "select_advanced_daily_double_indices",
     "standard_board_daily_double_indices",
+    "tiebreaker_clues",
 ]

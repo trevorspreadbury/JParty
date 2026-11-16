@@ -359,3 +359,51 @@ def test_host_key_auto_repeat_is_ignored(
     host_window.keyPressEvent(event)
 
     assert len(calls) == expected_calls
+
+
+def test_tiebreaker_clue_replaces_final_and_winner_returns(
+    qtbot: object, game_with_players: object, monkeypatch: object
+) -> None:
+    """A tiebreaker plays in the board slot on real windows (#44).
+
+    The category shows first, Space reveals the clue, a correct answer
+    brings back the winner card, and the summary and Close Game still work.
+    """
+    game = game_with_players
+    board_window, host_window = _game_with_real_windows(qtbot, game, monkeypatch)
+    game.start_game()
+    game.players[0].score = 1000
+    game.players[1].score = 1000
+    clue = Question((0, 4), "Tiebreaker clue", "Tiebreaker answer", "Rivers", 2000)
+    monkeypatch.setattr(game, "prompt_tiebreaker_game_id", lambda: "")
+    monkeypatch.setattr(game, "load_tiebreaker_clues", lambda gid: ("9", [clue]))
+    monkeypatch.setattr(game, "run_in_background", lambda work: work())
+    game.current_round = game.data.rounds[-1]
+    game.active_question = game.current_round.question
+    game.dc.load_final(game.active_question)
+    final_clue_widget = board_window.question_widget
+    game.dc.load_final_judgement()
+    game.end_game()
+
+    game.keystroke_manager.call(Qt.Key.Key_Space)
+    for window in (board_window, host_window):
+        tiebreaker_widget = _board_slot_widget(window)
+        assert tiebreaker_widget is window.question_widget
+        assert tiebreaker_widget.category_label.text() == "Rivers"
+        assert window.final_display.isHidden()
+    assert _board_slot_widget(board_window) is not final_clue_widget
+
+    game.keystroke_manager.call(Qt.Key.Key_Space)
+    assert board_window.question_widget.category_label is None
+    assert not board_window.question_widget.question_label.isHidden()
+    game.keystroke_manager.call(Qt.Key.Key_Space)
+    game.buzz(1)
+    game.keystroke_manager.call(Qt.Key.Key_Left)
+    assert game.players[1].score == 1000
+    assert game.tiebreaker_winner is game.players[1]
+    assert board_window.final_window.guess_label.text() == "We have a winner!"
+
+    game.keystroke_manager.call(Qt.Key.Key_Space)
+    assert _board_slot_widget(board_window) is board_window.graph_display
+    game.keystroke_manager.call(Qt.Key.Key_Space)
+    _assert_back_in_lobby(board_window, host_window)

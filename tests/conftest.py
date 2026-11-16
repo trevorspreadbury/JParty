@@ -308,6 +308,8 @@ class FakeDisplay:
         self.loaded_end_game_summaries = []
         self.restart_calls = 0
         self.image_review_questions = []
+        self.loaded_tiebreakers = []
+        self.unloaded_tiebreakers = 0
 
     def hide_welcome_widgets(self) -> None:
         """Test hide welcome widgets."""
@@ -325,6 +327,15 @@ class FakeDisplay:
     def load_final(self, question: object) -> None:
         """Test load final."""
         self.loaded_finals.append(question)
+
+    def load_tiebreaker(self, question: object) -> None:
+        """Test load tiebreaker."""
+        self.loaded_tiebreakers.append(question)
+        self.question_widget = FakeQuestionWidget()
+
+    def unload_tiebreaker(self) -> None:
+        """Test unload tiebreaker."""
+        self.unloaded_tiebreakers += 1
 
     def load_final_judgement(self) -> None:
         """Test load final judgement."""

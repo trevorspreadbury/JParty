@@ -507,7 +507,11 @@ class FinalJeopardyFlow:
         else:
             self.game.dc.final_window.show_tie()
         logging.info("Game over!")
-        self.game.keystroke_manager.activate("GENERATE_GRAPHS")
+        if self.game.tiebreaker_flow.can_offer(winners, top_score):
+            self.game.tiebreaker_flow.contenders = winners
+            self.game.keystroke_manager.activate("START_TIEBREAKER")
+        else:
+            self.game.keystroke_manager.activate("GENERATE_GRAPHS")
 
     def generate_final_score_graphs(self) -> None:
         """Build and show the end-of-game audience summary screen."""
@@ -521,3 +525,226 @@ class FinalJeopardyFlow:
         QApplication.processEvents()
         self.game.main_display.load_end_game_summary(summary)
         self.game.keystroke_manager.activate("CLOSE_GAME")
+
+
+class TiebreakerFlow:
+    """Own the tiebreaker played when players tie for first (#44).
+
+    When the game ends with two or more players tied on a positive score,
+    the host can play tossups from another game. The host is asked for a
+    game id (blank picks a random game). That game's highest-value clues
+    are then asked one at a time, in random order. Each clue first shows
+    its category, like Final Jeopardy, and is then played like a normal
+    clue, except that only the tied players can buzz and no ruling changes
+    a score. The first correct response wins the game.
+    """
+
+    def __init__(self, game: object) -> None:
+        """Store the owning game facade and start with no tiebreaker."""
+        self.game = game
+        self.contenders = []
+        self.clues = []
+        self.source_game_id = ""
+        self.active = False
+        self.loading = False
+        # Bumped whenever a load starts or the game closes, so clues that
+        # arrive for an earlier request are ignored.
+        self._load_token = 0
+
+    def can_offer(self, winners: list, top_score: int) -> bool:
+        """Return whether a tiebreaker can settle this result.
+
+        Args:
+            winners: Players sharing the top score.
+            top_score: The top score.
+
+        Returns:
+            ``True`` when two or more players tie on a positive score. When
+            nobody finishes above $0 there is no winner to decide.
+        """
+        return len(winners) > 1 and top_score > 0
+
+    def reset(self) -> None:
+        """Forget any tiebreaker, including one still loading."""
+        self._load_token += 1
+        self.contenders = []
+        self.clues = []
+        self.source_game_id = ""
+        self.active = False
+        self.loading = False
+
+    def offer(self) -> None:
+        """Ask the host for a tiebreaker game and start loading its clues.
+
+        Cancelling the prompt keeps the tie, and the next ``Space`` shows the
+        end-of-game summary. Loading runs off the UI thread because it can
+        reach J-Archive.
+        """
+        game_id = self.game.prompt_tiebreaker_game_id()
+        if game_id is None:
+            logging.info("Host declined a tiebreaker; the game ends in a tie")
+            self.game.keystroke_manager.activate("GENERATE_GRAPHS")
+            return
+        game_id = game_id.strip()
+        self.loading = True
+        self._load_token += 1
+        token = self._load_token
+        logging.info("Loading tiebreaker clues from %s", game_id or "a random game")
+        self.game.dc.final_window.guess_label.setText("Tiebreaker!")
+        self.game.dc.final_window.wager_label.setText("Loading clues...")
+
+        def load() -> None:
+            try:
+                loaded_id, clues = self.game.load_tiebreaker_clues(game_id)
+            except Exception:
+                logging.exception("Could not load tiebreaker clues")
+                loaded_id, clues = game_id, []
+            self.game.tiebreaker_loaded_trigger.emit(token, str(loaded_id), clues)
+
+        self.game.run_in_background(load)
+
+    def clues_loaded(self, token: int, game_id: str, clues: list) -> None:
+        """Start the tiebreaker once its clues have loaded.
+
+        Args:
+            token: Load request the clues belong to.
+            game_id: Game the clues came from.
+            clues: Clues in tiebreaker order. Empty when loading failed.
+        """
+        if token != self._load_token or not self.loading:
+            logging.info("Ignoring tiebreaker clues for an old request")
+            return
+        self.loading = False
+        if not clues:
+            source = f" from game {game_id}" if game_id else ""
+            self.game.show_host_warning(
+                "Tiebreaker",
+                f"Couldn't load tiebreaker clues{source}. "
+                "Press Space to try another game.",
+            )
+            self._show_tie_again()
+            return
+        logging.info("Tiebreaker: %s clues from game %s", len(clues), game_id)
+        self.source_game_id = game_id
+        self.clues = list(clues)
+        self.active = True
+        self.next_clue()
+
+    def _show_tie_again(self) -> None:
+        """Return to the tie screen so the host can pick another game."""
+        self.game.dc.final_window.guess_label.setText("We have a tie!")
+        self.game.dc.final_window.wager_label.setText("")
+        self.game.keystroke_manager.activate("START_TIEBREAKER")
+
+    def _clear_clue(self) -> None:
+        """Clear the buzzer state left by the last tiebreaker clue."""
+        if self.game.timer:
+            self.game.timer.cancel()
+        self.game.timer = None
+        self.game.accepting_responses = False
+        self.game.answering_player = None
+        self.game.early_buzzes = set()
+        self.game.responses_open_time = None
+        self.game._open_responses_times = []
+        self.game._all_buzz_attempts = []
+        self.game._answer_attempts = []
+        self.game._successful_buzz_times = []
+
+    def next_clue(self) -> None:
+        """Show the next tiebreaker clue's category.
+
+        When the clues run out, the tiebreaker stops and the host can start
+        another one from a different game.
+        """
+        self._clear_clue()
+        if not self.clues:
+            logging.info("Tiebreaker ran out of clues")
+            self.active = False
+            self.game.active_question = None
+            self.game.previous_answerers = set()
+            self.game.dc.unload_tiebreaker()
+            self.game.show_host_warning(
+                "Tiebreaker",
+                "That game has no more tiebreaker clues. "
+                "Press Space to pick another game.",
+            )
+            self._show_tie_again()
+            self.game._refresh_score_edit_controls()
+            return
+        clue = self.clues.pop(0)
+        self.game.active_question = clue
+        # Only the tied players may buzz. ClueFlow.buzz ignores anyone who
+        # has already answered, so everyone else starts in that set.
+        self.game.previous_answerers = {
+            player for player in self.game.players if player not in self.contenders
+        }
+        self.game.dc.load_tiebreaker(clue)
+        for player in self.game.players:
+            self.game.dc.player_widget(player).set_lights(False)
+        self.game.player_state_broadcaster.update_all()
+        self.game.keystroke_manager.activate("TIEBREAKER_SHOW_CLUE")
+        self.game._refresh_score_edit_controls()
+
+    def show_clue(self) -> None:
+        """Replace the category with the clue, ready for the host to read."""
+        self.game.dc.question_widget.show_question()
+        self.game.keystroke_manager.activate("OPEN_RESPONSES")
+
+    def correct_answer(self) -> None:
+        """End the tiebreaker with the answering player as the winner."""
+        winner = self.game.answering_player
+        logging.info("%s won the tiebreaker", winner)
+        if self.game.timer:
+            self.game.timer.cancel()
+        self.game.dc.borders.lights(False)
+        self.game.clue_flow.answer_given()
+        self.finish(winner)
+
+    def incorrect_answer(self) -> None:
+        """Reopen buzzing for the other tied players, or move on."""
+        logging.info("%s missed the tiebreaker clue", self.game.answering_player)
+        self.game.clue_flow.answer_given()
+        if all(player in self.game.previous_answerers for player in self.contenders):
+            if self.game.timer:
+                self.game.timer.cancel()
+            self.stumped()
+            return
+        # As on a normal clue, the rebound is a fresh window for everyone
+        # left, so an early buzz before the miss carries no penalty.
+        self.game.early_buzzes = set()
+        self.game.clue_flow.open_responses()
+
+    def stumped(self) -> None:
+        """Handle a tiebreaker clue nobody got."""
+        self.game.accepting_responses = False
+        self.game.song_player.stumped()
+        self.game.dc.borders.flash()
+        if self.game.reveal_answers_after_triple_stumper_enabled():
+            self.game.keystroke_manager.activate("TIEBREAKER_REVEAL_ANSWER")
+        else:
+            self.game.keystroke_manager.activate("TIEBREAKER_NEXT_CLUE")
+
+    def reveal_answer(self) -> None:
+        """Show the missed clue's answer before the next clue."""
+        self.game.dc.question_widget.reveal_answer()
+        self.game.keystroke_manager.activate("TIEBREAKER_NEXT_CLUE")
+
+    def finish(self, winner: object) -> None:
+        """Announce the tiebreaker winner and ready the summary screen.
+
+        Args:
+            winner: Player who answered a tiebreaker clue correctly.
+        """
+        self._clear_clue()
+        self.active = False
+        self.clues = []
+        self.game.active_question = None
+        self.game.previous_answerers = set()
+        self.game.tiebreaker_winner = winner
+        self.game.dc.unload_tiebreaker()
+        for player in self.game.players:
+            self.game.dc.player_widget(player).set_lights(player is winner)
+        self.game.dc.final_window.show_winner(winner)
+        self.game.player_state_broadcaster.update_all()
+        self.game.keystroke_manager.activate("GENERATE_GRAPHS")
+        self.game._refresh_score_edit_controls()

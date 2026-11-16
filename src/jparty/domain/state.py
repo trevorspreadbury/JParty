@@ -1435,6 +1435,13 @@ def build_end_game_summary(game: object) -> EndGameSummary:
     winner_player_numbers = [
         player.player_number for player in game.players if player.score == top_score
     ]
+    # A tiebreaker leaves the scores tied but decides the winner (#44).
+    tiebreaker_winner = getattr(game, "tiebreaker_winner", None)
+    if (
+        tiebreaker_winner in game.players
+        and tiebreaker_winner.player_number in winner_player_numbers
+    ):
+        winner_player_numbers = [tiebreaker_winner.player_number]
     question_count = max(
         (entry.get("question_number", INITIAL_SCORE) for entry in entries),
         default=INITIAL_SCORE,
