@@ -601,3 +601,26 @@ def test_resume_mid_tiebreaker_offers_it_and_continues_numbering(
 
     game.keystroke_manager.call(Qt.Key.Key_Space)
     assert game.keystroke_manager._events["START_TIEBREAKER"].active
+
+
+def test_prompt_shows_seats_for_signed_names(
+    tied_game: object, monkeypatch: object
+) -> None:
+    """A signature's image data never reaches the prompt text.
+
+    Pasting it in made the dialog so wide that its buttons were off screen.
+    """
+    game = tied_game
+    game.players[1].name = "data:image/png;base64," + "A" * 20000
+    prompts = []
+
+    def get_text(parent: object, title: str, label: str) -> tuple:
+        prompts.append(label)
+        return "1234", True
+
+    monkeypatch.setattr("jparty.domain.game_engine.QInputDialog.getText", get_text)
+    # The fixture replaces the prompt on the instance; call the real one.
+    assert type(game).prompt_tiebreaker_game_id(game) == "1234"
+    assert prompts[0].startswith("Alice and Player 2 are tied for first.")
+    assert "base64" not in prompts[0]
+    assert len(prompts[0]) < 300

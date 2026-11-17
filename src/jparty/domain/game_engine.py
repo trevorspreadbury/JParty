@@ -1780,7 +1780,10 @@ class Game(QObject):
             The game id the host typed, ``""`` for a random game, or ``None``
             when the host cancelled and the game should end in a tie.
         """
-        names = " and ".join(player.name for player in self.tiebreaker_flow.contenders)
+        # Signed names are image data, so show seats for them instead.
+        names = " and ".join(
+            player.text_name() for player in self.tiebreaker_flow.contenders
+        )
         game_id, accepted = QInputDialog.getText(
             self.host_display,
             "Tiebreaker",

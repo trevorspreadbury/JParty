@@ -209,6 +209,10 @@ class GameData:
         )
 
 
+# Prefix of a player name that is a handwritten signature image.
+SIGNATURE_NAME_PREFIX = "data:image/png;base64"
+
+
 class Player:
     """Represent a connected player and their live game state."""
 
@@ -243,6 +247,21 @@ class Player:
             Integer hash value suitable for set membership and dict keys.
         """
         return int.from_bytes(self.token, sys.byteorder)
+
+    def text_name(self) -> str:
+        """Return a name that fits in plain host text, such as a dialog.
+
+        A signed name is a long ``data:image/png;base64,...`` string that only
+        makes sense drawn as an image, so it is replaced by the player's seat,
+        counting from 1 like the podiums.
+
+        Returns:
+            The typed name, or ``"Player <seat>"`` for a signature.
+        """
+        name = str(self.name)
+        if name.startswith(SIGNATURE_NAME_PREFIX):
+            return f"Player {self.player_number + 1}"
+        return name
 
     def clamp_final_wager(self, amount: int) -> int:
         """Limit a Final Jeopardy wager to what this player may bet.
