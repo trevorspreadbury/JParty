@@ -16,7 +16,8 @@ REQUEST_TIMEOUT_SECONDS = 10
 # A CDX JSON reply is a header row followed by one row per snapshot.
 CDX_MIN_ROWS_WITH_SNAPSHOT = 2
 GOOGLE_SHEETS_HOST = "docs.google.com"
-_SHEET_PATH = re.compile(r"^/spreadsheets/d/(e/)?([A-Za-z0-9_-]+)")
+# Links from a browser signed into several Google accounts add "/u/<n>".
+_SHEET_PATH = re.compile(r"^/spreadsheets/(?:u/\d+/)?d/(e/)?([A-Za-z0-9_-]+)")
 _BARE_SHEET_ID = re.compile(r"^[A-Za-z0-9_-]{20,}$")
 
 

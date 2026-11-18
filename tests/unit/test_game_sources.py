@@ -250,3 +250,18 @@ def test_unshared_sheet_link_explains_sharing(requests_mock: object) -> None:
         GameSourceFetcher().get_sheet_rows_from_link(
             "https://docs.google.com/spreadsheets/d/abc/edit"
         )
+
+
+@pytest.mark.parametrize("status", [401, 403, 404])
+def test_sheet_link_refusals_explain_sharing(
+    requests_mock: object, status: int
+) -> None:
+    """Refused or missing sheets ask the host to share the sheet."""
+    requests_mock.get(
+        SIGN_UP_EXPORT_URL, status_code=status, headers={"Content-Type": "text/csv"}
+    )
+
+    with pytest.raises(SheetAccessError, match="Anyone with the link"):
+        GameSourceFetcher().get_sheet_rows_from_link(
+            "https://docs.google.com/spreadsheets/d/abc/edit"
+        )

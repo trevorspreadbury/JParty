@@ -13,8 +13,10 @@ from jparty.domain.roster import (
     new_sign_ups,
     open_slots,
     parse_sign_up_sheet,
+    roster_name_problem,
     suggest_matches,
     title_case_name,
+    unlink_sign_up,
     update_linked_sign_ups,
 )
 from jparty.domain.tournament_store import (
@@ -88,13 +90,18 @@ def test_parse_sign_up_sheet_matches_headers_loosely() -> None:
     [
         ([], "empty"),
         ([["Timestamp", "Name"]], '"Full Name" column'),
-        ([["Timestamp", "Full Name"], ["t", "A"], ["t", "B"]], "same Timestamp"),
     ],
 )
 def test_parse_sign_up_sheet_rejects_bad_sheets(rows: list, message: str) -> None:
     """Sheets that can't be matched on refresh are rejected with a reason."""
     with pytest.raises(RosterError, match=message):
         parse_sign_up_sheet(rows)
+
+
+def test_same_second_sign_ups_get_their_own_keys() -> None:
+    """Two responses in the same second are both kept, in sheet order."""
+    rows = [["Timestamp", "Full Name"], ["t", "A"], ["t", "B"], ["t", "C"]]
+    assert [s.timestamp for s in parse_sign_up_sheet(rows)] == ["t", "t #2", "t #3"]
 
 
 def test_first_fetch_fills_blank_slots_in_order() -> None:
@@ -122,6 +129,16 @@ def test_typed_names_send_every_sign_up_to_the_host() -> None:
     assert len(remaining) == 1
 
 
+def test_resubmitted_sign_up_goes_to_the_host_instead_of_a_blank_slot() -> None:
+    """A row replacing one that left the sheet isn't added as a new player."""
+    slots = [PlayerSlot("Jane Doe", sign_up("old", "Jane Doe")), PlayerSlot()]
+    sheet = [sign_up("new", "Jane Doe")]
+    filled, remaining = fill_blank_slots(slots, sheet, sheet)
+    assert filled == slots
+    assert remaining == sheet
+    assert suggest_matches(slots, remaining, sheet)[0].suggested_slot == 0
+
+
 def test_refresh_finds_only_new_sign_ups() -> None:
     """Linked and ignored rows are not new."""
     slots = [PlayerSlot("A", sign_up("t1", "A")), PlayerSlot("B")]
@@ -135,6 +152,35 @@ def test_refresh_updates_linked_answers_but_keeps_the_name() -> None:
     updated = update_linked_sign_ups(slots, [sign_up("t1", "jd", occupation="Chef")])
     assert updated[0].actual_name == "Jane"
     assert updated[0].sign_up.occupation == "Chef"
+
+
+def test_refresh_keeps_answers_of_a_row_that_left_the_sheet() -> None:
+    """A linked row missing from the latest fetch keeps its old answers."""
+    gone = PlayerSlot("Bob", sign_up("t2", "Bob", occupation="Pilot"))
+    updated = update_linked_sign_ups([gone], [sign_up("t1", "Jane")])
+    assert updated == [gone]
+
+
+@pytest.mark.parametrize(
+    ("slots", "message"),
+    [
+        ([PlayerSlot("Ann"), PlayerSlot(" ann ")], "both named"),
+        ([PlayerSlot(), PlayerSlot("", sign_up("t1", "Ann"))], "Player 2"),
+        ([PlayerSlot("Ann"), PlayerSlot(), PlayerSlot("Bob")], None),
+    ],
+)
+def test_roster_name_problem(slots: list, message: str | None) -> None:
+    """Linked players need names, and no two players can share one."""
+    problem = roster_name_problem(slots)
+    if message is None:
+        assert problem is None
+    else:
+        assert message in problem
+
+
+def test_unlink_sign_up_keeps_the_name() -> None:
+    """Unlinking drops the sign-up but keeps the Actual Name."""
+    assert unlink_sign_up(PlayerSlot("Jane", sign_up("t1", "jd"))) == PlayerSlot("Jane")
 
 
 def test_suggestions_pair_similar_names_with_typed_slots() -> None:
@@ -206,6 +252,16 @@ def test_save_and_load_tournament(temp_dir: object) -> None:
     assert load_tournament(folder) == (settings, slots)
 
 
+def test_renamed_folder_loads_and_saves_under_its_own_name(temp_dir: object) -> None:
+    """A copied or renamed folder never saves back into the original."""
+    save_tournament(temp_dir, TournamentSettings("Spring"), [PlayerSlot("Jane")])
+    (temp_dir / "Spring").rename(temp_dir / "Fall")
+    settings, slots = load_tournament(temp_dir / "Fall")
+    assert settings.name == "Fall"
+    save_tournament(temp_dir, settings, slots)
+    assert not (temp_dir / "Spring").exists()
+
+
 def test_load_tournament_reports_missing_files(temp_dir: object) -> None:
     """A folder without both files can't be loaded."""
     (temp_dir / "Empty").mkdir()
@@ -237,6 +293,10 @@ def test_tournament_name_rejects_windows_reserved_names() -> None:
         (
             "https://docs.google.com/spreadsheets/d/abc/edit#gid=42",
             "https://docs.google.com/spreadsheets/d/abc/export?format=csv&gid=42",
+        ),
+        (
+            "https://docs.google.com/spreadsheets/u/1/d/abc/edit#gid=3",
+            "https://docs.google.com/spreadsheets/d/abc/export?format=csv&gid=3",
         ),
         (
             "docs.google.com/spreadsheets/d/e/2PACX-x/pubhtml?gid=7",

@@ -579,6 +579,8 @@ class Welcome(StartWidget):
         Returns:
             ``None``.
         """
+        if not self._close_tournament_roster():
+            return
         logging.info("Creating a tournament")
         self._show_tournament_roster(TournamentRosterDialog(TOURNAMENTS_DIR, self))
 
@@ -588,6 +590,8 @@ class Welcome(StartWidget):
         Returns:
             ``None``.
         """
+        if not self._close_tournament_roster():
+            return
         names = list_tournaments(TOURNAMENTS_DIR)
         if not names:
             QMessageBox.information(
@@ -611,10 +615,24 @@ class Welcome(StartWidget):
             TournamentRosterDialog(TOURNAMENTS_DIR, self, settings, slots)
         )
 
+    def _close_tournament_roster(self) -> bool:
+        """Close the open roster dialog, if any, before opening another.
+
+        The dialog asks before discarding unsaved changes. If the host keeps
+        it open, it is brought to the front instead.
+
+        Returns:
+            Whether no roster dialog is open any more.
+        """
+        dialog = self.tournament_roster_dialog
+        if dialog is None or not dialog.isVisible() or dialog.close():
+            return True
+        dialog.raise_()
+        dialog.activateWindow()
+        return False
+
     def _show_tournament_roster(self, dialog: TournamentRosterDialog) -> None:
-        """Show ``dialog``, replacing any roster dialog already open."""
-        if self.tournament_roster_dialog is not None:
-            self.tournament_roster_dialog.close()
+        """Show ``dialog`` as the open roster dialog."""
         self.tournament_roster_dialog = dialog
         dialog.show()
         dialog.raise_()

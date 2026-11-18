@@ -15,6 +15,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -45,7 +46,9 @@ from jparty.domain.roster import (
     new_sign_ups,
     open_slots,
     parse_sign_up_sheet,
+    roster_name_problem,
     suggest_matches,
+    unlink_sign_up,
     update_linked_sign_ups,
 )
 from jparty.domain.tournament import MAX_TOURNAMENT_PLAYERS, MIN_TOURNAMENT_PLAYERS
@@ -116,6 +119,7 @@ class TournamentRosterDialog(QDialog):
         self.saved_folder: Path | None = None
         self._sheet_request = 0
         self._filling_table = False
+        self._saved_state: tuple | None = None
 
         self.setWindowTitle(
             "Create Tournament"
@@ -167,7 +171,30 @@ class TournamentRosterDialog(QDialog):
         header.setSectionResizeMode(
             COLUMN_SLOT, QHeaderView.ResizeMode.ResizeToContents
         )
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.itemChanged.connect(self.on_item_changed)
+        self.table.itemSelectionChanged.connect(self._update_row_buttons)
+
+        self.unlink_button = QPushButton("Unlink Sign-up", self)
+        self.unlink_button.setToolTip(
+            "Keep the player but drop their sign-up. Refresh to match it again."
+        )
+        self.unlink_button.clicked.connect(self.unlink_selected)
+        self.remove_button = QPushButton("Remove Player", self)
+        self.remove_button.setToolTip(
+            "Remove the player. A linked sign-up comes back on the next refresh."
+        )
+        self.remove_button.clicked.connect(self.remove_selected)
+        self.restore_ignored_button = QPushButton(self)
+        self.restore_ignored_button.setToolTip(
+            "Ask about ignored responses again on the next refresh."
+        )
+        self.restore_ignored_button.clicked.connect(self.restore_ignored)
+        row_buttons = QHBoxLayout()
+        row_buttons.addWidget(self.unlink_button)
+        row_buttons.addWidget(self.remove_button)
+        row_buttons.addStretch(1)
+        row_buttons.addWidget(self.restore_ignored_button)
 
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save
@@ -184,10 +211,13 @@ class TournamentRosterDialog(QDialog):
         layout.addLayout(form)
         layout.addWidget(self.status_label)
         layout.addWidget(self.table, 1)
+        layout.addLayout(row_buttons)
         layout.addWidget(self.buttons)
 
         self.sheet_result_trigger.connect(self.handle_sheet_result)
         self.set_player_count(self.player_spinbox.value())
+        self._update_row_buttons()
+        self._saved_state = self._state()
 
     def set_player_count(self, count: int) -> None:
         """Add blank slots, or drop trailing blank slots, to reach ``count``.
@@ -284,7 +314,7 @@ class TournamentRosterDialog(QDialog):
         self.settings.sheet_url = self.sheet_edit.text().strip()
         self.slots = update_linked_sign_ups(self.slots, sign_ups)
         unplaced = new_sign_ups(self.slots, sign_ups, self.settings.ignored_sign_ups)
-        self.slots, remaining = fill_blank_slots(self.slots, unplaced)
+        self.slots, remaining = fill_blank_slots(self.slots, unplaced, sign_ups)
         placed = len(unplaced) - len(remaining)
         if remaining:
             dialog = SignUpMatchDialog(
@@ -298,8 +328,7 @@ class TournamentRosterDialog(QDialog):
                 self.settings.ignored_sign_ups.extend(ignored)
                 placed += len(remaining) - len(ignored)
                 remaining = []
-        self._sync_player_spinbox()
-        self._fill_table()
+        self._redraw()
         message = f"Found {len(sign_ups)} sign-ups. {placed} new."
         if remaining:
             message += f" {len(remaining)} not placed yet; refresh again to place them."
@@ -316,7 +345,7 @@ class TournamentRosterDialog(QDialog):
         if problem is None and self.creating and (self.root / name).exists():
             problem = f'A tournament named "{name}" already exists.'
         if problem is None:
-            problem = duplicate_name_problem(self.slots)
+            problem = roster_name_problem(self.slots)
         if problem:
             self._show_status(problem, True)
             return
@@ -328,7 +357,115 @@ class TournamentRosterDialog(QDialog):
             QMessageBox.warning(self, "Couldn't save tournament", str(exc))
             return
         logging.info("Saved tournament %s", name)
+        self._saved_state = self._state()
+        self._drop_pending_fetch()
         self.accept()
+
+    def unlink_selected(self) -> None:
+        """Drop the sign-up from each selected player, keeping their names.
+
+        Returns:
+            ``None``.
+        """
+        rows = [row for row in self._selected_rows() if self.slots[row].sign_up]
+        for row in rows:
+            self.slots[row] = unlink_sign_up(self.slots[row])
+        self._redraw()
+        if rows:
+            self._show_status(
+                f"Unlinked {len(rows)} sign-up(s). Refresh Sheet to match them again."
+            )
+
+    def remove_selected(self) -> None:
+        """Remove the selected players from the roster.
+
+        A removed player's sign-up counts as new on the next refresh.
+
+        Returns:
+            ``None``.
+        """
+        rows = self._selected_rows()
+        for row in reversed(rows):
+            del self.slots[row]
+        self.set_player_count(max(len(self.slots), MIN_TOURNAMENT_PLAYERS))
+        self._update_row_buttons()
+        if rows:
+            self._show_status(f"Removed {len(rows)} player(s).")
+
+    def restore_ignored(self) -> None:
+        """Forget ignored responses, so the next refresh asks about them.
+
+        Returns:
+            ``None``.
+        """
+        count = len(self.settings.ignored_sign_ups)
+        self.settings.ignored_sign_ups = []
+        self._update_row_buttons()
+        if count:
+            self._show_status(
+                f"{count} ignored response(s) will be asked about on the next refresh."
+            )
+
+    def has_unsaved_changes(self) -> bool:
+        """Whether the roster or settings changed since opening or saving."""
+        return self._state() != self._saved_state
+
+    def reject(self) -> None:
+        """Close without saving, after asking if there are unsaved changes.
+
+        Escape, Cancel, and the window's close button all come here. A sheet
+        fetch still running is dropped, so its result can't open the match
+        dialog after the roster is closed.
+
+        Returns:
+            ``None``.
+        """
+        if self.isVisible() and self.has_unsaved_changes():
+            answer = QMessageBox.question(
+                self,
+                "Discard changes?",
+                "Close without saving? Your changes to this tournament will be lost.",
+                QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Discard:
+                return
+        self._drop_pending_fetch()
+        super().reject()
+
+    def _state(self) -> tuple:
+        """Return what Save would write, to spot unsaved changes."""
+        return (
+            self.name_edit.text(),
+            self.sheet_edit.text().strip(),
+            tuple(self.slots),
+            tuple(self.settings.ignored_sign_ups),
+        )
+
+    def _drop_pending_fetch(self) -> None:
+        """Make any sheet fetch still running stale, so its result is dropped."""
+        self._sheet_request += 1
+        self.refresh_button.setEnabled(True)
+
+    def _selected_rows(self) -> list[int]:
+        """Return the selected table rows, in order."""
+        rows = {index.row() for index in self.table.selectionModel().selectedRows()}
+        return sorted(row for row in rows if 0 <= row < len(self.slots))
+
+    def _redraw(self) -> None:
+        """Redraw the table and update the controls that follow it."""
+        self._sync_player_spinbox()
+        self._fill_table()
+        self._update_row_buttons()
+
+    def _update_row_buttons(self) -> None:
+        """Enable the row buttons that apply to the current selection."""
+        rows = self._selected_rows()
+        self.unlink_button.setEnabled(any(self.slots[row].sign_up for row in rows))
+        self.remove_button.setEnabled(bool(rows))
+        count = len(self.settings.ignored_sign_ups)
+        self.restore_ignored_button.setText(f"Restore Ignored ({count})")
+        self.restore_ignored_button.setEnabled(count > 0)
 
     def _sync_player_spinbox(self) -> None:
         """Match the player count to the roster and keep filled slots."""
@@ -545,22 +682,3 @@ def sign_up_tooltip(sign_up: SignUp) -> str:
         if text
     ]
     return "\n".join([f"Signed up {sign_up.timestamp}", *anecdotes])
-
-
-def duplicate_name_problem(slots: Sequence[PlayerSlot]) -> str | None:
-    """Return a message if two slots share an Actual Name, else ``None``.
-
-    Results are recorded by player name, so names must be unique.
-    """
-    seen: dict[str, int] = {}
-    for index, slot in enumerate(slots):
-        key = slot.actual_name.strip().casefold()
-        if not key:
-            continue
-        if key in seen:
-            return (
-                f"Players {seen[key] + 1} and {index + 1} are both named"
-                f' "{slot.actual_name}". Give each player a different name.'
-            )
-        seen[key] = index
-    return None

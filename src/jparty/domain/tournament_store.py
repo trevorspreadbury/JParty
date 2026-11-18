@@ -166,8 +166,10 @@ def load_tournament(folder: Path) -> tuple[TournamentSettings, list[PlayerSlot]]
         raise TournamentFileError(f"Couldn't read {folder.name}: {exc}") from exc
     if not isinstance(payload, dict):
         raise TournamentFileError(f"{settings_path.name} is not a JSON object.")
+    # The folder name wins over the saved "name". A copied or renamed folder
+    # must save back into itself, not into the folder it was copied from.
     settings = TournamentSettings(
-        name=str(payload.get("name") or folder.name),
+        name=folder.name,
         sheet_url=str(payload.get("sheet_url") or ""),
         ignored_sign_ups=[str(item) for item in payload.get("ignored_sign_ups", [])],
     )

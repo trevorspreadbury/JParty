@@ -121,6 +121,10 @@ def parse_sign_up_sheet(rows: Sequence[Sequence[str]]) -> list[SignUp]:
     Timestamp and Full Name are required. Rows without a Timestamp are
     skipped, because they cannot be recognized on a later refresh.
 
+    Form timestamps only go down to the second, so two people can submit
+    in the same second. Later rows that repeat a Timestamp get ``" #2"``,
+    ``" #3"`` and so on, in sheet order, so each row still has its own key.
+
     Args:
         rows: The sheet as rows of cell strings, header first.
 
@@ -128,8 +132,7 @@ def parse_sign_up_sheet(rows: Sequence[Sequence[str]]) -> list[SignUp]:
         One :class:`SignUp` per response, in sheet order.
 
     Raises:
-        RosterError: If the sheet is empty, lacks a required column, or has
-            two rows with the same Timestamp.
+        RosterError: If the sheet is empty or lacks a required column.
     """
     if not rows:
         raise RosterError("The sign-up sheet is empty.")
@@ -150,14 +153,14 @@ def parse_sign_up_sheet(rows: Sequence[Sequence[str]]) -> list[SignUp]:
         return row[index].strip()
 
     sign_ups = []
-    seen = set()
+    repeats: dict[str, int] = {}
     for row in rows[1:]:
         timestamp = cell(row, COLUMN_TIMESTAMP)
         if not timestamp:
             continue
-        if timestamp in seen:
-            raise RosterError(f'Two sign-ups have the same Timestamp, "{timestamp}".')
-        seen.add(timestamp)
+        repeats[timestamp] = repeats.get(timestamp, 0) + 1
+        if repeats[timestamp] > 1:
+            timestamp = f"{timestamp} #{repeats[timestamp]}"
         sign_ups.append(
             SignUp(
                 timestamp=timestamp,
@@ -240,7 +243,9 @@ def open_slots(
 
 
 def fill_blank_slots(
-    slots: Sequence[PlayerSlot], sign_ups: Sequence[SignUp]
+    slots: Sequence[PlayerSlot],
+    sign_ups: Sequence[SignUp],
+    all_sign_ups: Sequence[SignUp] | None = None,
 ) -> tuple[list[PlayerSlot], list[SignUp]]:
     """Link sign-ups to blank slots in order, when no slot needs matching.
 
@@ -248,14 +253,21 @@ def fill_blank_slots(
     simply fill those slots in sheet order. If any open slot already has a
     typed name, nothing is filled, and every row goes to the host to match.
 
+    A slot whose linked row has left the sheet counts as an open slot with a
+    name. When a player deletes and resubmits their response, or edits it
+    (which changes its Timestamp), the new row then goes to the host, who
+    can relink it, instead of filling a blank slot as a second player.
+
     Args:
         slots: Current roster.
         sign_ups: Unplaced sign-ups, in sheet order.
+        all_sign_ups: Every row from the latest fetch, used to find slots
+            whose linked row has left the sheet.
 
     Returns:
         The updated roster and the sign-ups still left to place.
     """
-    candidates = open_slots(slots)
+    candidates = open_slots(slots, all_sign_ups)
     if any(not slots[index].blank for index in candidates):
         return list(slots), list(sign_ups)
     filled = list(slots)
@@ -377,6 +389,54 @@ def link_sign_up(slot: PlayerSlot, sign_up: SignUp) -> PlayerSlot:
     """
     name = slot.actual_name.strip() or title_case_name(sign_up.full_name)
     return PlayerSlot(actual_name=name, sign_up=sign_up)
+
+
+def roster_name_problem(slots: Sequence[PlayerSlot]) -> str | None:
+    """Return why the roster's names can't be saved, or ``None``.
+
+    Results are recorded by player name, so every player with a linked
+    sign-up needs an Actual Name, and no two players can share one. Names
+    are compared without regard to case or surrounding spaces. Slots with
+    no name and no sign-up are empty places and are allowed.
+
+    Args:
+        slots: Roster, in slot order.
+
+    Returns:
+        A message for the host, or ``None`` if the names work.
+    """
+    seen: dict[str, int] = {}
+    for index, slot in enumerate(slots):
+        key = slot.actual_name.strip().casefold()
+        if not key:
+            if slot.sign_up is not None:
+                return (
+                    f"Player {index + 1} is linked to a sign-up but has no"
+                    " Actual Name. Give every player a name."
+                )
+            continue
+        if key in seen:
+            return (
+                f"Players {seen[key] + 1} and {index + 1} are both named"
+                f' "{slot.actual_name.strip()}". Give each player a different name.'
+            )
+        seen[key] = index
+    return None
+
+
+def unlink_sign_up(slot: PlayerSlot) -> PlayerSlot:
+    """Return ``slot`` with its sign-up removed and its Actual Name kept.
+
+    The row then counts as new on the next refresh, so the host can match
+    it again.
+
+    Args:
+        slot: Slot to unlink.
+
+    Returns:
+        The unlinked slot.
+    """
+    return PlayerSlot(actual_name=slot.actual_name)
 
 
 def _name_key(name: str) -> str:

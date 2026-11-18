@@ -205,12 +205,24 @@ Click `Refresh Sheet` again as more people sign up. If you've typed names that
 aren't linked to a sign-up yet, JParty steps through each new sign-up and
 suggests the player with the closest name. For each one, choose the player,
 `A new player`, or `Not a player` for test or duplicate responses. Ignored
-responses aren't asked about again. Linked players keep their Actual Name, and
-their form answers update if they edited their response.
+responses aren't asked about again. Linked players keep their Actual Name.
+
+JParty recognizes each response by its Timestamp. If a player edits or
+resubmits their response, Google gives it a new Timestamp, so JParty asks
+about it on the next refresh and suggests the player it replaces (shown as
+"sign-up no longer in the sheet"). Pick that player to keep their name and
+update their answers.
+
+To fix a mistake, select a row and click `Unlink Sign-up` (the sign-up is
+asked about again on the next refresh) or `Remove Player`. `Restore Ignored`
+makes the next refresh ask about every ignored response again. Closing the
+window with unsaved changes asks before discarding them.
 
 Each tournament is saved in `tournaments/<name>/` in the JParty data folder,
 outside git: `players.csv` holds the players and their answers, and
-`tournament.json` holds the sheet link.
+`tournament.json` holds the sheet link and the ignored responses. To reuse a
+tournament's setup, copy its folder and give the copy a new name; the copy
+saves into its own folder.
 
 Back to [Table of Contents](#table-of-contents).
 
