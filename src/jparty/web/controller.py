@@ -830,6 +830,35 @@ class BuzzerController:
         for p in self.connected_players:
             self.send_to(p.waiter, "TOOLATE")
 
+    def show_tiebreaker_buzzers(self, contenders: Iterable[Player]) -> None:
+        """Show the buzz button only to the players in a tiebreaker (#44).
+
+        Tied players get the buzz page back (Final Jeopardy leaves every
+        phone blank). Everyone else sees that they are sitting out, so their
+        phone no longer looks like it can buzz. A phone that reconnects gets
+        the same page, since it comes from ``Player.page``.
+
+        Args:
+            contenders: Players tied for first.
+
+        Returns:
+            ``None``.
+        """
+        contenders = list(contenders)
+        for p in self.connected_players:
+            p.page = "buzz" if p in contenders else "sitout"
+            self.send_to(p.waiter, "SHOW_PAGE", p.page)
+
+    def end_tiebreaker_buzzers(self) -> None:
+        """Clear every phone after a tiebreaker stops.
+
+        Returns:
+            ``None``.
+        """
+        for p in self.connected_players:
+            p.page = "null"
+            self.send_to(p.waiter, "SHOW_PAGE", p.page)
+
     def get_player_by_number(self, player_number: int) -> Player | None:
         """Return the current game player assigned to a lectern slot.
 

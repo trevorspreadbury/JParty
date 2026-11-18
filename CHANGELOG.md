@@ -45,6 +45,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
     on a laptop with no internet access.
   - On restart, JParty waits up to 3 seconds for port 8080 to free up before
     moving to the next port, where open lecterns would never find it.
+- Tiebreaker tossups. When players tie for first, the host can enter a game
+  ID (or leave it blank for a random game) and play that game's
+  highest-value clues until a tied player answers one correctly. Only the
+  tied players can buzz (the other players' phones say they are sitting
+  out), scores don't change, and the summary names the winner. Scores are
+  locked once the tie is offered. Each tiebreaker clue is saved to `question_history.jsonl` as a new
+  `tiebreaker_clue` line (#44).
 
 ## [3.0.0] - 2026-11-14
 

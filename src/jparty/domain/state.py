@@ -25,6 +25,7 @@ QUESTION_HISTORY_ENTRY_TYPE = "question"
 MANUAL_SCORE_ADJUSTMENT_TYPE = "manual_score_adjustment"
 SCORE_CORRECTION_TYPE = "score_correction"
 PLAYER_RENUMBER_TYPE = "player_renumber"
+TIEBREAKER_CLUE_TYPE = "tiebreaker_clue"
 CORRECT_RESULT = "correct"
 INCORRECT_RESULT = "incorrect"
 NO_ANSWER_RESULT = "no answer"
@@ -232,6 +233,34 @@ def is_player_renumber(entry: dict) -> bool:
     return get_history_entry_type(entry) == PLAYER_RENUMBER_TYPE
 
 
+def is_tiebreaker_clue(entry: dict) -> bool:
+    """Return whether a history entry records one tiebreaker clue (#44).
+
+    Args:
+        entry: Persisted JSONL history entry.
+
+    Returns:
+        ``True`` when the entry is a ``tiebreaker_clue`` line.
+    """
+    return get_history_entry_type(entry) == TIEBREAKER_CLUE_TYPE
+
+
+def tiebreaker_winner_number(entries: list[dict]) -> int | None:
+    """Return the player number that won the game's tiebreaker, if any.
+
+    Args:
+        entries: History entries in file order, with seat changes applied.
+
+    Returns:
+        The ``winner`` of the last ``tiebreaker_clue`` line that has one, or
+        ``None`` when no tiebreaker was won.
+    """
+    for entry in reversed(entries):
+        if is_tiebreaker_clue(entry) and isinstance(entry.get("winner"), int):
+            return entry["winner"]
+    return None
+
+
 def _remap_player_indices(entry: dict, mapping: dict[int, int]) -> None:
     """Rewrite every player number in one history entry, in place.
 
@@ -256,6 +285,10 @@ def _remap_player_indices(entry: dict, mapping: dict[int, int]) -> None:
     for adjustment in entry.get("adjustments", []):
         if "player_index" in adjustment:
             adjustment["player_index"] = remap(adjustment["player_index"])
+    if isinstance(entry.get("contenders"), list):
+        entry["contenders"] = [remap(number) for number in entry["contenders"]]
+    if entry.get("winner") is not None:
+        entry["winner"] = remap(entry["winner"])
     if isinstance(entry.get("player_states"), dict):
         entry["player_states"] = {
             str(remap(int(player_index))): result
@@ -632,8 +665,9 @@ def corrected_history_entries(entries: list[dict]) -> list[dict]:
     order. Uncorrected clues and manual score adjustments keep their recorded
     score change, so the final totals always equal
     :func:`history_score_totals`. ``player_renumber`` lines are dropped too,
-    since :func:`read_history_file` has already applied them. Nothing is
-    written to disk.
+    since :func:`read_history_file` has already applied them, and so are
+    ``tiebreaker_clue`` lines, which never change a score and are left out
+    of the per-clue stats. Nothing is written to disk.
 
     Args:
         entries: History entries in file order.
@@ -645,7 +679,11 @@ def corrected_history_entries(entries: list[dict]) -> list[dict]:
     scores = {}
     corrected_entries = []
     for entry in entries:
-        if is_score_correction(entry) or is_player_renumber(entry):
+        if (
+            is_score_correction(entry)
+            or is_player_renumber(entry)
+            or is_tiebreaker_clue(entry)
+        ):
             continue
         corrected_entry = deepcopy(entry)
         corrected_entries.append(corrected_entry)
@@ -1295,7 +1333,8 @@ def build_end_game_summary(game: object) -> EndGameSummary:
     Raises:
         HistoryFileError: If the history file cannot be read.
     """
-    entries = load_corrected_question_history(game)
+    saved_entries = load_question_history(game)
+    entries = corrected_history_entries(saved_entries)
     entries.sort(key=lambda entry: entry.get("question_number", 0))
     score_history = reconstruct_score_history(game)
     original_score_history = reconstruct_original_score_history(game)
@@ -1435,6 +1474,10 @@ def build_end_game_summary(game: object) -> EndGameSummary:
     winner_player_numbers = [
         player.player_number for player in game.players if player.score == top_score
     ]
+    # A tiebreaker leaves the scores tied but decides the winner (#44).
+    tiebreaker_winner = tiebreaker_winner_number(saved_entries)
+    if tiebreaker_winner in winner_player_numbers:
+        winner_player_numbers = [tiebreaker_winner]
     question_count = max(
         (entry.get("question_number", INITIAL_SCORE) for entry in entries),
         default=INITIAL_SCORE,

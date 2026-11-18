@@ -13,6 +13,7 @@ from jparty.services.game_loader import (
     describe_source_round,
     final_board_selection,
     find_random_game,
+    load_tiebreaker_clues,
     normalize_standard_board_daily_doubles,
     original_board_row_values,
     original_board_selection,
@@ -20,6 +21,7 @@ from jparty.services.game_loader import (
     select_advanced_daily_double_indices,
     standard_board_daily_double_indices,
     standard_board_selection,
+    tiebreaker_clues,
 )
 from jparty.services.game_parser import GameParser
 
@@ -520,3 +522,88 @@ def test_advanced_board_selection_adds_extras_without_moving_originals() -> None
     assert [1, 2] in selection["daily_double_indices"]
     assert len({index[0] for index in selection["daily_double_indices"]}) == 3
     assert [question.index for question in board.questions if question.dd] == [(1, 2)]
+
+
+def _tiebreaker_source_game() -> GameData:
+    """Return a two-round game with a Final, a blank clue, and an image clue."""
+    rounds = []
+    for multiplier in (1, 2):
+        questions = [
+            Question(
+                index=(col, row),
+                text=f"Clue {multiplier}-{col}-{row}",
+                answer=f"Answer {multiplier}-{col}-{row}",
+                category=f"Cat {col}",
+                value=(row + 1) * 200 * multiplier,
+            )
+            for col in range(6)
+            for row in range(5)
+        ]
+        rounds.append(Board([f"Cat {col}" for col in range(6)], questions))
+    top_row = [q for q in rounds[1].questions if q.value == 2000]
+    top_row[0].dd = True
+    top_row[1].text = ""
+    top_row[2].image = True
+    rounds.append(
+        FinalBoard("Final", Question((0, 0), "Final clue", "Final answer", "Final"))
+    )
+    return GameData(rounds, "January 1, 2026", "")
+
+
+def test_tiebreaker_clues_ask_highest_values_first_in_random_order() -> None:
+    """Top-value clues come first, shuffled, and skip unusable clues (#44)."""
+    game_data = _tiebreaker_source_game()
+    clues = tiebreaker_clues(game_data, rng=random.Random(1))  # noqa: S311
+
+    values = [clue.value for clue in clues]
+    assert values == sorted(values, reverse=True)
+    # Of the six $2000 clues, the blank one and the image one are left out.
+    assert values.count(2000) == 4
+    assert "Final clue" not in {clue.text for clue in clues}
+    assert not any(clue.dd for clue in clues)
+    # The source game is untouched.
+    assert any(q.dd for q in game_data.rounds[1].questions)
+    orders = set()
+    for seed in range(10):
+        rng = random.Random(seed)  # noqa: S311
+        top_clues = tiebreaker_clues(game_data, rng)[:4]
+        orders.add(tuple(clue.index for clue in top_clues))
+    assert len(orders) > 1
+
+
+def test_tiebreaker_clues_of_missing_game_are_empty() -> None:
+    """A game that failed to load gives no tiebreaker clues."""
+    assert tiebreaker_clues(None) == []
+
+
+def test_load_tiebreaker_clues_uses_entered_or_random_game() -> None:
+    """An entered id loads that game; a blank id picks a random usable one."""
+    game_data = _tiebreaker_source_game()
+    loaded = []
+
+    def load_game(game_id: str) -> GameData:
+        loaded.append(game_id)
+        return game_data
+
+    game_id, clues = load_tiebreaker_clues(" 4453 ", load_game=load_game)
+    assert (game_id, loaded) == ("4453", ["4453"])
+    assert clues[0].value == 2000
+
+    def is_cancelled() -> bool:
+        return False
+
+    def find_game(accept: object, is_cancelled: object) -> tuple:
+        assert accept(game_data) is True
+        assert accept(GameData([], "", "")) is False
+        searches.append(is_cancelled)
+        return "777", game_data
+
+    searches = []
+    game_id, clues = load_tiebreaker_clues(
+        "", find_game=find_game, is_cancelled=is_cancelled
+    )
+    assert game_id == "777"
+    assert clues
+    # The cancel check reaches the random-game search, so Close Game can
+    # stop it fetching more games.
+    assert searches == [is_cancelled]

@@ -100,6 +100,9 @@ button:active {
 .replaced-page {
     display: None;
 }
+.sitout-page {
+    display: None;
+}
 #play-here-button {
     width: 100%;
     margin-top: 20px;
@@ -158,6 +161,9 @@ button:active {
 }
 .buzz-hint {
     margin-top:10pt;
+}
+.sitout-hint {
+    font-size: 24pt;
 }
 .name-hint {
     margin-bottom:10pt;
