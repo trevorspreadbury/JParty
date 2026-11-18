@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -32,8 +33,13 @@ from PyQt6.QtWidgets import (
 
 from jparty import __version__ as version
 from jparty.app.helptext import helpmsg
-from jparty.app.paths import GAME_STATES_DIR
+from jparty.app.paths import GAME_STATES_DIR, TOURNAMENTS_DIR
 from jparty.domain.models import GameData
+from jparty.domain.tournament_store import (
+    TournamentFileError,
+    list_tournaments,
+    load_tournament,
+)
 from jparty.services.game_loader import (
     QUESTION_INDEX_PART_COUNT,
     RANDOM_GAME_MAX_ATTEMPTS,
@@ -64,6 +70,7 @@ from jparty.ui.widgets.common import (
     resource_path,
 )
 from jparty.ui.widgets.tournament import TournamentDesigner
+from jparty.ui.widgets.tournament_roster import TournamentRosterDialog
 
 ROUND_CHECKBOX_STYLE = """
 QCheckBox {
@@ -487,9 +494,14 @@ class Welcome(StartWidget):
         self.quit_button.clicked.connect(self.game.close)
         self.help_button = DynamicButton("Show help", self)
         self.help_button.clicked.connect(self.show_help)
-        self.tournament_button = DynamicButton("Tournament", self)
+        self.tournament_button = DynamicButton("Bracket Designer", self)
         self.tournament_button.clicked.connect(self.show_tournament_designer)
         self.tournament_designer = None
+        self.create_tournament_button = DynamicButton("Create Tournament", self)
+        self.create_tournament_button.clicked.connect(self.create_tournament)
+        self.load_tournament_button = DynamicButton("Load Tournament", self)
+        self.load_tournament_button.clicked.connect(self.load_tournament)
+        self.tournament_roster_dialog = None
         footer_layout = QHBoxLayout()
         footer_layout.addStretch(5)
         footer_layout.addWidget(self.quit_button, 3)
@@ -497,6 +509,10 @@ class Welcome(StartWidget):
         footer_layout.addWidget(self.help_button, 3)
         footer_layout.addStretch(1)
         footer_layout.addWidget(self.tournament_button, 3)
+        footer_layout.addStretch(1)
+        footer_layout.addWidget(self.create_tournament_button, 3)
+        footer_layout.addStretch(1)
+        footer_layout.addWidget(self.load_tournament_button, 3)
         footer_layout.addStretch(5)
         main_layout.addStretch(3)
         main_layout.addLayout(self.icon_layout, 6)
@@ -556,6 +572,71 @@ class Welcome(StartWidget):
         self.tournament_designer.show()
         self.tournament_designer.raise_()
         self.tournament_designer.activateWindow()
+
+    def create_tournament(self) -> None:
+        """Open the roster dialog to create a new tournament.
+
+        Returns:
+            ``None``.
+        """
+        if not self._close_tournament_roster():
+            return
+        logging.info("Creating a tournament")
+        self._show_tournament_roster(TournamentRosterDialog(TOURNAMENTS_DIR, self))
+
+    def load_tournament(self) -> None:
+        """Pick a saved tournament and open its roster.
+
+        Returns:
+            ``None``.
+        """
+        if not self._close_tournament_roster():
+            return
+        names = list_tournaments(TOURNAMENTS_DIR)
+        if not names:
+            QMessageBox.information(
+                self,
+                "Load Tournament",
+                "There are no saved tournaments yet. Use Create Tournament first.",
+            )
+            return
+        name, chosen = QInputDialog.getItem(
+            self, "Load Tournament", "Tournament:", names, 0, False
+        )
+        if not chosen:
+            return
+        try:
+            settings, slots = load_tournament(TOURNAMENTS_DIR / name)
+        except TournamentFileError as exc:
+            QMessageBox.warning(self, "Couldn't load tournament", str(exc))
+            return
+        logging.info("Loaded tournament %s", name)
+        self._show_tournament_roster(
+            TournamentRosterDialog(TOURNAMENTS_DIR, self, settings, slots)
+        )
+
+    def _close_tournament_roster(self) -> bool:
+        """Close the open roster dialog, if any, before opening another.
+
+        The dialog asks before discarding unsaved changes. If the host keeps
+        it open, it is brought to the front instead.
+
+        Returns:
+            Whether no roster dialog is open any more.
+        """
+        dialog = self.tournament_roster_dialog
+        if dialog is None or not dialog.isVisible() or dialog.close():
+            return True
+        dialog.raise_()
+        dialog.activateWindow()
+        return False
+
+    def _show_tournament_roster(self, dialog: TournamentRosterDialog) -> None:
+        """Show ``dialog`` as the open roster dialog."""
+        self.tournament_roster_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def resizeEvent(self, event: object) -> None:
         """Resize the game-id textbox to match the current layout.
