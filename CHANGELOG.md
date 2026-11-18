@@ -6,6 +6,15 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Tiebreaker tossups. When players tie for first, the host can enter a game
+  ID (or leave it blank for a random game) and play that game's
+  highest-value clues until a tied player answers one correctly. Only the
+  tied players can buzz (the other players' phones say they are sitting
+  out), scores don't change, and the summary names the winner. Scores are
+  locked once the tie is offered. Each tiebreaker clue is saved to `question_history.jsonl` as a new
+  `tiebreaker_clue` line (#44).
+
 ## [3.0.0] - 2026-11-14
 
 First stable 3.0 release. It contains everything since the May 2026
