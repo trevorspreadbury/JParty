@@ -1368,8 +1368,7 @@ class Game(QObject):
         self.dc.scoreboard.refresh_players()
         self._refresh_score_edit_controls()
         self.host_display.welcome_widget.check_start()
-        for player in self.players:
-            self._update_lectern_for_player(player)
+        self._update_all_lecterns()
 
     def remove_player(self, player: object) -> None:
         """Remove a player from the active roster and refresh displays.
@@ -1394,8 +1393,9 @@ class Game(QObject):
         self.dc.scoreboard.refresh_players()
         self._refresh_score_edit_controls()
         self.host_display.welcome_widget.check_start()
-        for player in self.players:
-            self._update_lectern_for_player(player)
+        # The removed player's seat, or the last seat after renumbering, is
+        # now empty, so its lectern goes back to the logo.
+        self._update_all_lecterns()
 
     def move_player_up(self, player: object) -> None:
         """Move a player one slot earlier in the roster order.

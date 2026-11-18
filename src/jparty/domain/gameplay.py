@@ -44,10 +44,15 @@ class PlayerStateBroadcaster:
             self.game.lectern_update_trigger.emit(player.player_number, state_dict)
 
     def update_all(self) -> None:
-        """Refresh every connected lectern payload."""
+        """Refresh every connected lectern payload.
+
+        Seats with no player get the logo, so a lectern whose player left or
+        moved seats doesn't keep showing them.
+        """
         if self.game.buzzer_controller:
             for player in self.game.players:
                 self.update_player(player, buzzed=False)
+            self.game.buzzer_controller.clear_empty_lecterns()
 
     def set_score(self, player: object, score: object) -> None:
         """Update score displays and lectern state for one player."""
