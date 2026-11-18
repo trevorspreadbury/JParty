@@ -12,6 +12,7 @@ For the saved-state and clue-history file format, see
 - [Welcome Screen Overview](#welcome-screen-overview)
 - [Pre-Game Image Preview](#pre-game-image-preview)
 - [Planning a Tournament](#planning-a-tournament)
+- [Tournament Players](#tournament-players)
 - [Resume Flow](#resume-flow)
 - [Core Game Flow](#core-game-flow)
 - [Editing Scores](#editing-scores)
@@ -149,7 +150,7 @@ Use this as a last sanity check before contestants see the board.
 
 ## Planning a Tournament
 
-The `Tournament` button at the bottom of the welcome screen opens the
+The `Bracket Designer` button at the bottom of the welcome screen opens the
 Tournament Designer. Use it to try bracket shapes before you run a tournament.
 It only plans the bracket; you still start each game from the welcome screen.
 
@@ -180,6 +181,38 @@ with the total games, how many players get more than one game, and how many
 games the champion plays. Ranges such as `9-10` depend on whether chasers win.
 If the options cannot work (for example, 28 players with no second round), the
 designer explains why.
+
+## Tournament Players
+
+`Create Tournament` sets up a tournament's players from your Google Form
+sign-up sheet. `Load Tournament` reopens a saved tournament to edit its players
+or refresh the sheet.
+
+1. Enter a tournament name. It becomes the folder name, so it can't contain
+   characters like `/` or `:`.
+2. Paste the link to the form's response sheet. In the sheet, choose `Share`
+   and set General access to `Anyone with the link`. The sheet needs
+   `Timestamp` and `Full Name` columns; `Occupation`, `Hometown`, and
+   `Anecdote #1` to `#3` are saved too.
+3. Set `Players` to the number of players. It can be more than the sheet has
+   rows.
+4. Click `Refresh Sheet`. Sign-ups fill the player slots in sheet order.
+5. Edit the `Actual Name` column if someone used a silly name, and type names
+   for players who haven't signed up yet.
+6. Click `Save`.
+
+Click `Refresh Sheet` again as more people sign up. If you've typed names that
+aren't linked to a sign-up yet, JParty steps through each new sign-up and
+suggests the player with the closest name. For each one, choose the player,
+`A new player`, or `Not a player` for test or duplicate responses. Ignored
+responses aren't asked about again. Linked players keep their Actual Name, and
+their form answers update if they edited their response.
+
+Each tournament is saved in `tournaments/<name>/` in the JParty data folder,
+outside git: `players.csv` holds the players and their answers, and
+`tournament.json` holds the sheet link.
+
+Back to [Table of Contents](#table-of-contents).
 
 ## Resume Flow
 

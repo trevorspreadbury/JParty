@@ -12,7 +12,7 @@ from jparty.app import bootstrap
 from jparty.services import archive_client
 from jparty.services.game_loader import find_random_game
 from jparty.services.game_parser import GameParser
-from jparty.services.game_sources import GameSourceFetcher
+from jparty.services.game_sources import GameSourceFetcher, SheetAccessError
 
 pytestmark = pytest.mark.unit
 
@@ -218,3 +218,35 @@ def test_findanswer_returns_blank_for_a_clue_with_no_response() -> None:
     clue = '<td class="clue"><div class="clue_text">No answer here</div></td>'
 
     assert GameParser().findanswer(clue) == ""
+
+
+SIGN_UP_EXPORT_URL = re.compile(r"^https://docs\.google\.com/spreadsheets/d/abc/export")
+
+
+def test_sheet_link_fetch_returns_rows(requests_mock: object) -> None:
+    """A shared sign-up sheet downloads as CSV rows."""
+    requests_mock.get(
+        SIGN_UP_EXPORT_URL,
+        content=b"Timestamp,Full Name\r\nt1,Jane\r\n",
+        headers={"Content-Type": "text/csv"},
+    )
+
+    rows = GameSourceFetcher().get_sheet_rows_from_link(
+        "https://docs.google.com/spreadsheets/d/abc/edit"
+    )
+
+    assert rows == [["Timestamp", "Full Name"], ["t1", "Jane"]]
+
+
+def test_unshared_sheet_link_explains_sharing(requests_mock: object) -> None:
+    """Google answers an unshared sheet with a sign-in page, not CSV."""
+    requests_mock.get(
+        SIGN_UP_EXPORT_URL,
+        text="<html>Sign in</html>",
+        headers={"Content-Type": "text/html; charset=utf-8"},
+    )
+
+    with pytest.raises(SheetAccessError, match="Anyone with the link"):
+        GameSourceFetcher().get_sheet_rows_from_link(
+            "https://docs.google.com/spreadsheets/d/abc/edit"
+        )
