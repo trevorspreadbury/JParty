@@ -371,6 +371,8 @@ class Welcome(StartWidget):
         )
         self.tournament_panel.leave_requested.connect(self.leave_tournament_mode)
         self.tournament_panel.results_changed.connect(self.check_start)
+        self.tournament_panel.before_change = self._tournament_change_problem
+        self.tournament_panel.tournament_changed.connect(self._on_tournament_changed)
         # Newest board load for the chosen tournament game.
         self._tournament_request = LatestRequest()
         # Key of the tournament game whose board is in ``game.data``, or None.
@@ -557,6 +559,35 @@ QCheckBox {{
         self._clear_tournament_board()
         self.on_tournament_selection_changed()
         return True
+
+    def _tournament_change_problem(self) -> str | None:
+        """Return why a dropout can't be saved now, or ``None``.
+
+        The Tournament window saves its own copy of the roster and boards,
+        so unsaved edits there would overwrite a dropout's changes.
+        """
+        window = self.tournament_window
+        editor = window.editor if window is not None else None
+        if editor is not None and editor.has_unsaved_changes():
+            return (
+                "The Tournament window has unsaved changes. Save or discard them first."
+            )
+        return None
+
+    def _on_tournament_changed(self) -> None:
+        """Reread the tournament in an open Tournament window after a dropout.
+
+        Otherwise its copy of the roster and boards is stale, and its next
+        Save would undo the dropout.
+        """
+        window = self.tournament_window
+        settings = self.tournament_panel.settings
+        if (
+            window is not None
+            and settings is not None
+            and window.editing(settings.name)
+        ):
+            window.reload_tournament()
 
     def leave_tournament_mode(self) -> None:
         """Go back to choosing a regular game.

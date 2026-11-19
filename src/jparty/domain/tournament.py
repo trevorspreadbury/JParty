@@ -123,11 +123,17 @@ class BracketGame:
         name: Display name, such as ``"QF 3"`` or ``"Chase 1"``.
         seats: Where each of the three players comes from.
         chase: Whether this is a chase game.
+        play_in: Whether this is a play-in game, added when a player with a
+            Semifinal bye drops out (see
+            :mod:`jparty.domain.tournament_dropouts`). Its three players
+            come from the round before, and its winner takes the bye's
+            Semifinal seat.
     """
 
     name: str
     seats: tuple[str, ...]
     chase: bool = False
+    play_in: bool = False
 
 
 @dataclass(frozen=True)

@@ -262,11 +262,59 @@ class TournamentWindow(QDialog):
         self._update_editor_title()
 
     def showEvent(self, event: object) -> None:
-        """Fit the window on its screen, and lock newly played boards."""
+        """Fit the window on its screen, and catch up with games played.
+
+        Playing can change the tournament: results lock boards, and a
+        dropout can add a player, retire a board, or change the bracket. An
+        open tournament with no unsaved changes is read again to show all
+        of that; one with unsaved changes only locks newly played boards.
+        """
         super().showEvent(event)
         self.fit_to_screen()
+        self.reload_tournament()
+
+    def editing(self, name: str) -> bool:
+        """Return whether the open tournament is the saved one named ``name``.
+
+        Args:
+            name: A tournament name.
+
+        Returns:
+            Whether the editor shows that tournament.
+        """
+        editor = self.editor
+        return (
+            editor is not None and not editor.creating and editor.settings.name == name
+        )
+
+    def reload_tournament(self) -> None:
+        """Read the open tournament again, unless it has unsaved changes.
+
+        The editor keeps its own copy of the roster and boards, and Save
+        writes that copy back. After something else changes the folder, such
+        as a dropout, a stale copy would undo that change on the next Save.
+        With unsaved changes, only newly played boards are locked; the play
+        panel doesn't change the folder while there are any.
+
+        Returns:
+            ``None``.
+        """
+        editor = self.editor
+        if editor is None:
+            return
+        if editor.creating or editor.has_unsaved_changes():
+            editor.refresh_played()
+            return
+        try:
+            settings, slots = load_tournament(self.root / editor.settings.name)
+        except TournamentFileError as exc:
+            logging.error("Couldn't reread tournament: %s", exc)
+            editor.refresh_played()
+            return
+        tab = editor.tabs.currentIndex()
+        self._open_editor(settings, slots)
         if self.editor is not None:
-            self.editor.refresh_played()
+            self.editor.tabs.setCurrentIndex(tab)
 
     def fit_to_screen(self) -> None:
         """Shrink and move the window so all of it is on its screen.

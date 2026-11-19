@@ -511,7 +511,11 @@ are out, or who are waiting for the rest of their round, are greyed out.
 
 Players tied on score for the last wildcard spot, a chaser seat, or the
 last bye need a tiebreaker. Until it's played, the next game can't start,
-and the status line says who is tied. To play it:
+and the status line says who is tied. A tie that only decides seeding, not
+who gets in, goes to the higher Coryat score instead: for example, two
+chasers level on score both chase, and the one with the better Coryat is the
+first player out (so plays Chase 2). If their Coryat scores are level too, or
+unknown, it's a tiebreaker. To play it:
 
 1. Pick the tie at the top of `Games`, such as `Tiebreaker: Eve, Fay for
    the last wildcard spot in the Quarterfinals`. The podiums show the tied
@@ -534,6 +538,64 @@ chased, a red warning above `Games` lists them. Fix that game's results too,
 or delete them and play it again. A chase game whose chaser already chased
 in the other chase game waits until the results are sorted out.
 
+### Dropouts
+
+A player can drop out at any time. Select them in `Players` and click `Drop
+Player...`. The dialog says where they stand and what can happen to their
+spot. Your choice is saved straight away, and the player shows as `(dropped
+out)` and can't be picked again. What happens depends on how far they got:
+
+- **Before their first game**, choose one:
+  - `Reduce the field`: the games not yet played are planned again for one
+    fewer player, and games already played stay as played. This can turn a
+    regular game into a chase game, for example. Boards of games that go away
+    go back to unassigned. If the smaller bracket doesn't work, or doesn't
+    have a game that's already been played, this choice is greyed out.
+  - `Replace them with a new player`: type the new player's name. They join
+    the roster and play in the dropped player's place. Link their sign-up on
+    the `Players` tab if they have one.
+- **After their first game, before they win a Semifinal**, everyone ranked
+  beneath them in the last round they played moves up a place. If they won
+  their game, that round gets one more wildcard. A chaser who hasn't played
+  their chase game yet is worked out again, so the next player out may chase
+  instead. A chase game that was already played keeps its chaser.
+- **A Semifinal winner** who drops out has their Semifinal voided: its
+  results move to `voided_results.csv`, its board is retired so it isn't
+  played again, and the game is played again with a new board. Set the new
+  board on the `Games` tab. The next-ranked player of the round before the
+  Semifinals (the Second Round, if there is one) takes the dropped player's
+  seat. When the Semifinals are the first round, the best player from the
+  other Semifinals who didn't win takes it, marked `(replacement)` on the
+  podiums. They can't drop out once the Final has been played. This case
+  isn't fully worked out yet: the dropout rules are meant for brackets with
+  three or more rounds, and with only the Semifinals and the Final (4 to 9
+  players) the replacement has played two Semifinals. With 4 to 8 players,
+  where the Semifinals also send a wildcard to the Final, check the Final's
+  players by hand.
+- **A player with a Semifinal bye**: if no Second Round game has been played
+  yet, the Preliminaries move up as above, so the best remaining winner gets
+  the bye and the next player gets a Second Round seat. Once a Second Round
+  game has been played, choose one:
+  - `Add a play-in game`: the next three Preliminaries players play a new
+    game, `Play-in 1`, in the Second Round. Its winner takes the bye's seat
+    in the Semifinals. Set its board on the `Games` tab.
+  - `Promote a waiting player`: the best-ranked Second Round player who
+    hasn't played yet gets the bye, and the next Preliminaries player takes
+    their Second Round seat. Winners come first, then wildcards, each by
+    Preliminaries score. If the best waiting players are tied, a tiebreaker
+    between them decides who is promoted.
+
+Ties for these spots, such as two players level for a dropped player's
+seat, are settled with a tiebreaker like any other.
+
+`Undo Drop...` takes a dropout back, for example if it was a mistake. A
+voided Semifinal gets its results back, and its board if it has no new one,
+as long as it hasn't been played again. A replacement player stays on the
+roster; remove them on the `Players` tab if they aren't needed.
+
+Dropping a player out changes the roster and boards, so first save or
+discard any unsaved changes in the Tournament window.
+
 ### Saved files
 
 Each tournament is saved in `tournaments/<name>/` in the JParty data folder,
@@ -544,7 +606,7 @@ outside git:
   `player_id` column as it is.
 - `tournament.json` holds the sheet link, the ignored responses, the bracket
   options, each game's board and who can't play it, the unassigned boards,
-  and the logo's file name.
+  the boards of voided games, and the logo's file name.
   The app writes it; you don't need to edit it by hand.
 - `logo.png` (or `.jpg`, and so on) is the logo, if you chose one.
 - `results.csv` has one row per player per played game: `player` (Actual
@@ -561,6 +623,13 @@ outside git:
   `round`, `winner_name`, `winner` (the winner's player id), and `players`
   (the tied players' ids, separated by spaces). Playing the same tie again
   replaces its row. To play a tie again, delete its row.
+- `dropouts.csv` has one row per player who dropped out: `player_name`,
+  `round`, `choice` (`reduce`, `replace`, `slide`, `void`, `play_in`, or
+  `promote`), and the ids JParty matches on (`player_id`, then `game_key`
+  for a voided or play-in game and `other_id` for a replacement or promoted
+  player). Use `Undo Drop...` rather than editing it.
+- `voided_results.csv` keeps the results of voided Semifinals, in the same
+  columns as `results.csv`. They don't count toward anything.
 
 To reuse a tournament's setup, copy its folder and give the copy a new name;
 the copy saves into its own folder. Tournaments saved by an older JParty

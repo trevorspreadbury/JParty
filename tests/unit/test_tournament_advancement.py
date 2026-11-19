@@ -313,7 +313,7 @@ def test_second_player_out_needs_both_chasers_to_win(
 
 
 def test_tie_between_the_two_chasers_needs_a_tiebreaker() -> None:
-    """Who is first out and who is second decides who chases when."""
+    """With no Coryat scores, a tiebreaker decides who chases when."""
     plan = plan_tournament(TournamentOptions(13))
     results = [
         GameResult(**{**vars(row), "score": 200}) if row.player_id == "f" else row
@@ -325,6 +325,56 @@ def test_tie_between_the_two_chasers_needs_a_tiebreaker() -> None:
     assert (tie.reason, set(tie.players)) == (TIE_CHASER, {"e", "f"})
     settled = round_standing(plan, 0, results, [Tiebreak(QF, frozenset("ef"), "f")])
     assert settled.chasers == {f"{QF}: Chase 1": "e", f"{QF}: Chase 2": "f"}
+
+
+@pytest.mark.parametrize(
+    ("coryats", "chasers"),
+    [
+        # f has the better Coryat, so f is first out and chases last.
+        ({"e": 100, "f": 300}, ("e", "f")),
+        ({"e": 300, "f": 100}, ("f", "e")),
+        # Level on Coryat too: a tiebreaker decides.
+        ({"e": 200, "f": 200}, None),
+    ],
+)
+def test_tie_between_the_two_chasers_goes_to_the_better_coryat(
+    coryats: dict[str, int], chasers: tuple[str, str] | None
+) -> None:
+    """Both get a chase seat either way, so Coryat settles the order."""
+    plan = plan_tournament(TournamentOptions(13))
+    results = [
+        GameResult(**{**vars(row), "score": 200, "coryat": coryats[row.player_id]})
+        if row.player_id in "ef"
+        else row
+        for row in thirteen_player_regulars()
+    ]
+    standing = round_standing(plan, 0, results)
+    if chasers is None:
+        (tie,) = standing.ties
+        assert set(tie.players) == {"e", "f"}
+        return
+    assert standing.ties == ()
+    assert standing.chasers == {
+        f"{QF}: Chase 1": chasers[0],
+        f"{QF}: Chase 2": chasers[1],
+    }
+
+
+def test_tie_for_the_last_wildcard_still_needs_a_tiebreaker_despite_coryat() -> None:
+    """A tie between the last wildcard and a chaser decides who advances: no Coryat."""
+    plan = plan_tournament(TournamentOptions(13))
+    results = [
+        GameResult(**{**vars(row), "score": 200, "coryat": 500})
+        if row.player_id == "d"
+        else GameResult(**{**vars(row), "coryat": 0})
+        if row.player_id == "e"
+        else row
+        for row in thirteen_player_regulars()
+    ]
+    # d and e are level at 200 on the last wildcard spot.
+    standing = round_standing(plan, 0, results)
+    (tie,) = standing.ties
+    assert (tie.reason, set(tie.players)) == (TIE_CHASER, {"d", "e"})
 
 
 def second_round_prelims(winner_scores: list[int]) -> list[GameResult]:

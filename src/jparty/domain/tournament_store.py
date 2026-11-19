@@ -5,7 +5,8 @@ outside git:
 
 - ``tournament.json``: settings written by the app: the sign-up sheet link,
   the sign-ups the host chose to ignore, the bracket format, each game's
-  board, boards not assigned to a game, and the logo's file name.
+  board, boards not assigned to a game, boards of voided games (retired,
+  so they aren't played again), and the logo's file name.
 - ``players.csv``: one row per player slot, in roster order, with the slot's
   Actual Name, its linked sign-up answers, and a stable player id.
 - ``logo.<ext>``: the tournament logo, if the host chose one. It lives here,
@@ -17,6 +18,11 @@ outside git:
 - ``tiebreaks.csv``: one row per tiebreaker played to settle a tie for a
   wildcard, chaser, or bye (see
   :class:`jparty.domain.tournament_advancement.Tiebreak`).
+- ``dropouts.csv``: one row per player who dropped out, and what the host
+  chose to do (see :class:`jparty.domain.tournament_dropouts.Dropout`).
+- ``voided_results.csv``: results of Semifinals voided because their
+  winner dropped out, in the same columns as ``results.csv``. They're kept
+  for the record and never counted.
 
 Format version 1 files (from before the setup screen) load with the default
 bracket and no boards.
@@ -31,11 +37,13 @@ import os
 import shutil
 import tempfile
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from jparty.domain.roster import ANECDOTE_COLUMNS, PlayerSlot, SignUp, new_player_id
 from jparty.domain.tournament_advancement import Tiebreak
+from jparty.domain.tournament_drop_choices import TournamentData
+from jparty.domain.tournament_dropouts import DROP_CHOICES, Dropout
 from jparty.domain.tournament_play import RESULTS, GameResult, record_results
 from jparty.domain.tournament_setup import BracketSettings, TournamentBoard
 from jparty.services.game_cache import write_text_atomic
@@ -44,6 +52,8 @@ TOURNAMENT_FILE = "tournament.json"
 PLAYERS_FILE = "players.csv"
 RESULTS_FILE = "results.csv"
 TIEBREAKS_FILE = "tiebreaks.csv"
+DROPOUTS_FILE = "dropouts.csv"
+VOIDED_RESULTS_FILE = "voided_results.csv"
 TOURNAMENT_FORMAT_VERSION = 2
 LOGO_STEM = "logo"
 LOGO_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
@@ -76,6 +86,15 @@ RESULTS_REQUIRED_COLUMNS = ("player_id", "game_key", "score", "result")
 # ``players`` holds the tied players' ids, separated by spaces.
 TIEBREAK_COLUMNS = ("round", "winner_name", "winner", "players")
 TIEBREAK_REQUIRED_COLUMNS = ("round", "winner", "players")
+DROPOUT_COLUMNS = (
+    "player_name",
+    "round",
+    "choice",
+    "player_id",
+    "game_key",
+    "other_id",
+)
+DROPOUT_REQUIRED_COLUMNS = ("round", "choice", "player_id")
 
 _FORBIDDEN_NAME_CHARACTERS = set('<>:"/\\|?*')
 _RESERVED_WINDOWS_NAMES = {
@@ -106,6 +125,8 @@ class TournamentSettings:
             :func:`jparty.domain.tournament_setup.game_key`.
         unassigned_boards: Boards not assigned to any game.
         logo_file: File name of the logo in the tournament folder, or ``""``.
+        retired_boards: Boards of voided games, each remembering its game
+            in ``left_game_key``. They're kept so they aren't played again.
     """
 
     name: str
@@ -115,6 +136,7 @@ class TournamentSettings:
     boards: dict[str, TournamentBoard] = field(default_factory=dict)
     unassigned_boards: list[TournamentBoard] = field(default_factory=list)
     logo_file: str = ""
+    retired_boards: list[TournamentBoard] = field(default_factory=list)
 
 
 def tournament_name_problem(name: str) -> str | None:
@@ -225,6 +247,10 @@ def save_tournament(
         "bracket": settings.bracket.to_json(),
         "boards": {key: board.to_json() for key, board in settings.boards.items()},
         "unassigned_boards": [board.to_json() for board in settings.unassigned_boards],
+        "retired_boards": [
+            {**board.to_json(), "game_key": board.left_game_key}
+            for board in settings.retired_boards
+        ],
         "logo_file": settings.logo_file,
     }
     write_text_atomic(folder / TOURNAMENT_FILE, json.dumps(payload, indent=2) + "\n")
@@ -273,6 +299,14 @@ def load_tournament(folder: Path) -> tuple[TournamentSettings, list[PlayerSlot]]
         for board in map(TournamentBoard.from_json, unassigned_payload)
         if board is not None
     ]
+    retired = []
+    retired_payload = payload.get("retired_boards")
+    for board_payload in retired_payload if isinstance(retired_payload, list) else []:
+        board = TournamentBoard.from_json(board_payload)
+        if board is not None:
+            retired.append(
+                replace(board, left_game_key=str(board_payload.get("game_key") or ""))
+            )
     logo_file = str(payload.get("logo_file") or "")
     if logo_file and not (folder / logo_file).is_file():
         # A missing logo shouldn't stop the tournament from loading.
@@ -285,6 +319,7 @@ def load_tournament(folder: Path) -> tuple[TournamentSettings, list[PlayerSlot]]
         boards=boards,
         unassigned_boards=unassigned,
         logo_file=logo_file,
+        retired_boards=retired,
     )
     return settings, parse_players_csv(players_text)
 
@@ -515,19 +550,43 @@ def load_results(folder: Path) -> list[GameResult]:
     Raises:
         TournamentFileError: If ``results.csv`` can't be read.
     """
-    path = Path(folder) / RESULTS_FILE
+    text = _read_csv(Path(folder) / RESULTS_FILE)
+    return parse_results_csv(text) if text is not None else []
+
+
+def load_voided_results(folder: Path) -> list[GameResult]:
+    """Read the results of a tournament's voided games.
+
+    Args:
+        folder: The tournament's folder.
+
+    Returns:
+        The voided results, or an empty list if no game was voided.
+
+    Raises:
+        TournamentFileError: If ``voided_results.csv`` can't be read.
+    """
+    text = _read_csv(Path(folder) / VOIDED_RESULTS_FILE)
+    return parse_results_csv(text) if text is not None else []
+
+
+def _read_csv(path: Path) -> str | None:
+    """Return a CSV file's text, or ``None`` if there's no such file.
+
+    Raises:
+        TournamentFileError: If the file can't be read, or isn't UTF-8.
+    """
     if not path.is_file():
-        return []
+        return None
     try:
-        text = path.read_text(encoding="utf-8-sig")
+        return path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError as exc:
         # Excel's plain "CSV" format isn't UTF-8.
         raise TournamentFileError(
-            f'{RESULTS_FILE} isn\'t saved as UTF-8. In Excel, save it as "CSV UTF-8".'
+            f'{path.name} isn\'t saved as UTF-8. In Excel, save it as "CSV UTF-8".'
         ) from exc
     except OSError as exc:
-        raise TournamentFileError(f"Couldn't read {RESULTS_FILE}: {exc}") from exc
-    return parse_results_csv(text)
+        raise TournamentFileError(f"Couldn't read {path.name}: {exc}") from exc
 
 
 def save_results(folder: Path, results: Sequence[GameResult]) -> None:
@@ -685,3 +744,164 @@ def record_tiebreak(folder: Path, tiebreak: Tiebreak) -> None:
         )
     except OSError as exc:
         raise TournamentFileError(f"Couldn't save {TIEBREAKS_FILE}: {exc}") from exc
+
+
+def dropouts_csv_text(dropouts: Sequence[Dropout]) -> str:
+    """Return ``dropouts.csv`` contents.
+
+    Args:
+        dropouts: Dropouts, in the order they happened.
+
+    Returns:
+        CSV text with a header row and one row per dropout.
+    """
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(DROPOUT_COLUMNS)
+    for dropout in dropouts:
+        writer.writerow(
+            [
+                dropout.player_name,
+                dropout.round_name,
+                dropout.choice,
+                dropout.player_id,
+                dropout.game_key,
+                dropout.other_id,
+            ]
+        )
+    return buffer.getvalue()
+
+
+def parse_dropouts_csv(text: str) -> list[Dropout]:
+    """Read dropouts from ``dropouts.csv`` contents.
+
+    Args:
+        text: CSV text.
+
+    Returns:
+        The dropouts, in file order. Blank rows are skipped.
+
+    Raises:
+        TournamentFileError: If a column is missing, or a row has no round,
+            no player, or an unknown choice.
+    """
+    try:
+        reader = csv.DictReader(io.StringIO(text, newline=""))
+        if reader.fieldnames is None:
+            return []
+        reader.fieldnames = [(name or "").strip() for name in reader.fieldnames]
+        missing = [
+            column
+            for column in DROPOUT_REQUIRED_COLUMNS
+            if column not in reader.fieldnames
+        ]
+        if missing:
+            raise TournamentFileError(
+                f"{DROPOUTS_FILE} has no {', '.join(missing)} column."
+            )
+        dropouts = []
+        for line, row in enumerate(reader, start=2):
+            cells = {key: (value or "").strip() for key, value in row.items() if key}
+            if not any(cells.values()):
+                continue
+            if (
+                not cells.get("round")
+                or not cells.get("player_id")
+                or cells.get("choice") not in DROP_CHOICES
+            ):
+                raise TournamentFileError(
+                    f"{DROPOUTS_FILE} line {line}: a dropout needs its round, its "
+                    f"player, and a choice of {', '.join(DROP_CHOICES)}."
+                )
+            dropouts.append(
+                Dropout(
+                    cells["player_id"],
+                    cells["round"],
+                    cells["choice"],
+                    game_key=cells.get("game_key", ""),
+                    other_id=cells.get("other_id", ""),
+                    player_name=cells.get("player_name", ""),
+                )
+            )
+        return dropouts
+    except csv.Error as exc:
+        raise TournamentFileError(f"Couldn't read {DROPOUTS_FILE}: {exc}") from exc
+
+
+def load_dropouts(folder: Path) -> list[Dropout]:
+    """Read a tournament's dropouts.
+
+    Args:
+        folder: The tournament's folder.
+
+    Returns:
+        The dropouts, or an empty list if no one has dropped out.
+
+    Raises:
+        TournamentFileError: If ``dropouts.csv`` can't be read.
+    """
+    text = _read_csv(Path(folder) / DROPOUTS_FILE)
+    return parse_dropouts_csv(text) if text is not None else []
+
+
+def load_tournament_data(
+    folder: Path,
+) -> tuple[TournamentSettings, TournamentData]:
+    """Read everything a dropout can change.
+
+    Args:
+        folder: The tournament's folder.
+
+    Returns:
+        The settings, and the tournament's data.
+
+    Raises:
+        TournamentFileError: If a file is missing or can't be read.
+    """
+    folder = Path(folder)
+    settings, slots = load_tournament(folder)
+    data = TournamentData(
+        bracket=settings.bracket,
+        slots=tuple(slots),
+        results=tuple(load_results(folder)),
+        tiebreaks=tuple(load_tiebreaks(folder)),
+        dropouts=tuple(load_dropouts(folder)),
+        voided=tuple(load_voided_results(folder)),
+        boards=dict(settings.boards),
+        unassigned=tuple(settings.unassigned_boards),
+        retired=tuple(settings.retired_boards),
+    )
+    return settings, data
+
+
+def save_tournament_data(
+    folder: Path, settings: TournamentSettings, data: TournamentData
+) -> None:
+    """Write a dropout's changes: voided results, dropouts, results, and setup.
+
+    Voided results are written first, so a game's results are never lost if
+    a later write fails.
+
+    Args:
+        folder: The tournament's folder.
+        settings: The tournament's settings; its boards are updated from
+            ``data``.
+        data: The changed tournament.
+
+    Raises:
+        TournamentFileError: If a file can't be written.
+    """
+    folder = Path(folder)
+    try:
+        write_text_atomic(folder / VOIDED_RESULTS_FILE, results_csv_text(data.voided))
+        write_text_atomic(folder / DROPOUTS_FILE, dropouts_csv_text(data.dropouts))
+    except OSError as exc:
+        raise TournamentFileError(f"Couldn't save the dropout: {exc}") from exc
+    save_results(folder, data.results)
+    settings.boards = dict(data.boards)
+    settings.unassigned_boards = list(data.unassigned)
+    settings.retired_boards = list(data.retired)
+    try:
+        save_tournament(folder.parent, settings, data.slots)
+    except OSError as exc:
+        raise TournamentFileError(f"Couldn't save the tournament: {exc}") from exc
