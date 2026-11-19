@@ -14,6 +14,10 @@ depends on how far they got:
   player of the round before the Semifinals (the Second Round, if there is
   one) takes their seat. When the Semifinals are the first round, the best
   non-winner from the other Semifinals takes it.
+  That case is only partly specified: these rules are meant for brackets
+  with three or more rounds. With 4 to 8 players, where the Semifinals
+  also have wildcards or chase games, the replacement has played two
+  Semifinals and can be counted twice; check the Final's players by hand.
 - **A player with a Semifinal bye**: if no Second Round game has been
   played, the Preliminaries slide up as above. Once one has, the host
   chooses either a *play-in* game for the next three Preliminaries players,
@@ -79,7 +83,8 @@ class Dropout:
         game_key: The voided game for :data:`DROP_VOID`, or the added
             play-in game for :data:`DROP_PLAY_IN`; ``""`` otherwise.
         other_id: The new player for :data:`DROP_REPLACE`, or the player
-            promoted to the bye for :data:`DROP_PROMOTE`; ``""`` otherwise.
+            promoted to the bye for :data:`DROP_PROMOTE` (``""`` while a
+            tiebreaker still has to pick them); ``""`` otherwise.
         player_name: The player's Actual Name when they dropped out, so the
             saved file reads well. Not used to match anything.
     """
@@ -105,6 +110,9 @@ class RoundDrops:
         byes_out: Players who lose their bye, by player id. The value is the
             player promoted to the bye, or ``""`` when a play-in game fills
             the seat instead.
+        pending_promotions: Players who lose their bye to a promoted player
+            not chosen yet, because the best waiting players were tied when
+            they dropped out. A tiebreaker picks the player.
         replacement_games: Voided games of this round whose dropped seat
             goes to the best non-winner of the round's other games, in the
             order they were voided. Only used when the voided round is the
@@ -114,12 +122,14 @@ class RoundDrops:
     slide: frozenset[str] = frozenset()
     extra_wildcards: int = 0
     byes_out: dict[str, str] = field(default_factory=dict)
+    pending_promotions: tuple[str, ...] = ()
     replacement_games: tuple[str, ...] = ()
 
     @property
     def promotions(self) -> int:
-        """Return how many byes go to a promoted player."""
-        return sum(1 for promoted in self.byes_out.values() if promoted)
+        """Return how many byes go to a promoted player, chosen or not."""
+        chosen = sum(1 for promoted in self.byes_out.values() if promoted)
+        return chosen + len(self.pending_promotions)
 
     @property
     def play_ins(self) -> int:
@@ -259,6 +269,7 @@ def round_drops(plan: TournamentPlan, dropouts: Sequence[Dropout]) -> list[Round
     extra = [0] * len(names)
     byes_out: list[dict[str, str]] = [{} for _ in names]
     replacements: list[list[str]] = [[] for _ in names]
+    pending: list[list[str]] = [[] for _ in names]
     for dropout in dropouts:
         if dropout.round_name not in names:
             continue
@@ -270,8 +281,10 @@ def round_drops(plan: TournamentPlan, dropouts: Sequence[Dropout]) -> list[Round
                 extra[index - 1] += 1
             else:
                 replacements[index].append(dropout.game_key)
-        elif dropout.choice == DROP_PROMOTE:
+        elif dropout.choice == DROP_PROMOTE and dropout.other_id:
             byes_out[index][dropout.player_id] = dropout.other_id
+        elif dropout.choice == DROP_PROMOTE:
+            pending[index].append(dropout.player_id)
         elif dropout.choice == DROP_PLAY_IN:
             byes_out[index][dropout.player_id] = ""
     return [
@@ -279,6 +292,7 @@ def round_drops(plan: TournamentPlan, dropouts: Sequence[Dropout]) -> list[Round
             frozenset(slide[index]),
             extra[index],
             byes_out[index],
+            tuple(pending[index]),
             tuple(replacements[index]),
         )
         for index in range(len(names))

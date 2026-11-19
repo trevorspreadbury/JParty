@@ -167,6 +167,8 @@ def _ranked(
     tiebreaks: Sequence[Tiebreak],
     round_name: str,
     reason: str,
+    coryats: dict[str, int | None] | None = None,
+    seeding: Iterable[int] = (),
 ) -> tuple[list[str], list[TieForSpot]]:
     """Rank players by score, best first, breaking ties only where needed.
 
@@ -184,12 +186,18 @@ def _ranked(
         tiebreaks: Tiebreakers played so far.
         round_name: The round, to match tiebreakers and name ties.
         reason: What the cutoffs decide, for :class:`TieForSpot`.
+        coryats: Each player's Coryat score, or ``None`` if unknown.
+        seeding: Cutoffs that only decide seeding, such as which chase game
+            a chaser plays, not who gets into a round. A tie across only
+            these goes to the higher Coryat score; a tiebreaker is needed
+            only if that's tied or unknown too.
 
     Returns:
         The ranked ids, and any ties still to break.
     """
     order = sorted(players, key=lambda player_id: -scores[player_id])
     cuts = {cut for cut in cutoffs if 0 < cut < len(order)}
+    seeding_cuts = set(seeding)
     ranked: list[str] = []
     ties: list[TieForSpot] = []
     start = 0
@@ -202,6 +210,13 @@ def _ranked(
         while len(group) > 1 and any(
             position < cut < position + len(group) for cut in cuts
         ):
+            straddled = [c for c in cuts if position < c < position + len(group)]
+            best = _best_coryat(group, coryats or {})
+            if best is not None and all(c in seeding_cuts for c in straddled):
+                ranked.append(best)
+                group.remove(best)
+                position += 1
+                continue
             contenders = frozenset(group)
             winner = next(
                 (
@@ -233,6 +248,51 @@ def _ranked(
     return ranked, ties
 
 
+def _best_coryat(group: Sequence[str], coryats: dict[str, int | None]) -> str | None:
+    """Return the one player in ``group`` with the highest Coryat, or ``None``.
+
+    ``None`` when any Coryat is unknown or the highest is shared.
+    """
+    values = [coryats.get(player_id) for player_id in group]
+    if not values or any(value is None for value in values):
+        return None
+    top = max(values)
+    if values.count(top) != 1:
+        return None
+    return group[values.index(top)]
+
+
+def promotion_choice(
+    standing: RoundStanding,
+    candidates: Sequence[str],
+    tiebreaks: Sequence[Tiebreak] = (),
+) -> tuple[str | None, list[TieForSpot]]:
+    """Return the waiting player to promote to a dropped player's bye.
+
+    Winners come first, like the byes themselves, then wildcards, each by
+    score. A tie for the top spot needs a tiebreaker, since it decides who
+    goes straight to the next round.
+
+    Args:
+        standing: The standing of the round that gives the byes.
+        candidates: Players who could be promoted: in the next round, and
+            not played it yet.
+        tiebreaks: Every tiebreaker played.
+
+    Returns:
+        The player, or ``None`` with the tie when it's tied (or ``None`` and
+        no tie when there's no one to promote).
+    """
+    winners = [p for p in candidates if p in standing.winners]
+    group = winners or list(candidates)
+    if not group:
+        return None, []
+    order, ties = _ranked(
+        group, standing.scores, (1,), tiebreaks, standing.name, TIE_BYE
+    )
+    return (None, ties) if ties else (order[0], [])
+
+
 def _game_rows(
     bracket_round: BracketRound, by_game: dict[str, list[GameResult]]
 ) -> list[tuple[str, bool, list[GameResult]]]:
@@ -250,6 +310,7 @@ def round_standing(
     results: Sequence[GameResult],
     tiebreaks: Sequence[Tiebreak] = (),
     drops: RoundDrops | None = None,
+    next_round_players: Iterable[str] = (),
 ) -> RoundStanding:
     """Work out where one round stands from its results.
 
@@ -259,6 +320,8 @@ def round_standing(
         results: Every saved result.
         tiebreaks: Every tiebreaker played.
         drops: How dropouts change the round, or ``None`` for no dropouts.
+        next_round_players: Players who have played the next round, for a
+            promotion to a bye that a tiebreaker still has to settle.
 
     Returns:
         The round's standing. Advancers, wildcards, and byes are filled in
@@ -273,11 +336,13 @@ def round_standing(
     played = _game_rows(bracket_round, by_game)
     first_seen: list[str] = []
     scores: dict[str, int] = {}
+    coryats: dict[str, int | None] = {}
     for _key, _chase, rows in played:
         for row in rows:
             if row.player_id not in scores:
                 first_seen.append(row.player_id)
                 scores[row.player_id] = row.score
+                coryats[row.player_id] = row.coryat
     layout = bracket_round.layout
     if layout is None:
         return _winners_only_standing(
@@ -309,13 +374,13 @@ def round_standing(
     if chase_keys and not regular_left:
         ranking = [player_id for player_id in pool if player_id not in drops.slide]
         planned, chaser_ties = _plan_chasers(
-            ranking, scores, wildcard_spots, chase_keys, tiebreaks, name
+            ranking, scores, wildcard_spots, chase_keys, tiebreaks, name, coryats
         )
         ties.extend(chaser_ties)
         original = planned
         if drops != RoundDrops():
             original, _ties = _plan_chasers(
-                pool, scores, layout.wildcards, chase_keys, tiebreaks, name
+                pool, scores, layout.wildcards, chase_keys, tiebreaks, name, coryats
             )
     # A chase game's chaser is whoever in it already played a regular
     # game this round; the other two are new players. Only a chaser who
@@ -393,16 +458,34 @@ def round_standing(
         ties.extend(bye_ties)
     play_in_players: list[str] = []
     play_in_ties: list[TieForSpot] = []
-    if drops.byes_out and not ties:
+    byes_out = dict(drops.byes_out)
+    if drops.pending_promotions and not ties:
+        # Promotions a tiebreaker had to settle: pick from the players
+        # still waiting to play the next round.
+        gone = set(byes_out) | set(drops.pending_promotions)
+        waiting = set(next_round_players)
+        for player_id in drops.pending_promotions:
+            candidates = [
+                p
+                for p in winners + wildcards
+                if p not in byes
+                and p not in waiting
+                and p not in gone
+                and p not in byes_out.values()
+            ]
+            standing = RoundStanding(name, winners=tuple(winners), scores=scores)
+            promoted, promote_ties = promotion_choice(standing, candidates, tiebreaks)
+            ties.extend(promote_ties)
+            byes_out[player_id] = promoted or ""
+    if byes_out and not ties:
         # A bye who dropped out leaves. Either the player promoted to
         # their bye has their place taken by the next player, or a play-in
         # game for the next three players fills the bye's seat.
-        out = set(drops.byes_out)
+        out = set(byes_out)
         winners = [player_id for player_id in winners if player_id not in out]
         wildcards = [player_id for player_id in wildcards if player_id not in out]
         byes = [
-            drops.byes_out[player_id] if player_id in out else player_id
-            for player_id in byes
+            byes_out[player_id] if player_id in out else player_id for player_id in byes
         ]
         byes = [player_id for player_id in byes if player_id]
         promoted, promote_ties = _ranked(
@@ -440,10 +523,18 @@ def _plan_chasers(
     chase_keys: Sequence[str],
     tiebreaks: Sequence[Tiebreak],
     round_name: str,
+    coryats: dict[str, int | None] | None = None,
 ) -> tuple[dict[str, str], list[TieForSpot]]:
-    """Return who should chase in each chase game, by key, and any ties."""
+    """Return who should chase in each chase game, by key, and any ties.
+
+    The cutoffs between chasers only decide which chase game each plays, so
+    a tie there goes to the higher Coryat score first.
+    """
     cutoffs = range(wildcard_spots, wildcard_spots + len(chase_keys) + 1)
-    order, ties = _ranked(ranking, scores, cutoffs, tiebreaks, round_name, TIE_CHASER)
+    seeding = range(wildcard_spots + 1, wildcard_spots + len(chase_keys))
+    order, ties = _ranked(
+        ranking, scores, cutoffs, tiebreaks, round_name, TIE_CHASER, coryats, seeding
+    )
     planned: dict[str, str] = {}
     if not ties and len(order) >= wildcard_spots + len(chase_keys):
         for index, key in enumerate(chase_keys):
@@ -552,8 +643,21 @@ def tournament_standings(
         One standing per round of ``plan``.
     """
     drops = round_drops(plan, dropouts)
+    by_game = results_by_game(results)
+    next_players = []
+    for index in range(len(plan.rounds)):
+        later = plan.rounds[index + 1] if index + 1 < len(plan.rounds) else None
+        next_players.append(
+            {
+                row.player_id
+                for game in (later.games if later else ())
+                for row in by_game.get(game_key(later, game), [])
+            }
+        )
     return [
-        round_standing(plan, index, results, tiebreaks, drops[index])
+        round_standing(
+            plan, index, results, tiebreaks, drops[index], next_players[index]
+        )
         for index in range(len(plan.rounds))
     ]
 

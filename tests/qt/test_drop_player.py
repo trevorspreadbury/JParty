@@ -219,3 +219,37 @@ def test_welcome_blocks_drops_while_the_tournament_window_has_edits(
     assert "unsaved changes" in panel.before_change()
     edits.editor.has_unsaved_changes = lambda: False
     assert panel.before_change() is None
+
+
+@pytest.mark.parametrize("choice", [DROP_VOID, DROP_REPLACE])
+def test_open_tournament_window_doesnt_undo_a_drop_when_it_saves(
+    qtbot: object,
+    temp_dir: object,
+    tournament_welcome: tuple,  # noqa: F811
+    messages: list[str],
+    choice: str,
+) -> None:
+    """An open, clean window rereads the drop, so its next Save keeps it."""
+    from jparty.domain.tournament_store import load_tournament_data
+    from tests.qt.test_tournament_roster import make_window
+
+    widget, _game, _parent = tournament_welcome
+    folder = temp_dir / "Fun"
+    window = make_window(qtbot, temp_dir)
+    window._open_editor(*load_tournament(folder))
+    window.show()
+    widget.tournament_window = window
+    panel = widget.tournament_panel
+    player = "p1" if choice == DROP_VOID else "p4"
+    select_player(panel, player)
+    panel.ask_drop = choosing(choice, "Newbie")
+    panel.drop_selected_player()
+    assert not window.editor.has_unsaved_changes()
+
+    window.editor.save()
+    settings, data = load_tournament_data(folder)
+    if choice == DROP_VOID:
+        assert SF1 not in settings.boards
+        assert [b.left_game_key for b in settings.retired_boards] == [SF1]
+    else:
+        assert "Newbie" in [slot.actual_name for slot in data.slots]

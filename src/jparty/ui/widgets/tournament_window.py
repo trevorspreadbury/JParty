@@ -271,6 +271,34 @@ class TournamentWindow(QDialog):
         """
         super().showEvent(event)
         self.fit_to_screen()
+        self.reload_tournament()
+
+    def editing(self, name: str) -> bool:
+        """Return whether the open tournament is the saved one named ``name``.
+
+        Args:
+            name: A tournament name.
+
+        Returns:
+            Whether the editor shows that tournament.
+        """
+        editor = self.editor
+        return (
+            editor is not None and not editor.creating and editor.settings.name == name
+        )
+
+    def reload_tournament(self) -> None:
+        """Read the open tournament again, unless it has unsaved changes.
+
+        The editor keeps its own copy of the roster and boards, and Save
+        writes that copy back. After something else changes the folder, such
+        as a dropout, a stale copy would undo that change on the next Save.
+        With unsaved changes, only newly played boards are locked; the play
+        panel doesn't change the folder while there are any.
+
+        Returns:
+            ``None``.
+        """
         editor = self.editor
         if editor is None:
             return

@@ -184,6 +184,8 @@ class TournamentPlayPanel(QWidget):
     selection_changed = pyqtSignal()
     leave_requested = pyqtSignal()
     results_changed = pyqtSignal()
+    # A dropout changed the roster, boards, or bracket on disk.
+    tournament_changed = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         """Build an empty panel; :meth:`load` fills it.
@@ -802,6 +804,7 @@ class TournamentPlayPanel(QWidget):
         except TournamentFileError as exc:
             QMessageBox.warning(self, "Couldn't save the dropout", str(exc))
         self.reload()
+        self.tournament_changed.emit()
         self.results_changed.emit()
 
     def _on_podium_changed(self, *_args: object) -> None:

@@ -511,7 +511,11 @@ are out, or who are waiting for the rest of their round, are greyed out.
 
 Players tied on score for the last wildcard spot, a chaser seat, or the
 last bye need a tiebreaker. Until it's played, the next game can't start,
-and the status line says who is tied. To play it:
+and the status line says who is tied. A tie that only decides seeding, not
+who gets in, goes to the higher Coryat score instead: for example, two
+chasers level on score both chase, and the one with the better Coryat is the
+first player out (so plays Chase 2). If their Coryat scores are level too, or
+unknown, it's a tiebreaker. To play it:
 
 1. Pick the tie at the top of `Games`, such as `Tiebreaker: Eve, Fay for
    the last wildcard spot in the Quarterfinals`. The podiums show the tied
@@ -562,7 +566,12 @@ out)` and can't be picked again. What happens depends on how far they got:
   Semifinals (the Second Round, if there is one) takes the dropped player's
   seat. When the Semifinals are the first round, the best player from the
   other Semifinals who didn't win takes it, marked `(replacement)` on the
-  podiums. They can't drop out once the Final has been played.
+  podiums. They can't drop out once the Final has been played. This case
+  isn't fully worked out yet: the dropout rules are meant for brackets with
+  three or more rounds, and with only the Semifinals and the Final (4 to 9
+  players) the replacement has played two Semifinals. With 4 to 8 players,
+  where the Semifinals also send a wildcard to the Final, check the Final's
+  players by hand.
 - **A player with a Semifinal bye**: if no Second Round game has been played
   yet, the Preliminaries move up as above, so the best remaining winner gets
   the bye and the next player gets a Second Round seat. Once a Second Round
@@ -572,7 +581,9 @@ out)` and can't be picked again. What happens depends on how far they got:
     in the Semifinals. Set its board on the `Games` tab.
   - `Promote a waiting player`: the best-ranked Second Round player who
     hasn't played yet gets the bye, and the next Preliminaries player takes
-    their Second Round seat.
+    their Second Round seat. Winners come first, then wildcards, each by
+    Preliminaries score. If the best waiting players are tied, a tiebreaker
+    between them decides who is promoted.
 
 Ties for these spots, such as two players level for a dropped player's
 seat, are settled with a tiebreaker like any other.

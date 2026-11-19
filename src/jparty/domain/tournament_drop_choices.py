@@ -20,6 +20,7 @@ from jparty.domain.tournament_advancement import (
     RoundStanding,
     Tiebreak,
     advancement_conflicts,
+    promotion_choice,
     round_entrants,
     tournament_standings,
 )
@@ -306,20 +307,35 @@ def _bye_after_start(
     entrants = round_entrants(
         plan, standings, index + 1, dropped=dropped_ids(data.dropouts)
     )
-    scores = standings[index].scores
     waiting = [
         p
         for p in entrants.players or ()
         if p not in standings[index + 1].scores and p != player_id
     ]
     promote_problem = ""
-    promoted = ""
-    if waiting:
-        promoted = max(waiting, key=lambda p: scores.get(p, 0))
-    else:
-        promote_problem = f"Everyone in the {next_round.name} has played."
     names = data.names()
+    promoted, promote_ties = promotion_choice(standings[index], waiting, data.tiebreaks)
+    if not waiting:
+        promote_problem = f"Everyone in the {next_round.name} has played."
+    promoted = promoted or ""
     promoted_name = names.get(promoted) or promoted
+    if promote_ties:
+        tie = promote_ties[0]
+        tied = ", ".join(names.get(p) or p for p in tie.players)
+        promote_detail = (
+            f"{tied} are tied at ${tie.score:,} as the best-ranked "
+            f"{next_round.name} players who haven't played yet. A tiebreaker "
+            f"between them decides who gets the bye to the {skipped_to}; the "
+            f"next {bye_round.name} player takes the winner's "
+            f"{next_round.name} seat."
+        )
+    else:
+        promote_detail = (
+            f"{promoted_name}, the best-ranked {next_round.name} player who "
+            f"hasn't played yet (winners first), gets the bye to the "
+            f"{skipped_to}. The next {bye_round.name} player takes their "
+            f"{next_round.name} seat."
+        )
     promote = Dropout(
         player_id,
         bye_round.name,
@@ -341,11 +357,7 @@ def _bye_after_start(
             data,
             promote,
             "Promote a waiting player",
-            f"{promoted_name}, the best-ranked {next_round.name} player who "
-            f"hasn't played yet, gets the bye to the {skipped_to}. The next "
-            f"{bye_round.name} player takes their {next_round.name} seat."
-            if promoted
-            else "",
+            promote_detail if waiting else "",
             promote_problem,
         ),
     )

@@ -385,6 +385,14 @@ def test_play_in_game_seats_the_next_three_and_its_winner_takes_the_bye() -> Non
         results += play(f"{R2}: R2 {number}", dict.fromkeys(trio, 1), trio[0])
     results += play(f"{R2}: Play-in 1", {"l5-2": 1, "l5-1": 2, "l4-2": 3}, "l4-2")
     finished = replace(after, results=tuple(results))
+    # The play-in players didn't advance out of the Preliminaries, but
+    # their game in the Second Round isn't a conflict.
+    assert (
+        advancement_conflicts(
+            finished.plan, finished.standings(), finished.results, {}, finished.dropouts
+        )
+        == []
+    )
     semifinal = round_entrants(finished.plan, finished.standings(), 2).players
     assert len(semifinal) == 9
     assert "l4-2" in semifinal
@@ -519,3 +527,46 @@ def test_semifinal_winner_cant_drop_once_a_final_without_them_is_saved() -> None
     )
     problem = drop_situation(data_for(TWELVE, results), "w1").problem
     assert problem == "W1 won a Semifinal, but the Final has been played."
+
+
+def with_scores(results: list[GameResult], **scores: int) -> list[GameResult]:
+    """Return ``results`` with some players' scores changed, by player id."""
+    return [
+        replace(row, score=scores[row.player_id.replace("-", "_")])
+        if row.player_id.replace("-", "_") in scores
+        else row
+        for row in results
+    ]
+
+
+def test_promote_takes_a_waiting_winner_before_a_better_scoring_wildcard() -> None:
+    """l1-2 scored 2000 but lost; w9 won with 1300, so w9 is promoted."""
+    results = with_scores(twenty_seven_prelims(), l1_2=2000) + FIRST_R2
+    data = data_for(TWENTY_SEVEN, results, BYES)
+    assert option(data, "w1", DROP_PROMOTE).other_id == "w9"
+
+
+def test_tie_for_promotion_waits_for_a_tiebreaker() -> None:
+    """w8 and w9 both won with 1300: a tiebreaker picks who gets the bye."""
+    from jparty.domain.tournament_advancement import TIE_BYE, Tiebreak
+
+    results = with_scores(twenty_seven_prelims(), w8=1300) + FIRST_R2
+    data = data_for(TWENTY_SEVEN, results, BYES)
+    situation = drop_situation(data, "w1")
+    promote = situation.options[1]
+    assert promote.dropout.other_id == ""
+    assert "W8, W9 are tied at $1,300" in promote.detail
+    after = apply_drop(data, promote.dropout)
+    prelims = after.standings()[0]
+    (tie,) = prelims.ties
+    assert (tie.reason, set(tie.players)) == (TIE_BYE, {"w8", "w9"})
+    assert round_entrants(after.plan, after.standings(), 1).waiting
+
+    settled = replace(
+        after, tiebreaks=(Tiebreak(PRELIMS, frozenset({"w8", "w9"}), "w8"),)
+    )
+    prelims = settled.standings()[0]
+    assert prelims.byes == ("w8", "w2", "w3", "w4", "w5")
+    second_round = round_entrants(settled.plan, settled.standings(), 1).players
+    assert "w9" in second_round
+    assert "l5-2" in second_round
