@@ -262,10 +262,40 @@ class TournamentWindow(QDialog):
         self._update_editor_title()
 
     def showEvent(self, event: object) -> None:
-        """Lock boards of games played while the window was hidden."""
+        """Fit the window on its screen, and lock newly played boards."""
         super().showEvent(event)
+        self.fit_to_screen()
         if self.editor is not None:
             self.editor.refresh_played()
+
+    def fit_to_screen(self) -> None:
+        """Shrink and move the window so all of it is on its screen.
+
+        The window opens at a comfortable size, but a small or scaled
+        laptop screen can have less room than that, and the bottom would
+        run off the screen. A window that already fits is left alone.
+
+        Returns:
+            ``None``.
+        """
+        parent = self.parentWidget()
+        screen = parent.screen() if parent is not None else None
+        screen = screen or self.screen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        # resize() leaves out the title bar and frame, which may not be
+        # known until the window is on screen, so allow for them.
+        frame_width = max(self.frameGeometry().width() - self.width(), 2 * 8)
+        frame_height = max(self.frameGeometry().height() - self.height(), 40)
+        width = min(self.width(), area.width() - frame_width)
+        height = min(self.height(), area.height() - frame_height)
+        if (width, height) != (self.width(), self.height()):
+            self.resize(width, height)
+        left = min(max(self.x(), area.left()), area.right() + 1 - width - frame_width)
+        top = min(max(self.y(), area.top()), area.bottom() + 1 - height - frame_height)
+        if (left, top) != (self.x(), self.y()):
+            self.move(left, top)
 
     def _play(self, folder: Path) -> None:
         """Hide the window and pass the tournament on to be played."""

@@ -71,6 +71,8 @@ PROBLEM_COLOR = "#b00020"
 NO_PHONE_TEXT = "no phone yet"
 SIGNED_NAME_TEXT = "signed name"
 CHOOSE_PLAYER_TEXT = "Choose a player"
+# A podium's signature is this many lines of text tall.
+SIGNATURE_LINES = 3
 
 
 def phone_label(name: object) -> str:
@@ -388,10 +390,10 @@ class TournamentPlayPanel(QWidget):
                 label.setToolTip("")
                 continue
             # Show the signature the player logged in with, at about the
-            # height of two lines of text, so the host can match them.
+            # height of three lines of text, so the host can match them.
             label.setPixmap(
                 pixmap.scaledToHeight(
-                    self._font_pixels * 2,
+                    self._font_pixels * SIGNATURE_LINES,
                     Qt.TransformationMode.SmoothTransformation,
                 )
             )

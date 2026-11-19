@@ -2,6 +2,7 @@
 
 import pytest
 import requests
+from PyQt6.QtCore import QPoint, QSize
 from PyQt6.QtWidgets import QDialog, QMessageBox
 
 from jparty.domain.roster import (
@@ -473,3 +474,37 @@ def test_fetch_finishing_after_close_is_dropped(
     pending[0]()
     assert opened == []
     assert editor.roster.slots[0].sign_up is None
+
+
+def test_tournament_window_fits_on_its_screen(qtbot: object, temp_dir: object) -> None:
+    """A window bigger than the screen shrinks and moves so all of it shows."""
+    window = make_window(qtbot, temp_dir)
+    area = window.screen().availableGeometry()
+    window.resize(area.width() + 300, area.height() + 300)
+    window.move(area.left() + 200, area.top() + 200)
+    window.show()
+    qtbot.waitExposed(window)
+
+    # Leave room for a title bar the offscreen platform doesn't draw.
+    assert window.width() <= area.width() - 16
+    assert window.height() <= area.height() - 40
+    assert window.x() >= area.left()
+    assert window.y() >= area.top()
+    assert window.y() + window.height() + 40 <= area.bottom() + 1
+    assert window.x() + window.width() + 16 <= area.right() + 1
+
+
+def test_tournament_window_that_fits_is_left_alone(
+    qtbot: object, temp_dir: object
+) -> None:
+    """A window that already fits keeps the size and place the host gave it."""
+    window = make_window(qtbot, temp_dir)
+    area = window.screen().availableGeometry()
+    # Qt enforces the window's own minimum size on show, so start from it.
+    size = window.minimumSizeHint().expandedTo(window.minimumSize()) + QSize(0, 40)
+    window.resize(size)
+    window.move(area.left(), area.top() + 60)
+    window.show()
+    qtbot.waitExposed(window)
+    assert window.size() == size
+    assert window.pos() == area.topLeft() + QPoint(0, 60)

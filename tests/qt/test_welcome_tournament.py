@@ -21,6 +21,7 @@ from jparty.ui.widgets.tournament_play import (
     COLUMN_RESULT,
     COLUMN_SCORE,
     NO_PHONE_TEXT,
+    SIGNATURE_LINES,
     SIGNED_NAME_TEXT,
     TournamentPlayPanel,
     TournamentResultsDialog,
@@ -656,13 +657,13 @@ def test_podium_shows_the_signature_a_phone_signed_in_with(qtbot: object) -> Non
     assert panel.phone_labels[0].text() == "Ann"
     signed = panel.phone_labels[1]
     assert signed.text() == ""
-    assert signed.pixmap().height() == panel._font_pixels * 2
+    assert signed.pixmap().height() == panel._font_pixels * SIGNATURE_LINES
     assert signed.toolTip() == SIGNED_NAME_TEXT
     assert panel.phone_labels[2].text() == NO_PHONE_TEXT
 
     # Rescaling redraws it; a phone that leaves goes back to text.
     panel.apply_scale(1200)
-    assert signed.pixmap().height() == panel._font_pixels * 2
+    assert signed.pixmap().height() == panel._font_pixels * SIGNATURE_LINES
     panel.set_phones(["Ann"])
     assert signed.text() == NO_PHONE_TEXT
     assert signed.pixmap().isNull()
