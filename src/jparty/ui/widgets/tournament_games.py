@@ -1,9 +1,10 @@
 """A tournament's Games tab: which board each bracket game plays.
 
-Boards are set up on the welcome screen, regular or Frankenstein, and then
-given to a game with "Use Welcome Board". Boards can be swapped between
-games, and boards whose game leaves the bracket wait in an unassigned pool.
-The assignment rules live in :mod:`jparty.domain.tournament_setup`.
+"Set Board..." (or double-clicking a game) opens the welcome screen's board
+tools in a dialog, in Advanced Options mode, to choose or edit that game's
+board. Boards can be swapped between games, and boards whose game leaves the
+bracket wait in an unassigned pool. The assignment rules live in
+:mod:`jparty.domain.tournament_setup`.
 """
 
 from __future__ import annotations
@@ -27,7 +28,6 @@ from PyQt6.QtWidgets import (
 from jparty.domain.tournament import TournamentPlan
 from jparty.domain.tournament_setup import (
     TournamentBoard,
-    assign_board,
     assign_from_pool,
     plan_games,
     reconcile_boards,
@@ -68,6 +68,26 @@ def missing_media_ids(board: TournamentBoard) -> list[str]:
     return missing
 
 
+def pick_board_with_dialog(
+    game_key: str, board: TournamentBoard | None, parent: QWidget | None
+) -> TournamentBoard | None:
+    """Open the board picker for one game.
+
+    Args:
+        game_key: The tournament game.
+        board: Its current board, to edit, or ``None``.
+        parent: Parent for the dialog.
+
+    Returns:
+        The chosen board, or ``None`` if the host cancelled.
+    """
+    # Imported here: the picker reuses the welcome screen, which imports the
+    # Tournament window, which imports this module.
+    from jparty.ui.widgets.board_setup import pick_board
+
+    return pick_board(game_key, board, parent)
+
+
 class GamesEditor(QWidget):
     """Assign boards to a tournament's games.
 
@@ -80,16 +100,19 @@ class GamesEditor(QWidget):
 
     def __init__(
         self,
-        current_board: Callable[[], TournamentBoard | None] | None = None,
         parent: QWidget | None = None,
+        pick_board: Callable[
+            [str, TournamentBoard | None, QWidget | None], TournamentBoard | None
+        ] = pick_board_with_dialog,
         missing_media: Callable[[TournamentBoard], list[str]] = missing_media_ids,
     ) -> None:
         """Build the games table and the unassigned pool.
 
         Args:
-            current_board: Returns the board set up on the welcome screen,
-                or ``None`` when there isn't one.
             parent: Optional parent widget.
+            pick_board: Asks the host for a game's board, given the game key
+                and its current board; returns ``None`` if cancelled. Tests
+                pass a fake.
             missing_media: Returns a board's source ids without question
                 media; tests pass a fake.
 
@@ -97,7 +120,7 @@ class GamesEditor(QWidget):
             ``None``.
         """
         super().__init__(parent)
-        self.current_board = current_board or (lambda: None)
+        self.pick_board = pick_board
         self.missing_media = missing_media
         self.boards: dict[str, TournamentBoard] = {}
         self.unassigned: list[TournamentBoard] = []
@@ -117,13 +140,14 @@ class GamesEditor(QWidget):
         for column in (COLUMN_GAME, COLUMN_MEDIA):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         self.table.itemSelectionChanged.connect(self._update_buttons)
+        self.table.cellDoubleClicked.connect(self.set_board_for_row)
 
-        self.use_welcome_button = QPushButton("Use Welcome Board", self)
-        self.use_welcome_button.setToolTip(
-            "Give the selected game the board set up on the welcome screen,"
-            " regular or advanced. Its old board goes to Unassigned."
+        self.set_board_button = QPushButton("Set Board...", self)
+        self.set_board_button.setToolTip(
+            "Choose or edit the selected game's board with the welcome"
+            " screen's board tools. Double-clicking a game does the same."
         )
-        self.use_welcome_button.clicked.connect(self.use_welcome_board)
+        self.set_board_button.clicked.connect(self.set_selected_board)
         self.swap_button = QPushButton("Swap Boards", self)
         self.swap_button.setToolTip("Swap the boards of the two selected games.")
         self.swap_button.clicked.connect(self.swap_selected)
@@ -133,7 +157,7 @@ class GamesEditor(QWidget):
         )
         self.unassign_button.clicked.connect(self.unassign_selected)
         game_buttons = QHBoxLayout()
-        game_buttons.addWidget(self.use_welcome_button)
+        game_buttons.addWidget(self.set_board_button)
         game_buttons.addWidget(self.swap_button)
         game_buttons.addWidget(self.unassign_button)
         game_buttons.addStretch(1)
@@ -206,26 +230,45 @@ class GamesEditor(QWidget):
             self._game_keys[row] for row in sorted(rows) if row < len(self._game_keys)
         ]
 
-    def use_welcome_board(self) -> None:
-        """Give the selected game the welcome screen's board.
+    def set_selected_board(self) -> None:
+        """Choose or edit the selected game's board.
 
         Returns:
             ``None``.
         """
         keys = self.selected_keys()
-        if len(keys) != 1:
-            return
-        board = self.current_board()
+        if len(keys) == 1:
+            self.set_board(keys[0])
+
+    def set_board_for_row(self, row: int, _column: int = 0) -> None:
+        """Choose or edit the board of the game in ``row``.
+
+        Args:
+            row: Table row, as given by a double-click.
+            _column: Clicked column; unused.
+
+        Returns:
+            ``None``.
+        """
+        if 0 <= row < len(self._game_keys):
+            self.set_board(self._game_keys[row])
+
+    def set_board(self, key: str) -> None:
+        """Ask the host for a game's board and store it.
+
+        Editing a game's board replaces it. A cancelled pick changes nothing.
+
+        Args:
+            key: The game's key.
+
+        Returns:
+            ``None``.
+        """
+        board = self.pick_board(key, self.boards.get(key), self)
         if board is None:
-            self._show_status(
-                "Set up a board on the welcome screen first: enter a game, or"
-                " fill every advanced board slot.",
-                problem=True,
-            )
             return
-        self.boards, self.unassigned = assign_board(
-            self.boards, self.unassigned, keys[0], board
-        )
+        # An edit replaces the old version instead of keeping it in the pool.
+        self.boards = {**self.boards, key: board}
         self._changed()
 
     def swap_selected(self) -> None:
@@ -356,7 +399,7 @@ class GamesEditor(QWidget):
     def _update_buttons(self) -> None:
         """Enable the buttons that apply to the current selection."""
         keys = self.selected_keys()
-        self.use_welcome_button.setEnabled(len(keys) == 1)
+        self.set_board_button.setEnabled(len(keys) == 1)
         self.swap_button.setEnabled(
             len(keys) == SWAP_GAME_COUNT and any(key in self.boards for key in keys)
         )

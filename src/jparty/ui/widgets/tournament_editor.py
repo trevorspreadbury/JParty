@@ -73,7 +73,10 @@ class TournamentEditor(QWidget):
         parent: QWidget | None = None,
         fetcher: GameSourceFetcher | None = None,
         run_async: Callable[[Callable[[], None]], object] | None = None,
-        current_board: Callable[[], TournamentBoard | None] | None = None,
+        pick_board: Callable[
+            [str, TournamentBoard | None, QWidget | None], TournamentBoard | None
+        ]
+        | None = None,
         missing_media: Callable[[TournamentBoard], list[str]] = missing_media_ids,
     ) -> None:
         """Build the editor for a new tournament or a loaded one.
@@ -87,7 +90,8 @@ class TournamentEditor(QWidget):
             fetcher: Sheet fetcher; tests pass a fake.
             run_async: Runs a callable off the UI thread; tests pass one that
                 runs it inline.
-            current_board: Returns the board set up on the welcome screen.
+            pick_board: Asks the host for a game's board; ``None`` uses
+                the board picker dialog. Tests pass a fake.
             missing_media: Returns a board's source ids without question
                 media; tests pass a fake.
 
@@ -129,7 +133,8 @@ class TournamentEditor(QWidget):
             self.settings, slots, self, fetcher=fetcher, run_async=run_async
         )
         self.bracket = BracketDesigner(self, roster_sets_players=True)
-        self.games = GamesEditor(current_board, self, missing_media=missing_media)
+        games_options = {} if pick_board is None else {"pick_board": pick_board}
+        self.games = GamesEditor(self, missing_media=missing_media, **games_options)
         self.tabs = QTabWidget(self)
         # JParty's app style draws tabs as plain text with no sign of the
         # current one, so use Fusion for the tab bar and its frame only.

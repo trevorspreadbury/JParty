@@ -2,9 +2,7 @@
 
 The welcome screen's Tournament button opens this window. Its home page
 creates or loads a tournament, or opens the bracket designer to try formats.
-A created or loaded tournament opens in a :class:`TournamentEditor`. The
-window doesn't block the welcome screen, so the host can set up a board there
-and then give it to a game with "Use Welcome Board".
+A created or loaded tournament opens in a :class:`TournamentEditor`.
 """
 
 from __future__ import annotations
@@ -52,7 +50,10 @@ class TournamentWindow(QDialog):
         self,
         root: Path,
         parent: QWidget | None = None,
-        current_board: Callable[[], TournamentBoard | None] | None = None,
+        pick_board: Callable[
+            [str, TournamentBoard | None, QWidget | None], TournamentBoard | None
+        ]
+        | None = None,
         fetcher: GameSourceFetcher | None = None,
         run_async: Callable[[Callable[[], None]], object] | None = None,
         missing_media: Callable[[TournamentBoard], list[str]] = missing_media_ids,
@@ -62,7 +63,8 @@ class TournamentWindow(QDialog):
         Args:
             root: The tournaments folder.
             parent: Optional parent widget.
-            current_board: Returns the board set up on the welcome screen.
+            pick_board: Asks the host for a game's board; ``None`` uses
+                the board picker dialog. Tests pass a fake.
             fetcher: Sheet fetcher; tests pass a fake.
             run_async: Runs a callable off the UI thread; tests pass one that
                 runs it inline.
@@ -74,7 +76,7 @@ class TournamentWindow(QDialog):
         """
         super().__init__(parent)
         self.root = Path(root)
-        self.current_board = current_board
+        self.pick_board = pick_board
         self.fetcher = fetcher
         self.run_async = run_async
         self.missing_media = missing_media
@@ -242,7 +244,7 @@ class TournamentWindow(QDialog):
             self,
             fetcher=self.fetcher,
             run_async=self.run_async,
-            current_board=self.current_board,
+            pick_board=self.pick_board,
             missing_media=self.missing_media,
         )
         editor.close_requested.connect(self.show_home)

@@ -165,9 +165,6 @@ Closing the window or the tournament with unsaved changes asks before
 discarding them. A tournament without unsaved changes stays open when you
 close the window, so reopening the window takes you back to it.
 
-The Tournament window doesn't block the welcome screen, so you can keep it
-open while you set up boards (see [Games tab](#games-tab)).
-
 The tournament name becomes the folder name, so it can't contain characters
 like `/` or `:`. It can't be changed after the first save.
 
@@ -249,14 +246,23 @@ The `Games` tab lists every game in the bracket in playing order. Each row
 shows where the game's players come from, its board, and whether the board
 has question media. The tab title counts the games that have a board.
 
-To give a game a board:
+To give a game a board, double-click the game, or select it and click
+`Set Board...`. This opens the welcome screen's board tools for that game,
+already in `Advanced Options` mode:
 
-1. On the welcome screen, set up the board as if you were about to play it:
-   enter a game id and pick its rounds, or fill every slot in
-   `Advanced Options` for a Frankenstein board.
-2. In the Tournament window, select the game and click `Use Welcome Board`.
-   If the game already had a board, the old one moves to
-   `Unassigned boards`.
+1. Fill each board slot: type a game id (or click `Random`), pick its round,
+   and adjust point values and Daily Doubles as you would on the welcome
+   screen (see [`Advanced Options`](#advanced-options)). `Load Media` loads
+   question media for a slot. Use the `Jeopardy Boards` and `Final Boards`
+   counts to change how many boards the game plays.
+2. Click `Use This Board`. It turns on once every slot is filled.
+
+To play one game as it aired, uncheck `Advanced Options`, enter its id, and
+pick its rounds.
+
+Opening a game that already has a board shows that board, so you can edit it.
+The edited board replaces the old one. `Cancel` leaves the game as it was.
+Setting up a tournament board doesn't change the game on the welcome screen.
 
 Other buttons:
 

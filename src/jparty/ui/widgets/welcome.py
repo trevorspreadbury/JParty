@@ -34,7 +34,6 @@ from jparty import __version__ as version
 from jparty.app.helptext import helpmsg
 from jparty.app.paths import GAME_STATES_DIR, TOURNAMENTS_DIR
 from jparty.domain.models import GameData
-from jparty.domain.tournament_setup import TournamentBoard, board_from_selections
 from jparty.services.game_loader import (
     QUESTION_INDEX_PART_COUNT,
     RANDOM_GAME_MAX_ATTEMPTS,
@@ -553,32 +552,10 @@ class Welcome(StartWidget):
         """
         logging.info("Showing tournament window")
         if self.tournament_window is None:
-            self.tournament_window = TournamentWindow(
-                TOURNAMENTS_DIR, self, current_board=self.current_tournament_board
-            )
+            self.tournament_window = TournamentWindow(TOURNAMENTS_DIR, self)
         self.tournament_window.show()
         self.tournament_window.raise_()
         self.tournament_window.activateWindow()
-
-    def current_tournament_board(self) -> TournamentBoard | None:
-        """Return the board set up on this screen, for a tournament game.
-
-        This uses the same board selections Start would play, regular or
-        advanced, so the tournament game plays exactly this board.
-
-        Returns:
-            The board, or ``None`` when no complete board is set up or a
-            saved game is being resumed.
-        """
-        if self.resume_path is not None:
-            return None
-        self.sync_active_configuration()
-        selections = self.game.board_selection_configs()
-        if not selections:
-            return None
-        return board_from_selections(
-            self.compose_session_game_id(selections), selections
-        )
 
     def resizeEvent(self, event: object) -> None:
         """Resize the game-id textbox to match the current layout.
