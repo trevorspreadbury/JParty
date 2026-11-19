@@ -464,9 +464,11 @@ way; leaving the tournament puts your choice back.
    Jane Smith (Ziggy)". The name appears once when the sheet's Full Name
    and the Actual Name match, and a player with no sign-up is introduced by
    their Actual Name. Click `Start Game` to begin (`Back` returns to the
-   welcome screen). If a phone joins or drops while the introduction is
+   welcome screen). If another phone joins while the introduction is
    showing, `Start Game` goes back to the welcome screen, and the status
-   line says what's missing.
+   line says what's wrong; remove the extra phone, or use `▲`/`▼` to fix
+   the order. A phone that drops keeps its podium and rejoins it when it
+   reconnects.
 
 When the game ends, after Final Jeopardy or a tiebreaker, its results are
 saved to the tournament's `results.csv`. A tie for first has to be settled

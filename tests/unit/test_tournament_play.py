@@ -329,3 +329,18 @@ def test_results_saved_by_excel_as_ansi_are_refused(temp_dir: object) -> None:
     (temp_dir / RESULTS_FILE).write_bytes(results_csv_text(rows).encode("cp1252"))
     with pytest.raises(TournamentFileError, match="CSV UTF-8"):
         load_results(temp_dir)
+
+
+def test_results_header_with_spaces_after_commas_still_reads() -> None:
+    """A header like "player, score, ..." keeps its rows instead of dropping them."""
+    rows = [GameResult(QF1, "p0", "Ann", 1200, 800, "Fun-4453", "win", "save")]
+    text = results_csv_text(rows).replace(",", ", ")
+    assert parse_results_csv(text) == rows
+
+
+def test_results_too_big_for_csv_are_refused() -> None:
+    """A cell over the csv module's size limit is a TournamentFileError."""
+    header = "player,score,coryat,game,result,player_id,game_key,saved_game"
+    huge = '"' + "x" * 200_000 + '"'
+    with pytest.raises(TournamentFileError, match="Couldn't read"):
+        parse_results_csv(f"{header}\n{huge},1,,g,win,p0,QF,s\n")

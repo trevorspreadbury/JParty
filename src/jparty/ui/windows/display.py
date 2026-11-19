@@ -615,11 +615,16 @@ class HostDisplayWindow(DisplayWindow):
         self.preview_widget = None
 
     def show_welcome_from_preview(self) -> None:
-        """Return from the preview widget to the welcome screen."""
+        """Return from the preview widget to the welcome screen.
+
+        The preview hid the scoreboard's remove and reorder buttons, so they
+        come back too: the host may be here to fix the phones.
+        """
         self.hide_question_media_preview()
         self.welcome_widget.setVisible(True)
         self.welcome_widget.setDisabled(False)
         self.welcome_widget.raise_()
+        self.scoreboard.show_close_buttons()
 
     def load_image_review_screen(self, q: object) -> None:
         """Replace the board with the host image review screen.

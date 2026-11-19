@@ -124,6 +124,16 @@ def test_phone_labels() -> None:
     assert phone_label(None) == NO_PHONE_TEXT
 
 
+class Phone(SimpleNamespace):
+    """A connected phone's player; hashable, as the scoreboard needs."""
+
+    __hash__ = object.__hash__
+
+    def __init__(self, name: str, player_number: int) -> None:
+        """Start the phone's player on $0."""
+        super().__init__(name=name, player_number=player_number, score=0)
+
+
 class TournamentGame(StubGame):
     """A stub game that seats phones and records tournament starts."""
 
@@ -132,10 +142,7 @@ class TournamentGame(StubGame):
         super().__init__()
         self.source_data = self.data
         self.data = None
-        self.players = [
-            SimpleNamespace(name=f"Phone {index}", player_number=index)
-            for index in range(phones)
-        ]
+        self.players = [Phone(f"Phone {index}", index) for index in range(phones)]
         self.tournament_calls = []
 
     def startable(self) -> bool:
@@ -145,6 +152,15 @@ class TournamentGame(StubGame):
     def set_tournament_game(self, ref: object, players: list | None = None) -> None:
         """Record what the welcome screen seated."""
         self.tournament_calls.append((ref, list(players or [])))
+
+    def remove_player(self, player: object) -> None:
+        """Ignore the scoreboard's remove button."""
+
+    def move_player_up(self, player: object) -> None:
+        """Ignore the scoreboard's ▲ button."""
+
+    def move_player_down(self, player: object) -> None:
+        """Ignore the scoreboard's ▼ button."""
 
 
 class IntroParent(QWidget):
@@ -719,3 +735,127 @@ def test_footer_buttons_stay_readable_in_tournament_mode(
         assert button.minimumHeight() >= 32
     widget.tournament_panel.leave_button.click()
     assert widget.quit_button.minimumHeight() == 0
+
+
+class FakeMediaPreview(QWidget):
+    """Stands in for QuestionMediaPreview; keeps the Start callback."""
+
+    instances: list = []
+
+    def __init__(
+        self,
+        game: object,
+        questions: list,
+        on_back: object,
+        on_start: object,
+        parent: object = None,
+    ) -> None:
+        """Record ``on_start`` for the test to call."""
+        super().__init__(parent)
+        self.on_start = on_start
+        FakeMediaPreview.instances.append(self)
+
+
+@pytest.fixture()
+def host_window_welcome(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> tuple[object, Welcome, TournamentGame]:
+    """Return the real host window, its welcome screen in tournament mode."""
+    from jparty.ui.windows import display as display_module
+    from tests.qt.test_display_window import StubHostDisplayWindow
+
+    game = TournamentGame()
+    game.buzzer_controller = SimpleNamespace(host=lambda: "localhost")
+    monkeypatch.setattr(
+        welcome_module,
+        "build_game_from_board_selection_configs",
+        lambda selections: deepcopy(game.source_data),
+    )
+    FakeMediaPreview.instances = []
+    monkeypatch.setattr(display_module, "QuestionMediaPreview", FakeMediaPreview)
+    host = StubHostDisplayWindow(game)
+    qtbot.addWidget(host)
+    widget = host.welcome_widget
+    widget.loader = ImmediateLoader()
+    assert widget.enter_tournament_mode(write_tournament(temp_dir, sf1_results()))
+    host.scoreboard.refresh_players()
+    return host, widget, game
+
+
+@pytest.mark.parametrize("media", [False, True])
+def test_real_host_window_seats_the_players_then_starts(
+    host_window_welcome: tuple, media: bool
+) -> None:
+    """Through the real host window, Start Game seats the players and starts.
+
+    With local media, the preview's Start must be the tournament's seating
+    step, not a bare ``start_game``.
+    """
+    host, widget, game = host_window_welcome
+    if media:
+        widget.preview_questions = lambda: [(0, object())]
+    _ready_to_start(widget)
+    widget.tournament_start_button.click()
+    intro = host.preview_widget
+    assert isinstance(intro, ContestantIntro)
+    assert not widget.isEnabled()
+    intro.start_button.click()
+
+    if media:
+        assert game.start_game_calls == 0
+        (preview,) = FakeMediaPreview.instances
+        preview.on_start()
+    assert game.start_game_calls == 1
+    assert game.tournament_calls[-1][0] == TournamentGameRef("Fun", SF2)
+
+
+def test_back_in_the_lobby_the_phones_can_be_fixed(host_window_welcome: tuple) -> None:
+    """When a 4th phone stops Start Game, remove and reorder work again."""
+    host, widget, game = host_window_welcome
+    _ready_to_start(widget)
+    widget.tournament_start_button.click()
+    assert all(
+        not pw.remove_button.isVisible() for pw in host.scoreboard.player_widgets
+    )
+
+    game.players.append(Phone("Phone 3", 3))
+    host.scoreboard.refresh_players()
+    host.preview_widget.start_button.click()
+
+    assert game.start_game_calls == 0
+    assert host.preview_widget is None
+    assert widget.isEnabled()
+    widgets = host.scoreboard.player_widgets
+    assert len(widgets) == 4
+    assert all(pw.remove_button.isVisibleTo(host) for pw in widgets)
+    assert all(pw.remove_button.isEnabled() for pw in widgets)
+    assert [pw.up_button.isEnabled() for pw in widgets] == [False, True, True, True]
+    assert [pw.down_button.isEnabled() for pw in widgets] == [True, True, True, False]
+
+
+def test_reopening_the_tournament_window_locks_newly_played_games(
+    qtbot: object, temp_dir: object
+) -> None:
+    """A game played while the window was hidden is locked when it reopens."""
+    from jparty.domain.tournament_store import load_tournament
+    from tests.qt.test_tournament_roster import make_window
+
+    folder = write_tournament(temp_dir, sf1_results())
+    window = make_window(qtbot, temp_dir)
+    window._open_editor(*load_tournament(folder))
+    window.show()
+    games = window.editor.games
+    assert not games.table.item(1, 2).text().endswith(PLAYED_SUFFIX)
+    window.hide()
+
+    save_results(
+        folder,
+        sf1_results()
+        + [
+            GameResult(SF2, "p4", "P4", 1, 1, "Fun-2222", "win", "s2"),
+            GameResult(SF2, "p5", "P5", 0, 0, "Fun-2222", "loss", "s2"),
+            GameResult(SF2, "p0", "Ziggy", 0, 0, "Fun-2222", "loss", "s2"),
+        ],
+    )
+    window.show()
+    assert games.table.item(1, 2).text().endswith(PLAYED_SUFFIX)

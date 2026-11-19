@@ -454,7 +454,10 @@ def _parse_results_rows(reader: csv.DictReader) -> list[GameResult]:
     # A file whose header JParty can't read would otherwise look empty, and
     # the next game would replace every row in it. A spreadsheet that saves
     # with ";" between cells, or a renamed column, is the usual cause.
-    header = {(name or "").strip() for name in reader.fieldnames}
+    # Rows are keyed by these names, so trim them here, not only for the
+    # check: "game_key" and " game_key" must be the same column.
+    reader.fieldnames = [(name or "").strip() for name in reader.fieldnames]
+    header = set(reader.fieldnames)
     missing = [column for column in RESULTS_REQUIRED_COLUMNS if column not in header]
     if missing:
         raise TournamentFileError(
