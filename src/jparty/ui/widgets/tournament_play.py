@@ -132,6 +132,9 @@ class TournamentPlayPanel(QWidget):
         self.slots: list[PlayerSlot] = []
         self.results: list[GameResult] = []
         self.plan: TournamentPlan | None = None
+        # Why the last reload failed, or None. The results shown are then
+        # out of date, so no game can start until a reload works.
+        self.load_error: str | None = None
         self._game_keys: list[str] = []
         self._eligibility = Eligibility()
         self._phone_names: list[object] = []
@@ -217,6 +220,7 @@ class TournamentPlayPanel(QWidget):
         self.settings = settings
         self.slots = slots
         self.results = results
+        self.load_error = None
         self.plan = plan_tournament(settings.bracket.options(len(slots)))
         self.title_label.setText(f"Tournament: {settings.name}")
         self._redraw()
@@ -224,7 +228,9 @@ class TournamentPlayPanel(QWidget):
     def reload(self) -> None:
         """Read the tournament again, for example after a game ends.
 
-        A problem reading it is shown in the panel.
+        A problem reading it is kept in :attr:`load_error`, which
+        :meth:`problem` reports until a reload works, since the games and
+        players shown may no longer be up to date.
 
         Returns:
             ``None``.
@@ -235,7 +241,11 @@ class TournamentPlayPanel(QWidget):
             self.load(self.folder)
         except TournamentFileError as exc:
             logging.error("Couldn't reload tournament: %s", exc)
-            self.show_status(f"Couldn't read the tournament: {exc}", True)
+            self.load_error = (
+                f"Couldn't read the tournament: {exc} Fix the file, then click "
+                "Fix Results... to read it again."
+            )
+            self.show_status(self.load_error, True)
 
     def selected_key(self) -> str | None:
         """Return the selected game's key, or ``None``."""
@@ -316,6 +326,8 @@ class TournamentPlayPanel(QWidget):
         Returns:
             A message for the host, or ``None``.
         """
+        if self.load_error:
+            return self.load_error
         key = self.selected_key()
         if key is None:
             return "Choose a game to play."
@@ -365,10 +377,21 @@ class TournamentPlayPanel(QWidget):
     def fix_results(self) -> None:
         """Open the results editor, then show any changes.
 
+        The tournament is read again first, so the editor never saves over
+        results it couldn't read. If it still can't be read, the problem is
+        shown instead.
+
         Returns:
             ``None``.
         """
         if self.folder is None:
+            return
+        had_error = self.load_error is not None
+        self.reload()
+        if had_error or self.load_error:
+            # Start depends on whether the tournament could be read.
+            self.results_changed.emit()
+        if self.load_error:
             return
         dialog = TournamentResultsDialog(self.folder, self.results, self)
         accepted = dialog.exec() == QDialog.DialogCode.Accepted

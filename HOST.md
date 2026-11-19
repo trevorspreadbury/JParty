@@ -431,7 +431,9 @@ players would see the same clues twice.
 
 Once a game has been played, its board is locked: `Set Board...`, `Swap
 Boards`, `Unassign`, and `Assign to Selected Game` no longer change it, and
-its board shows `(played)`.
+its board shows `(played)`. A Bracket or Players change that would drop a
+played game warns you, and the tournament can't be saved that way: change
+it back, or delete that game's results with `Fix Results...` first.
 
 ### Playing tournament games
 
@@ -494,6 +496,10 @@ outside git:
   `result` (`win` or `loss`). The `player_id`, `game_key`, and `saved_game`
   columns after them are what JParty matches on; leave them as they are if
   you edit the file by hand. Saving the tournament's setup never changes it.
+  If you edit it in Excel, save it as "CSV UTF-8" with commas between cells.
+  JParty won't play a game while it can't read the file, so a game can't
+  overwrite results it couldn't read. `Fix Results...` reads it again once
+  it's fixed.
 
 To reuse a tournament's setup, copy its folder and give the copy a new name;
 the copy saves into its own folder. Tournaments saved by an older JParty

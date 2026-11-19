@@ -65,6 +65,8 @@ RESULTS_COLUMNS = (
     "game_key",
     "saved_game",
 )
+# Columns a results row can't be matched or read without.
+RESULTS_REQUIRED_COLUMNS = ("player_id", "game_key", "score", "result")
 
 _FORBIDDEN_NAME_CHARACTERS = set('<>:"/\\|?*')
 _RESERVED_WINDOWS_NAMES = {
@@ -435,12 +437,30 @@ def parse_results_csv(text: str) -> list[GameResult]:
         are skipped, since nothing can match them.
 
     Raises:
-        TournamentFileError: If a score isn't a whole number, or a result
-            isn't ``win`` or ``loss``.
+        TournamentFileError: If the header lacks a column JParty needs, a
+            score isn't a whole number, a result isn't ``win`` or ``loss``,
+            or the file isn't valid CSV.
     """
-    reader = csv.DictReader(io.StringIO(text, newline=""))
+    try:
+        return _parse_results_rows(csv.DictReader(io.StringIO(text, newline="")))
+    except csv.Error as exc:
+        raise TournamentFileError(f"Couldn't read {RESULTS_FILE}: {exc}") from exc
+
+
+def _parse_results_rows(reader: csv.DictReader) -> list[GameResult]:
+    """Read results from a ``results.csv`` reader; see parse_results_csv."""
     if reader.fieldnames is None:
         return []
+    # A file whose header JParty can't read would otherwise look empty, and
+    # the next game would replace every row in it. A spreadsheet that saves
+    # with ";" between cells, or a renamed column, is the usual cause.
+    header = {(name or "").strip() for name in reader.fieldnames}
+    missing = [column for column in RESULTS_REQUIRED_COLUMNS if column not in header]
+    if missing:
+        raise TournamentFileError(
+            f"{RESULTS_FILE} has no {', '.join(missing)} column. Save it as "
+            "comma-separated values with the header row JParty wrote."
+        )
     results = []
     for line, row in enumerate(reader, start=2):
 
@@ -488,6 +508,11 @@ def load_results(folder: Path) -> list[GameResult]:
         return []
     try:
         text = path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as exc:
+        # Excel's plain "CSV" format isn't UTF-8.
+        raise TournamentFileError(
+            f'{RESULTS_FILE} isn\'t saved as UTF-8. In Excel, save it as "CSV UTF-8".'
+        ) from exc
     except OSError as exc:
         raise TournamentFileError(f"Couldn't read {RESULTS_FILE}: {exc}") from exc
     return parse_results_csv(text)

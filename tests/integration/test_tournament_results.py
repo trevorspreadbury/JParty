@@ -273,3 +273,41 @@ def test_seating_needs_one_player_per_phone(game: object, folders: object) -> No
     with pytest.raises(ValueError, match="one player per phone"):
         game.set_tournament_game(REF, SEATS)
     assert game.tournament_game is None
+
+
+def test_results_follow_players_who_change_seats_on_resume(
+    game: object, folders: object, monkeypatch: object
+) -> None:
+    """Players reordered in the resume lobby keep their own results."""
+    from jparty.web.controller import BuzzerController
+    from tests.integration.test_resume_lobby_seats import FakeSocket
+
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    _start_final_only(game)
+    saved_dir = game._game_state_dir
+    game.close_game()
+
+    monkeypatch.setattr(game, "_update_all_lecterns", lambda: None)
+    monkeypatch.setattr(game, "_update_lectern_for_player", lambda *a, **k: None)
+    controller = BuzzerController(game)
+    monkeypatch.setattr(game, "buzzer_controller", controller)
+    game.prepare_resume_from_dir(saved_dir)
+    claimed = []
+    for number in range(3):
+        socket = FakeSocket()
+        controller.register_socket(socket)
+        claimed.append(controller.claim_saved_player(socket, number))
+    # Cy's phone moves to the first podium: Cy, Ann, Bob.
+    game.move_player_up(claimed[2])
+    game.move_player_up(claimed[2])
+    assert [player.player_number for player in claimed] == [1, 2, 0]
+    game.start_game()
+
+    # Seats in order: Cy 900, Ann 100, Bob 200.
+    _finish_final(game, [900, 100, 200], [True, True, True])
+    results = {r.player_id: (r.score, r.result) for r in load_results(folders)}
+    assert results == {
+        "cy-id": (900, "win"),
+        "ann-id": (100, "loss"),
+        "bob-id": (200, "loss"),
+    }

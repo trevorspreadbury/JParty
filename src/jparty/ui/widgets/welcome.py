@@ -653,13 +653,9 @@ QCheckBox {{
             self.check_start()
             return
         selections = [dict(selection) for selection in board.board_selections]
-        self.game.set_board_selection_configs(selections)
-        self.game.set_composed_game_data(selections, data)
-        self.game.set_selected_round_indices(list(range(len(data.rounds))))
-        self.game.set_session_game_id(
-            composed_session_game_id(selections) or board.label
+        self._push_composed_board(
+            selections, data, composed_session_game_id(selections) or board.label
         )
-        self.game.data = data
         self._tournament_board_key = key
         daily_double_counts = [
             selection.get("daily_double_count")
@@ -1257,24 +1253,14 @@ QCheckBox {{
         """Push the advanced editor's board into the game and the summary."""
         setup = self.advanced_boards.current_setup()
         board_selections = list(setup.board_selections)
-        if hasattr(self.game, "set_board_selection_configs"):
-            self.game.set_board_selection_configs(
-                board_selections if setup.complete else None
-            )
-        if hasattr(self.game, "set_session_game_id"):
-            self.game.set_session_game_id(
-                self.compose_session_game_id(board_selections)
-            )
-        if hasattr(self.game, "set_selected_round_indices"):
-            self.game.set_selected_round_indices(list(range(len(board_selections))))
         # A partial board set is never a playable game, so ``game.data`` stays
         # empty until every row is filled.
-        self.game.data = setup.composed_data
-        if hasattr(self.game, "set_composed_game_data"):
-            self.game.set_composed_game_data(
-                board_selections if setup.complete else None,
-                setup.composed_data,
-            )
+        self._push_composed_board(
+            board_selections,
+            setup.composed_data,
+            self.compose_session_game_id(board_selections),
+            complete=setup.complete,
+        )
         if setup.ready:
             self._advanced_mode_summary_text = setup.summary_text()
             self.summary_label.setText(self._advanced_mode_summary_text)
@@ -1284,6 +1270,39 @@ QCheckBox {{
             )
             self.summary_label.setText(self._advanced_mode_summary_text)
         self.check_start()
+
+    def _push_composed_board(
+        self,
+        board_selections: list[dict],
+        data: object,
+        session_game_id: str,
+        complete: bool = True,
+    ) -> None:
+        """Put a composed board into the game, ready for Start.
+
+        Used by both advanced mode and tournament games, so Start sees the
+        same game state whichever built the board.
+
+        Args:
+            board_selections: The board's selections, one per round.
+            data: The composed game, or ``None`` if it isn't built yet.
+            session_game_id: The id saves and logs use for this board.
+            complete: Whether every selection is filled. An incomplete set
+                is kept out of the game's board configuration.
+
+        Returns:
+            ``None``.
+        """
+        configs = board_selections if complete else None
+        if hasattr(self.game, "set_board_selection_configs"):
+            self.game.set_board_selection_configs(configs)
+        if hasattr(self.game, "set_session_game_id"):
+            self.game.set_session_game_id(session_game_id)
+        if hasattr(self.game, "set_selected_round_indices"):
+            self.game.set_selected_round_indices(list(range(len(board_selections))))
+        self.game.data = data
+        if hasattr(self.game, "set_composed_game_data"):
+            self.game.set_composed_game_data(configs, data)
 
     def compose_session_game_id(self, board_selections: list[dict]) -> str:
         """Return the save/log identifier for the current board composition."""

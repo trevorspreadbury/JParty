@@ -302,3 +302,30 @@ def test_rows_without_ids_are_skipped() -> None:
     """Rows nothing can match, such as a hand-added note, are ignored."""
     header = "player,score,coryat,game,result,player_id,game_key,saved_game"
     assert parse_results_csv(f"{header}\nNote,,,,,,,\n") == []
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "player;score;coryat;game;result;player_id;game_key;saved_game",
+        "player,points,coryat,game,result,player_id,game_key,saved_game",
+    ],
+)
+def test_unreadable_results_header_is_refused(temp_dir: object, header: str) -> None:
+    """A header JParty can't read is an error, so the next game can't erase it."""
+    (temp_dir / RESULTS_FILE).write_text(
+        f"{header}\nAnn;1;;g;win;p0;QF;s\n", encoding="utf-8"
+    )
+    with pytest.raises(TournamentFileError, match="column"):
+        load_results(temp_dir)
+    with pytest.raises(TournamentFileError):
+        record_game_results(temp_dir, played(QF2, "p3", "p4", "p5"))
+    assert (temp_dir / RESULTS_FILE).read_text(encoding="utf-8").startswith(header)
+
+
+def test_results_saved_by_excel_as_ansi_are_refused(temp_dir: object) -> None:
+    """A results.csv that isn't UTF-8 says how to fix it instead of crashing."""
+    rows = [GameResult(QF1, "p0", "José", 1200, 800, "Fun-4453", "win", "save")]
+    (temp_dir / RESULTS_FILE).write_bytes(results_csv_text(rows).encode("cp1252"))
+    with pytest.raises(TournamentFileError, match="CSV UTF-8"):
+        load_results(temp_dir)

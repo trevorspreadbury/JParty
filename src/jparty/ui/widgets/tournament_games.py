@@ -162,6 +162,23 @@ def choose_cant_play(
     return None
 
 
+def dropped_played_games_problem(keys: Sequence[str]) -> str:
+    """Return the message for a bracket that drops played games.
+
+    Args:
+        keys: The played games the bracket no longer has.
+
+    Returns:
+        A message for the host.
+    """
+    games = ", ".join(keys)
+    return (
+        f"{games} has been played, so the bracket must keep it. Change the "
+        "bracket or roster back, or delete its results with Fix Results on "
+        "the welcome screen."
+    )
+
+
 class GamesEditor(QWidget):
     """Assign boards to a tournament's games.
 
@@ -323,8 +340,25 @@ class GamesEditor(QWidget):
         self._game_keys = [key for key, _, _ in plan_games(plan)]
         changed = self._reconcile()
         self._redraw()
+        dropped = self.dropped_played_games()
+        if dropped:
+            self._show_status(dropped_played_games_problem(dropped), problem=True)
         if changed:
             self.games_changed.emit()
+
+    def dropped_played_games(self) -> list[str]:
+        """Return played games the current bracket no longer has.
+
+        Their results would no longer match any game, so the tournament
+        can't be saved this way. An invalid bracket drops nothing, since
+        its assignments are left alone.
+
+        Returns:
+            The games' keys, sorted.
+        """
+        if self._plan is None or not self._plan.valid:
+            return []
+        return sorted(self._played - set(self._game_keys))
 
     def set_played(self, keys: set[str]) -> None:
         """Lock the boards of games that have been played.
@@ -337,6 +371,9 @@ class GamesEditor(QWidget):
         """
         self._played = set(keys)
         self._redraw()
+        dropped = self.dropped_played_games()
+        if dropped:
+            self._show_status(dropped_played_games_problem(dropped), problem=True)
 
     def _refuse_if_played(self, keys: Sequence[str]) -> bool:
         """Tell the host if any of ``keys`` was played; return whether one was."""

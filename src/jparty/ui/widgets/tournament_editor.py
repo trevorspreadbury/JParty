@@ -43,7 +43,11 @@ from jparty.domain.tournament_store import (
 )
 from jparty.services.game_sources import GameSourceFetcher
 from jparty.ui.widgets.tournament import BracketDesigner
-from jparty.ui.widgets.tournament_games import GamesEditor, missing_media_ids
+from jparty.ui.widgets.tournament_games import (
+    GamesEditor,
+    dropped_played_games_problem,
+    missing_media_ids,
+)
 from jparty.ui.widgets.tournament_roster import RosterEditor
 
 LAYOUT_SPACING = 8
@@ -213,6 +217,12 @@ class TournamentEditor(QWidget):
             problem = f'A tournament named "{name}" already exists.'
         if problem is None:
             problem = roster_name_problem(self.roster.slots)
+        if problem is None:
+            # Saving would move a played game's board to the pool and leave
+            # its results matching no game.
+            dropped = self.games.dropped_played_games()
+            if dropped:
+                problem = dropped_played_games_problem(dropped)
         if problem:
             self._show_status(problem, True)
             return

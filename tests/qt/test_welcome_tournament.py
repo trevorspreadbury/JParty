@@ -29,7 +29,7 @@ from jparty.ui.widgets.tournament_play import (
 from jparty.ui.widgets.welcome import ContestantIntro, Welcome
 from tests.qt.test_tournament_games import board, select_rows
 from tests.qt.test_tournament_roster import FakeFetcher, make_editor
-from tests.qt.test_welcome_widget import ImmediateLoader, StubGame
+from tests.qt.test_welcome_widget import DeferredLoader, ImmediateLoader, StubGame
 
 pytestmark = pytest.mark.qt
 
@@ -262,13 +262,13 @@ def test_start_waits_for_three_phones(tournament_welcome: tuple) -> None:
     assert game.start_game_calls == 0
 
 
-def _ready_to_start(widget: Welcome) -> None:
+def _ready_to_start(widget: Welcome, expect_enabled: bool = True) -> None:
     """Pick SF2 and three eligible players, so Start! turns on."""
     panel = widget.tournament_panel
     panel.select_game(SF2)
     for podium, player_id in enumerate(("p0", "p4", "p5")):
         panel.choose(podium, player_id)
-    assert widget.tournament_start_button.isEnabled()
+    assert widget.tournament_start_button.isEnabled() is expect_enabled
 
 
 @pytest.mark.parametrize("change", ["drop", "join"])
@@ -337,6 +337,38 @@ def test_after_a_game_the_panel_shows_new_results(
     )
     assert widget.tournament_panel.selected_key() is None
     assert game.data is None
+
+
+def test_unreadable_results_after_a_game_block_start(
+    tournament_welcome: tuple, temp_dir: object, monkeypatch: object
+) -> None:
+    """If results.csv can't be read after a game, Start stays off and says why."""
+    widget, game, _parent = tournament_welcome
+    panel = widget.tournament_panel
+    results_path = temp_dir / "Fun" / "results.csv"
+    good_text = results_path.read_text(encoding="utf-8")
+    results_path.write_text(good_text.replace(",", ";"), encoding="utf-8")
+    widget.restart()
+
+    _ready_to_start(widget, expect_enabled=False)
+    assert not widget.tournament_start_button.isEnabled()
+    assert "Couldn't read the tournament" in panel.status_label.text()
+
+    # Fix Results won't open over results it couldn't read.
+    opened = []
+    monkeypatch.setattr(
+        TournamentResultsDialog, "exec", lambda self: opened.append(self) or 0
+    )
+    panel.fix_results()
+    assert opened == []
+    assert "Couldn't read the tournament" in panel.status_label.text()
+
+    # Once the file is fixed, Fix Results reads it again and Start comes back.
+    results_path.write_text(good_text, encoding="utf-8")
+    panel.fix_results()
+    assert len(opened) == 1
+    assert panel.load_error is None
+    _ready_to_start(widget)
 
 
 def test_results_dialog_fixes_scores_and_winners(
@@ -427,3 +459,172 @@ def test_played_games_lock_their_boards(qtbot: object, temp_dir: object) -> None
     assert games.boards[SF1] == board("1111")
     select_rows(games.table, 1)
     assert games.unassign_button.isEnabled()
+
+
+def _played_editor(qtbot: object, temp_dir: object) -> tuple[object, object]:
+    """Return a tournament editor for a tournament whose SF 1 was played."""
+    from jparty.domain.tournament_store import load_tournament
+
+    folder = write_tournament(temp_dir, sf1_results())
+    settings, slots = load_tournament(folder)
+    editor = make_editor(qtbot, temp_dir, FakeFetcher(), settings=settings, slots=slots)
+    return editor, folder
+
+
+def test_played_board_cant_be_set_or_assigned(qtbot: object, temp_dir: object) -> None:
+    """Set Board and Assign to Selected Game refuse a played game too."""
+    editor, _folder = _played_editor(qtbot, temp_dir)
+    games = editor.games
+    games.pick_board = lambda *args: pytest.fail("asked for a played game's board")
+    games.set_board(SF1)
+    assert games.boards[SF1] == board("1111")
+    assert "has been played" in games.summary_label.text()
+
+    games.unassigned = [board("3333")]
+    games._redraw()
+    select_rows(games.table, 0)
+    games.pool_list.setCurrentRow(0)
+    assert not games.assign_pool_button.isEnabled()
+    games.assign_selected_pool_board()
+    assert games.boards[SF1] == board("1111")
+    assert games.unassigned == [board("3333")]
+
+
+def test_lock_refreshes_for_games_played_since_opening(
+    qtbot: object, temp_dir: object
+) -> None:
+    """A game played while the editor was open locks when it refreshes."""
+    editor, folder = _played_editor(qtbot, temp_dir)
+    games = editor.games
+    assert not games.table.item(1, 2).text().endswith(PLAYED_SUFFIX)
+    save_results(
+        folder,
+        sf1_results()
+        + [
+            GameResult(SF2, "p4", "P4", 1, 1, "Fun-2222", "win", "s2"),
+            GameResult(SF2, "p5", "P5", 0, 0, "Fun-2222", "loss", "s2"),
+            GameResult(SF2, "p0", "Ziggy", 0, 0, "Fun-2222", "loss", "s2"),
+        ],
+    )
+    editor.refresh_played()
+    assert games.table.item(1, 2).text().endswith(PLAYED_SUFFIX)
+    select_rows(games.table, 1)
+    assert not games.set_board_button.isEnabled()
+
+
+def test_bracket_that_drops_a_played_game_cant_be_saved(
+    qtbot: object, temp_dir: object
+) -> None:
+    """Re-planning away a played game warns, and Save refuses it."""
+    from jparty.domain.tournament import TournamentOptions, plan_tournament
+    from jparty.domain.tournament_store import load_tournament
+    from tests.qt.test_tournament_roster import click_save
+
+    editor, folder = _played_editor(qtbot, temp_dir)
+    games = editor.games
+    games.set_plan(plan_tournament(TournamentOptions(3)))
+    assert games.dropped_played_games() == [SF1]
+    assert "must keep it" in games.summary_label.text()
+
+    click_save(editor)
+    assert "must keep it" in editor.status_label.text()
+    settings, _slots = load_tournament(folder)
+    assert settings.boards[SF1] == board("1111")
+
+    # Changing the bracket back puts the board back and allows saving.
+    games.set_plan(plan_tournament(TournamentOptions(9)))
+    assert games.dropped_played_games() == []
+    assert games.boards[SF1] == board("1111")
+
+
+@pytest.fixture()
+def deferred_welcome(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> tuple[Welcome, TournamentGame, DeferredLoader]:
+    """Return a tournament welcome screen whose board loads wait for the test.
+
+    Nothing has been played, so both semifinals can be picked. A board for
+    game ``"fail"`` raises when built.
+    """
+    game = TournamentGame()
+
+    def build(selections: list[dict]) -> object:
+        """Return a board named for its game, or raise for ``"fail"``."""
+        game_id = selections[0]["game_id"]
+        if game_id == "fail":
+            raise RuntimeError("J-Archive is down")
+        data = deepcopy(game.source_data)
+        data.comments = game_id
+        return data
+
+    monkeypatch.setattr(
+        welcome_module, "build_game_from_board_selection_configs", build
+    )
+    parent = IntroParent()
+    qtbot.addWidget(parent)
+    widget = Welcome(game, parent)
+    loader = DeferredLoader()
+    widget.loader = loader
+    # Keep the parent alive; Qt deletes the welcome screen with it.
+    loader.parent = parent
+    assert widget.enter_tournament_mode(write_tournament(temp_dir))
+    return widget, game, loader
+
+
+def test_board_for_a_game_no_longer_picked_is_ignored(deferred_welcome: tuple) -> None:
+    """A board that loads after the host picked another game isn't used."""
+    widget, game, loader = deferred_welcome
+    widget.tournament_panel.select_game(SF1)
+    widget.tournament_panel.select_game(SF2)
+    sf1_load, sf2_load = loader.pending
+
+    sf2_load()
+    assert game.data.comments == "2222"
+    sf1_load()
+    assert game.data.comments == "2222"
+    assert game._session_game_id == "2222"
+
+
+def test_board_arriving_after_leaving_tournament_mode_is_ignored(
+    deferred_welcome: tuple, temp_dir: object
+) -> None:
+    """Leaving, or leaving and coming back, drops a board still loading."""
+    widget, game, loader = deferred_welcome
+    widget.tournament_panel.select_game(SF2)
+    widget.tournament_panel.leave_button.click()
+    loader.pending.pop()()
+    assert game.data is None
+    assert not widget.tournament_mode
+
+    widget.tournament_panel.select_game(SF2)
+    assert loader.pending == []
+    assert widget.enter_tournament_mode(temp_dir / "Fun")
+    widget.tournament_panel.select_game(SF1)
+    widget.tournament_panel.select_game(SF2)
+    loader.pending.pop()()
+    assert game.data.comments == "2222"
+    loader.pending.pop()()
+    assert game.data.comments == "2222"
+
+
+def test_board_that_fails_to_load_says_so(
+    deferred_welcome: tuple, temp_dir: object
+) -> None:
+    """A board that can't be built leaves Start off and tells the host why."""
+    from jparty.domain.tournament_store import load_tournament, save_tournament
+
+    widget, game, loader = deferred_welcome
+    settings, slots = load_tournament(temp_dir / "Fun")
+    settings.boards[SF2] = board("fail")
+    save_tournament(temp_dir, settings, slots)
+    assert widget.enter_tournament_mode(temp_dir / "Fun")
+    widget.tournament_panel.select_game(SF2)
+    for podium, player_id in enumerate(("p0", "p4", "p5")):
+        widget.tournament_panel.choose(podium, player_id)
+    loader.pending.pop()()
+
+    assert game.data is None
+    assert "Couldn't load this game's board: J-Archive is down" in (
+        widget.summary_label.text()
+    )
+    assert not widget.tournament_start_button.isEnabled()
