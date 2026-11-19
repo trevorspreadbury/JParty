@@ -879,7 +879,9 @@ def test_reopening_the_tournament_window_locks_newly_played_games(
         ],
     )
     window.show()
-    assert games.table.item(1, 2).text().endswith(PLAYED_SUFFIX)
+    # With no unsaved changes, the tournament is read again from disk.
+    assert window.editor.games is not games
+    assert window.editor.games.table.item(1, 2).text().endswith(PLAYED_SUFFIX)
 
 
 def all_semifinal_results() -> list[GameResult]:

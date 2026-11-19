@@ -30,12 +30,19 @@ from PyQt6.QtWidgets import (
 )
 
 from jparty.domain.roster import PlayerSlot, roster_name_problem
+from jparty.domain.tournament import TournamentPlan
+from jparty.domain.tournament_dropouts import (
+    Dropout,
+    apply_dropouts,
+    field_size,
+)
 from jparty.domain.tournament_play import played_game_keys
 from jparty.domain.tournament_setup import TournamentBoard, forget_removed_players
 from jparty.domain.tournament_store import (
     LOGO_SUFFIXES,
     TournamentFileError,
     TournamentSettings,
+    load_dropouts,
     load_results,
     logo_problem,
     save_tournament,
@@ -113,6 +120,10 @@ class TournamentEditor(QWidget):
         self.saved_folder: Path | None = None
         self.logo_source: Path | None = None
         self._logo_file = self.settings.logo_file
+        # Players who dropped out, from the play panel. Those who dropped
+        # out before playing aren't in the bracket, and a play-in game
+        # needs a board like any other game.
+        self.dropouts = self._load_dropouts()
 
         self.name_edit = QLineEdit(self.settings.name, self)
         self.name_edit.setPlaceholderText("e.g. Family Fun 2026")
@@ -180,11 +191,11 @@ class TournamentEditor(QWidget):
         layout.addWidget(self.status_label)
         layout.addWidget(self.buttons)
 
-        self.bracket.set_player_count(len(self.roster.slots))
+        self.bracket.set_player_count(self._field_size())
         self.bracket.set_bracket_settings(self.settings.bracket)
         self.games.set_players(self._roster_players())
         self.games.set_boards(self.settings.boards, self.settings.unassigned_boards)
-        self.games.set_plan(self.bracket.plan)
+        self.games.set_plan(self._played_plan())
         self.games.set_played(self._played_game_keys())
         self.roster.roster_changed.connect(self._on_roster_changed)
         self.bracket.plan_changed.connect(self._on_plan_changed)
@@ -389,11 +400,30 @@ class TournamentEditor(QWidget):
     def _on_roster_changed(self) -> None:
         """Re-plan the bracket for the roster's size and refresh player names."""
         self.games.set_players(self._roster_players())
-        self.bracket.set_player_count(len(self.roster.slots))
+        self.bracket.set_player_count(self._field_size())
+
+    def _field_size(self) -> int:
+        """Return the bracket's player count: the roster, less early dropouts."""
+        return field_size(self.roster.slots, self.dropouts)
+
+    def _played_plan(self) -> TournamentPlan | None:
+        """Return the bracket with any play-in games added for dropouts."""
+        plan = self.bracket.plan
+        return plan if plan is None else apply_dropouts(plan, self.dropouts)
+
+    def _load_dropouts(self) -> list[Dropout]:
+        """Return the tournament's dropouts, or none if it can't be read."""
+        if self.creating:
+            return []
+        try:
+            return load_dropouts(self.root / self.settings.name)
+        except TournamentFileError as exc:
+            logging.error("Couldn't read tournament dropouts: %s", exc)
+            return []
 
     def _on_plan_changed(self) -> None:
         """Show the new bracket's games and update the tab titles."""
-        self.games.set_plan(self.bracket.plan)
+        self.games.set_plan(self._played_plan())
         self._update_tab_titles()
 
     def _update_tab_titles(self) -> None:

@@ -9,12 +9,17 @@ the chosen board and players from it.
 
 :class:`TournamentResultsDialog` lets the host fix ``results.csv`` after a
 game.
+
+The panel's Drop Player button marks the selected player as dropped out
+(see :mod:`jparty.domain.tournament_dropouts`), and Undo Drop takes a
+dropout back.
 """
 
 from __future__ import annotations
 
 import logging
 from base64 import urlsafe_b64decode
+from collections.abc import Callable
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -41,7 +46,7 @@ from PyQt6.QtWidgets import (
 
 from jparty.domain.models import SIGNATURE_NAME_PREFIX
 from jparty.domain.roster import PlayerSlot
-from jparty.domain.tournament import PLAYERS_PER_GAME, TournamentPlan, plan_tournament
+from jparty.domain.tournament import PLAYERS_PER_GAME, TournamentPlan
 from jparty.domain.tournament_advancement import (
     Eligibility,
     Tiebreak,
@@ -56,6 +61,20 @@ from jparty.domain.tournament_advancement import (
     tie_text,
     tournament_standings,
 )
+from jparty.domain.tournament_drop_choices import (
+    TournamentData,
+    apply_drop,
+    drop_situation,
+    dropout_text,
+    undo_drop,
+    undo_problem,
+)
+from jparty.domain.tournament_dropouts import (
+    DROP_REPLACE,
+    Dropout,
+    dropped_ids,
+    effective_plan,
+)
 from jparty.domain.tournament_play import (
     RESULTS,
     GameResult,
@@ -69,11 +88,15 @@ from jparty.domain.tournament_setup import TournamentBoard, plan_games
 from jparty.domain.tournament_store import (
     TournamentFileError,
     TournamentSettings,
+    load_dropouts,
     load_results,
     load_tiebreaks,
     load_tournament,
+    load_tournament_data,
     save_results,
+    save_tournament_data,
 )
+from jparty.ui.widgets.tournament_dropouts import ask_drop, ask_undo
 
 LAYOUT_SPACING = 8
 PLAYED_COLOR = QColor("#8a8a8a")
@@ -147,7 +170,15 @@ class TournamentPlayPanel(QWidget):
         settings: The tournament's settings.
         slots: The roster.
         results: Every saved result.
-        plan: The bracket.
+        dropouts: Every player who dropped out.
+        plan: The bracket actually played, after dropouts.
+        before_change: Returns why the tournament can't be changed right
+            now, or ``None``. The welcome screen sets it, so a drop isn't
+            lost under unsaved edits in the Tournament window.
+        ask_drop: Asks the host what happens to a dropped player's spot;
+            tests replace it.
+        ask_undo: Asks the host which dropout to take back; tests replace
+            it.
     """
 
     selection_changed = pyqtSignal()
@@ -172,7 +203,11 @@ class TournamentPlayPanel(QWidget):
         self.tiebreaks: list[Tiebreak] = []
         # The open tie shown on each tiebreaker row of the games list.
         self._row_ties: dict[int, TieForSpot] = {}
+        self.dropouts: list[Dropout] = []
         self.plan: TournamentPlan | None = None
+        self.before_change: Callable[[], str | None] | None = None
+        self.ask_drop = ask_drop
+        self.ask_undo = ask_undo
         # Why the last reload failed, or None. The results shown are then
         # out of date, so no game can start until a reload works.
         self.load_error: str | None = None
@@ -202,12 +237,28 @@ class TournamentPlayPanel(QWidget):
         )
         self.games_list.currentRowChanged.connect(self._on_game_changed)
         self.players_list = QListWidget(self)
-        self.players_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.players_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.players_list.currentRowChanged.connect(self._update_drop_buttons)
+        self.drop_button = QPushButton("Drop Player...", self)
+        self.drop_button.setToolTip(
+            "Mark the selected player as dropped out, and choose who takes their spot."
+        )
+        self.drop_button.clicked.connect(self.drop_selected_player)
+        self.undo_drop_button = QPushButton("Undo Drop...", self)
+        self.undo_drop_button.setToolTip("Take back a dropout.")
+        self.undo_drop_button.clicked.connect(self.undo_dropout)
+        drop_buttons = QHBoxLayout()
+        drop_buttons.addWidget(self.drop_button)
+        drop_buttons.addWidget(self.undo_drop_button)
+        drop_buttons.addStretch(1)
         lists = QGridLayout()
         lists.addWidget(QLabel("Games:", self), 0, 0)
         lists.addWidget(QLabel("Players:", self), 0, 1)
         lists.addWidget(self.games_list, 1, 0)
         lists.addWidget(self.players_list, 1, 1)
+        lists.addLayout(drop_buttons, 2, 1)
         lists.setColumnStretch(0, 3)
         lists.setColumnStretch(1, 2)
 
@@ -268,13 +319,15 @@ class TournamentPlayPanel(QWidget):
         settings, slots = load_tournament(Path(folder))
         results = load_results(Path(folder))
         tiebreaks = load_tiebreaks(Path(folder))
+        dropouts = load_dropouts(Path(folder))
         self.folder = Path(folder)
         self.settings = settings
         self.slots = slots
         self.results = results
         self.tiebreaks = tiebreaks
+        self.dropouts = dropouts
         self.load_error = None
-        self.plan = plan_tournament(settings.bracket.options(len(slots)))
+        self.plan = effective_plan(settings.bracket, slots, dropouts)
         self.title_label.setText(f"Tournament: {settings.name}")
         self._redraw()
 
@@ -511,7 +564,7 @@ class TournamentPlayPanel(QWidget):
         by_id = slots_by_id(self.slots)
         names = {slot.player_id: slot.actual_name.strip() for slot in self.slots}
         standings = (
-            tournament_standings(self.plan, self.results, self.tiebreaks)
+            tournament_standings(self.plan, self.results, self.tiebreaks, self.dropouts)
             if self.plan is not None and self.plan.valid
             else []
         )
@@ -562,20 +615,31 @@ class TournamentPlayPanel(QWidget):
             item.setToolTip("Players: " + ", ".join(game.seats))
         self.games_list.setCurrentRow(-1)
         self.games_list.blockSignals(False)
+        previous_player = self.selected_player_id()
+        self.players_list.blockSignals(True)
         self.players_list.clear()
-        statuses = player_statuses(self.plan, standings) if standings else {}
+        statuses = (
+            player_statuses(self.plan, standings, self.dropouts) if standings else {}
+        )
         for slot in self.slots:
             name = slot.actual_name.strip()
             if not name:
                 continue
             item = QListWidgetItem(name, self.players_list)
+            item.setData(Qt.ItemDataRole.UserRole, slot.player_id)
+            if slot.player_id == previous_player:
+                self.players_list.setCurrentItem(item)
             if slot.player_id in statuses:
                 status, waiting = statuses[slot.player_id]
                 item.setText(f"{name} ({status})")
                 if waiting:
                     _grey(item)
+        self.players_list.blockSignals(False)
+        self._update_drop_buttons()
         conflicts = (
-            advancement_conflicts(self.plan, standings, self.results, names)
+            advancement_conflicts(
+                self.plan, standings, self.results, names, self.dropouts
+            )
             if standings
             else []
         )
@@ -609,6 +673,7 @@ class TournamentPlayPanel(QWidget):
                 self.results,
                 self.selected_board(),
                 self.tiebreaks,
+                self.dropouts,
             )
         else:
             self._eligibility = Eligibility()
@@ -638,14 +703,106 @@ class TournamentPlayPanel(QWidget):
             combo.addItem(CHOOSE_PLAYER_TEXT, None)
             for player_id in self._eligibility.entrants:
                 combo.addItem(by_id[player_id].actual_name.strip(), player_id)
+            # A voided game's replacement is offered like a chaser.
+            extra = "chaser" if self._eligibility.chase else "replacement"
             for player_id in self._eligibility.chasers:
                 if player_id not in self._eligibility.entrants:
                     combo.addItem(
-                        f"{by_id[player_id].actual_name.strip()} (chaser)", player_id
+                        f"{by_id[player_id].actual_name.strip()} ({extra})", player_id
                     )
             combo.setEnabled(key is not None)
             combo.blockSignals(False)
         self._on_podium_changed()
+
+    def selected_player_id(self) -> str | None:
+        """Return the player selected in the players list, or ``None``."""
+        item = self.players_list.currentItem()
+        return item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+
+    def _update_drop_buttons(self, *_args: object) -> None:
+        """Enable Drop Player for a selected player, and Undo Drop for dropouts."""
+        player_id = self.selected_player_id()
+        self.drop_button.setEnabled(
+            player_id is not None and player_id not in dropped_ids(self.dropouts)
+        )
+        self.undo_drop_button.setEnabled(bool(self.dropouts))
+
+    def _change_problem(self) -> str | None:
+        """Return why the tournament can't be changed now, or ``None``."""
+        if self.folder is None:
+            return "No tournament is loaded."
+        problem = self.before_change() if self.before_change is not None else None
+        if problem:
+            return problem
+        self.reload()
+        return self.load_error
+
+    def drop_selected_player(self) -> None:
+        """Mark the selected player as dropped out, as the host chooses.
+
+        The host is shown where the player stands and what can happen to
+        their spot. The choice is saved straight away.
+
+        Returns:
+            ``None``.
+        """
+        player_id = self.selected_player_id()
+        if player_id is None:
+            return
+        problem = self._change_problem()
+        if problem:
+            QMessageBox.warning(self, "Can't drop player", problem)
+            return
+        settings, data = load_tournament_data(self.folder)
+        situation = drop_situation(data, player_id)
+        if situation.problem:
+            QMessageBox.information(self, "Can't drop player", situation.problem)
+            return
+        answer = self.ask_drop(situation, self)
+        if answer is None:
+            return
+        chosen, new_name = answer
+        new_player = (
+            PlayerSlot(new_name) if chosen.dropout.choice == DROP_REPLACE else None
+        )
+        logging.info(
+            "Dropping tournament player %s: %s", player_id, chosen.dropout.choice
+        )
+        self._save_change(settings, apply_drop(data, chosen.dropout, new_player))
+
+    def undo_dropout(self) -> None:
+        """Take back a dropout the host picks, if it still fits the games played.
+
+        Returns:
+            ``None``.
+        """
+        problem = self._change_problem()
+        if problem:
+            QMessageBox.warning(self, "Can't undo drop", problem)
+            return
+        settings, data = load_tournament_data(self.folder)
+        if not data.dropouts:
+            return
+        names = data.names()
+        dropout = self.ask_undo(
+            data.dropouts,
+            [dropout_text(dropout, names) for dropout in data.dropouts],
+            [undo_problem(data, dropout) for dropout in data.dropouts],
+            self,
+        )
+        if dropout is None or undo_problem(data, dropout):
+            return
+        logging.info("Undoing tournament dropout of %s", dropout.player_id)
+        self._save_change(settings, undo_drop(data, dropout))
+
+    def _save_change(self, settings: TournamentSettings, data: TournamentData) -> None:
+        """Save a dropout change, then show it."""
+        try:
+            save_tournament_data(self.folder, settings, data)
+        except TournamentFileError as exc:
+            QMessageBox.warning(self, "Couldn't save the dropout", str(exc))
+        self.reload()
+        self.results_changed.emit()
 
     def _on_podium_changed(self, *_args: object) -> None:
         """Report a change in the chosen game or players."""

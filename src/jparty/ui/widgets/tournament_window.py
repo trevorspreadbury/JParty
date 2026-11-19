@@ -262,11 +262,31 @@ class TournamentWindow(QDialog):
         self._update_editor_title()
 
     def showEvent(self, event: object) -> None:
-        """Fit the window on its screen, and lock newly played boards."""
+        """Fit the window on its screen, and catch up with games played.
+
+        Playing can change the tournament: results lock boards, and a
+        dropout can add a player, retire a board, or change the bracket. An
+        open tournament with no unsaved changes is read again to show all
+        of that; one with unsaved changes only locks newly played boards.
+        """
         super().showEvent(event)
         self.fit_to_screen()
+        editor = self.editor
+        if editor is None:
+            return
+        if editor.creating or editor.has_unsaved_changes():
+            editor.refresh_played()
+            return
+        try:
+            settings, slots = load_tournament(self.root / editor.settings.name)
+        except TournamentFileError as exc:
+            logging.error("Couldn't reread tournament: %s", exc)
+            editor.refresh_played()
+            return
+        tab = editor.tabs.currentIndex()
+        self._open_editor(settings, slots)
         if self.editor is not None:
-            self.editor.refresh_played()
+            self.editor.tabs.setCurrentIndex(tab)
 
     def fit_to_screen(self) -> None:
         """Shrink and move the window so all of it is on its screen.
