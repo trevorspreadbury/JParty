@@ -106,6 +106,36 @@ def test_reconcile_moves_dropped_games_to_the_pool() -> None:
     assert new_pool == [pool[0], boards["QF 6"]]
 
 
+def test_dropped_boards_go_back_when_their_game_returns() -> None:
+    """A board returns to its game if it comes back empty, and only then."""
+    boards = {"QF 5": board("5", 0), "QF 6": board("6", 0)}
+    kept, pool = reconcile_boards(["QF 1"], boards, [])
+    assert kept == {}
+    assert pool == [boards["QF 5"], boards["QF 6"]]
+    assert [item.left_game_key for item in pool] == ["QF 5", "QF 6"]
+
+    # QF 5 comes back empty and gets its board back. QF 6 got a new board
+    # while it was out, so it keeps that one, and its old board stops waiting.
+    kept, pool = reconcile_boards(
+        ["QF 1", "QF 5", "QF 6"], {"QF 6": board("7", 0)}, pool
+    )
+    assert kept == {"QF 5": boards["QF 5"], "QF 6": board("7", 0)}
+    assert kept["QF 5"].left_game_key == ""
+    assert pool == [boards["QF 6"]]
+    assert pool[0].left_game_key == ""
+    kept, pool = reconcile_boards(["QF 1", "QF 5", "QF 6"], {}, pool)
+    assert kept == {}
+
+
+def test_assigning_a_waiting_board_stops_it_waiting() -> None:
+    """A pool board the host assigns no longer goes back to its old game."""
+    _, pool = reconcile_boards([], {"QF 5": board("5", 0)}, [])
+    boards, pool = assign_from_pool({}, pool, 0, "QF 1")
+    assert boards["QF 1"].left_game_key == ""
+    boards, pool = unassign_board(boards, pool, "QF 1")
+    assert reconcile_boards(["QF 5"], {}, pool) == ({}, [board("5", 0)])
+
+
 def test_assign_unassign_and_pool() -> None:
     """Replaced and removed boards go to the pool; pool boards can come back."""
     first, second = board("1", 0), board("2", 0)

@@ -1,8 +1,9 @@
 """Qt tests for a tournament's Games and Bracket tabs and saving the setup."""
 
 import pytest
-from PyQt6.QtCore import QItemSelectionModel
+from PyQt6.QtCore import QItemSelectionModel, Qt
 from PyQt6.QtGui import QImage
+from PyQt6.QtWidgets import QDialog
 
 from jparty.domain.roster import PlayerSlot
 from jparty.domain.tournament import TournamentOptions, plan_tournament
@@ -22,6 +23,8 @@ from jparty.ui.widgets.tournament_games import (
     NEW_POOL_BOARD_TARGET,
     NO_BOARD_TEXT,
     GamesEditor,
+    PlayerChecklistDialog,
+    choose_cant_play,
 )
 from jparty.ui.widgets.tournament_roster import COLUMN_ACTUAL_NAME
 from tests.qt.test_tournament_roster import FakeFetcher, make_editor
@@ -185,6 +188,46 @@ def test_shrinking_bracket_moves_boards_to_the_pool(qtbot: object) -> None:
     assert games.unassigned == [board("4")]
 
 
+def test_boards_come_back_when_the_player_count_does(qtbot: object) -> None:
+    """15 -> 16 -> 15 players puts QF 5's board back on QF 5."""
+    games = make_games(qtbot, players=15, missing_media=lambda _board: [])
+    assigned = {key: board(str(index)) for index, key in enumerate(games._game_keys)}
+    assert "Quarterfinals: QF 5" in assigned
+    games.set_boards(assigned, [])
+    changes = []
+    games.games_changed.connect(lambda: changes.append(1))
+
+    games.set_plan(plan_tournament(TournamentOptions(16)))
+    assert "Quarterfinals: QF 5" not in games.boards
+    assert games.unassigned == [assigned["Quarterfinals: QF 5"]]
+    games.set_plan(plan_tournament(TournamentOptions(15)))
+    assert games.boards == assigned
+    assert games.unassigned == []
+    assert len(changes) == 2
+
+
+def test_second_round_and_boards_survive_a_small_field(
+    qtbot: object, temp_dir: object
+) -> None:
+    """23 -> 9 -> 23 players brings back the second round and every board."""
+    editor = make_editor(qtbot, temp_dir, FakeFetcher())
+    editor.roster.player_spinbox.setValue(23)
+    editor.bracket.second_round_checkbox.setChecked(True)
+    editor.bracket.byes_spinbox.setValue(3)
+    assert editor.bracket.plan.valid
+    keys = editor.games._game_keys
+    assigned = {key: board(str(index)) for index, key in enumerate(keys)}
+    editor.games.set_boards(assigned, [])
+
+    editor.roster.player_spinbox.setValue(9)
+    assert not editor.bracket.second_round_checkbox.isChecked()
+    editor.roster.player_spinbox.setValue(23)
+    assert editor.bracket.second_round_checkbox.isChecked()
+    assert editor.bracket.byes_spinbox.value() == 3
+    assert editor.games.boards == assigned
+    assert editor.games.unassigned == []
+
+
 def test_editor_saves_bracket_and_boards(qtbot: object, temp_dir: object) -> None:
     """The Bracket tab follows the roster, and Save writes the whole setup."""
     editor = make_editor(
@@ -297,6 +340,34 @@ class FakeChooser:
 
 
 PLAYERS = [("ann-id", "Ann"), ("bob-id", "Bob"), ("cy-id", "Cy")]
+
+
+def test_cant_play_checklist_ticks_and_reports_players(qtbot: object) -> None:
+    """The checklist starts with the board's players ticked and reports ticks."""
+    dialog = PlayerChecklistDialog("Can't Play: Final", PLAYERS, ["cy-id"])
+    qtbot.addWidget(dialog)
+    items = [dialog.player_list.item(row) for row in range(dialog.player_list.count())]
+    assert [item.text() for item in items] == ["Ann", "Bob", "Cy"]
+    assert [item.checkState() for item in items] == [
+        Qt.CheckState.Unchecked,
+        Qt.CheckState.Unchecked,
+        Qt.CheckState.Checked,
+    ]
+    assert dialog.checked_ids() == ["cy-id"]
+    items[0].setCheckState(Qt.CheckState.Checked)
+    assert dialog.checked_ids() == ["ann-id", "cy-id"]
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [(QDialog.DialogCode.Accepted, ["bob-id"]), (QDialog.DialogCode.Rejected, None)],
+)
+def test_choose_cant_play_returns_ticks_or_none(
+    monkeypatch: object, answer: object, expected: list[str] | None
+) -> None:
+    """OK returns the ticked ids; Cancel returns ``None``."""
+    monkeypatch.setattr(PlayerChecklistDialog, "exec", lambda _self: answer)
+    assert choose_cant_play("Can't Play", PLAYERS, ["bob-id"]) == expected
 
 
 def test_set_board_with_no_game_selected_adds_to_the_pool(qtbot: object) -> None:

@@ -80,6 +80,24 @@ def test_second_round_unchecks_for_small_fields(qtbot: object) -> None:
     assert dialog.plan.valid
 
 
+def test_second_round_comes_back_when_the_field_grows(qtbot: object) -> None:
+    """The host's second-round choice returns once there are enough players."""
+    dialog = BracketDesigner()
+    qtbot.addWidget(dialog)
+    dialog.player_spinbox.setValue(30)
+    dialog.second_round_checkbox.setChecked(True)
+    dialog.player_spinbox.setValue(9)
+    dialog.player_spinbox.setValue(30)
+    assert dialog.second_round_checkbox.isChecked()
+    assert dialog.bracket_settings().use_second_round
+
+    # A second round the host turned off stays off.
+    dialog.second_round_checkbox.setChecked(False)
+    dialog.player_spinbox.setValue(9)
+    dialog.player_spinbox.setValue(30)
+    assert not dialog.second_round_checkbox.isChecked()
+
+
 def test_locked_player_count_follows_the_roster(qtbot: object) -> None:
     """In a tournament, the roster sets the count and saved options apply."""
     designer = BracketDesigner(roster_sets_players=True)

@@ -382,8 +382,11 @@ class AdvancedBoardEditor(QWidget):
     def fill_all_slots(self, game_id: str) -> None:
         """Use one source game for every row.
 
-        Each row loads it right away (this is a button, not typing) and
-        picks its matching round, so a whole game can be played as it aired.
+        The rows go back to the default board counts, point values, and Daily
+        Double counts first, so nothing from an earlier board carries over.
+        Each row then loads the game right away (this is a button, not
+        typing) and picks its matching round, so a whole game can be played
+        as it aired.
 
         Args:
             game_id: Source game id.
@@ -391,6 +394,7 @@ class AdvancedBoardEditor(QWidget):
         Returns:
             ``None``.
         """
+        self._rebuild_default_rows()
         for row in self.rows:
             # Block signals so setting the text doesn't start the typing
             # debounce; the row loads now instead.
@@ -406,9 +410,13 @@ class AdvancedBoardEditor(QWidget):
         Returns:
             ``None``.
         """
-        self._resetting = True
         self._game_cache = {}
         self._media_status_cache = {}
+        self._rebuild_default_rows()
+
+    def _rebuild_default_rows(self) -> None:
+        """Replace the rows with empty ones at the default board counts."""
+        self._resetting = True
         self.standard_board_count_spinbox.setValue(DEFAULT_STANDARD_BOARD_COUNT)
         self.final_board_count_spinbox.setValue(DEFAULT_FINAL_BOARD_COUNT)
         self.rebuild_rows()
@@ -522,8 +530,20 @@ class AdvancedBoardEditor(QWidget):
             row: Row state.
 
         Returns:
-            A dictionary that :meth:`reload_row` can re-apply.
+            A dictionary that :meth:`reload_row` can re-apply. While the row
+            is still loading a saved selection, that selection, so it isn't
+            lost if the rows are rebuilt before the load finishes.
         """
+        pending_selection = row.get("pending_selection")
+        if row.get("loaded_data") is None and pending_selection:
+            return {
+                key: pending_selection.get(key)
+                for key in (
+                    "selected_round_index",
+                    "daily_double_indices",
+                    "daily_double_source_round_index",
+                )
+            }
         return {
             "selected_round_index": self._selected_source_round(row),
             "daily_double_indices": [

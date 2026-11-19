@@ -238,7 +238,9 @@ makes the next refresh ask about every ignored response again.
 The `Bracket` tab is the bracket designer for this tournament. The player
 count comes from the `Players` tab; choose the second round and byes here.
 The tab shows `Bracket (!)` while the options can't make a bracket. You can
-still save, and JParty reminds you that the bracket won't work yet.
+still save, and JParty reminds you that the bracket won't work yet. If the
+field drops to 9 or fewer players, the second round turns off; it turns back
+on if the field grows again.
 
 ### Games tab
 
@@ -262,8 +264,9 @@ each one. Either way it opens the same board slots as the welcome screen's
 2. Click `Use This Board`. It turns on once every slot is filled.
 
 To play one game as it aired, type its id under `Same game for every slot`
-and click `Use for Every Slot`. Each slot loads that game and picks its
-matching round.
+and click `Use for Every Slot`. The slots go back to two boards and Final
+Jeopardy! with the usual values and Daily Doubles, then each loads that game
+and picks its matching round.
 
 Opening a game that already has a board shows that board, so you can edit it.
 The edited board replaces the old one. `Cancel` leaves the game as it was.
@@ -288,7 +291,9 @@ Other buttons:
 
 If the bracket changes and a game leaves it (for example, the field shrinks
 and loses a chase game), that game's board moves to `Unassigned boards`
-instead of being lost. While the bracket can't work, boards stay where they
+instead of being lost. If the game comes back before you close the
+tournament (for example, the player count changes back) and it has no board,
+the board returns to it. While the bracket can't work, boards stay where they
 are.
 
 The summary above the table lists games whose boards have no question media,

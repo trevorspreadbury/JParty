@@ -528,16 +528,18 @@ class GamesEditor(QWidget):
     def _reconcile(self) -> bool:
         """Move boards for games not in a valid plan to the pool.
 
+        Boards that left with their game go back to it if it returns.
+
         Returns:
             Whether any board moved.
         """
         if self._plan is None or not self._plan.valid:
             return False
-        before = len(self.unassigned)
+        before = (self.boards, self.unassigned)
         self.boards, self.unassigned = reconcile_boards(
             self._game_keys, self.boards, self.unassigned
         )
-        return len(self.unassigned) != before
+        return (self.boards, self.unassigned) != before
 
     def _changed(self) -> None:
         """Redraw, keeping the selection, and report the change."""

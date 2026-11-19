@@ -88,6 +88,9 @@ class BracketDesigner(QWidget):
         self.second_round_checkbox = QCheckBox(
             "Add a second round before the Semifinals", self
         )
+        # The host's choice, kept while too few players turn the box off, so
+        # it comes back when the count allows a second round again.
+        self._wants_second_round = False
         self.byes_spinbox = QSpinBox(self)
         self.byes_spinbox.setRange(0, SEMIFINAL_FIELD_SIZE - 1)
         self.byes_spinbox.setToolTip(
@@ -137,7 +140,7 @@ class BracketDesigner(QWidget):
         layout.addWidget(self.bracket_scroll, 1)
 
         self.player_spinbox.valueChanged.connect(self.refresh)
-        self.second_round_checkbox.toggled.connect(self.refresh)
+        self.second_round_checkbox.toggled.connect(self.on_second_round_toggled)
         self.byes_spinbox.valueChanged.connect(self.on_byes_changed)
         self.second_round_players_spinbox.valueChanged.connect(self.refresh)
         self.refresh()
@@ -187,6 +190,7 @@ class BracketDesigner(QWidget):
         for control in controls:
             control.blockSignals(True)
         self.second_round_checkbox.setChecked(settings.use_second_round)
+        self._wants_second_round = settings.use_second_round
         self.byes_spinbox.setValue(settings.semifinal_byes)
         self.second_round_players_spinbox.setValue(
             settings.second_round_players
@@ -195,6 +199,18 @@ class BracketDesigner(QWidget):
         )
         for control in controls:
             control.blockSignals(False)
+        self.refresh()
+
+    def on_second_round_toggled(self, checked: bool) -> None:
+        """Remember the host's second-round choice and redraw.
+
+        Args:
+            checked: Whether the host wants a second round.
+
+        Returns:
+            ``None``.
+        """
+        self._wants_second_round = checked
         self.refresh()
 
     def on_byes_changed(self, byes: int) -> None:
@@ -219,9 +235,12 @@ class BracketDesigner(QWidget):
         """
         second_round_allowed = self.player_spinbox.value() > SEMIFINAL_FIELD_SIZE
         self.second_round_checkbox.setEnabled(second_round_allowed)
-        if not second_round_allowed and self.second_round_checkbox.isChecked():
+        # Too few players turn the second round off without forgetting that
+        # the host wanted one.
+        shown = second_round_allowed and self._wants_second_round
+        if self.second_round_checkbox.isChecked() != shown:
             self.second_round_checkbox.blockSignals(True)
-            self.second_round_checkbox.setChecked(False)
+            self.second_round_checkbox.setChecked(shown)
             self.second_round_checkbox.blockSignals(False)
         use_second_round = self.second_round_checkbox.isChecked()
         self.byes_spinbox.setEnabled(use_second_round)

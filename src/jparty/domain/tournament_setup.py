@@ -99,11 +99,17 @@ class TournamentBoard:
         cant_play: Player ids of players who must not play this board, for
             example because they have seen it. They stay with the board when
             it is swapped, unassigned, or edited.
+        left_game_key: For a pool board that left the bracket with its game,
+            that game's key, so the board can go back if the game returns
+            (see :func:`reconcile_boards`). Otherwise ``""``. It is only kept
+            while the tournament is open: it isn't saved, and it isn't part
+            of equality.
     """
 
     label: str
     board_selections: tuple[dict, ...] = field(default_factory=tuple)
     cant_play: tuple[str, ...] = ()
+    left_game_key: str = field(default="", compare=False)
 
     @property
     def source_game_ids(self) -> tuple[str, ...]:
@@ -229,7 +235,11 @@ def reconcile_boards(
     boards: Mapping[str, TournamentBoard],
     unassigned: Sequence[TournamentBoard],
 ) -> tuple[dict[str, TournamentBoard], list[TournamentBoard]]:
-    """Move boards whose game is no longer in the bracket to the pool.
+    """Move boards whose game left the bracket to the pool, and back again.
+
+    A dropped board remembers its game (``left_game_key``). If that game
+    comes back with no board, for example when the player count changes and
+    then changes back, the board returns to it.
 
     Args:
         game_keys: Keys of the games in the current bracket.
@@ -237,13 +247,30 @@ def reconcile_boards(
         unassigned: Boards not assigned to any game.
 
     Returns:
-        The boards still assigned, and the pool with dropped boards appended
-        in playing order.
+        The assigned boards, and the pool with newly dropped boards appended
+        in the order they were assigned.
     """
     keys = set(game_keys)
     kept = {key: board for key, board in boards.items() if key in keys}
-    dropped = [board for key, board in boards.items() if key not in keys]
-    return kept, list(unassigned) + dropped
+    pool = list(unassigned) + [
+        replace(board, left_game_key=key)
+        for key, board in boards.items()
+        if key not in keys
+    ]
+    for key in game_keys:
+        if key in kept:
+            continue
+        for index, board in enumerate(pool):
+            if board.left_game_key == key:
+                kept[key] = replace(pool.pop(index), left_game_key="")
+                break
+    # A game that came back with a different board doesn't want this one
+    # back later, for example after the host unassigns the new board.
+    pool = [
+        replace(board, left_game_key="") if board.left_game_key in keys else board
+        for board in pool
+    ]
+    return kept, pool
 
 
 def assign_board(
@@ -268,7 +295,9 @@ def assign_board(
     previous = new_boards.get(key)
     if previous is not None:
         pool.append(previous)
-    new_boards[key] = board
+    # The host chose this game for the board, so it no longer waits to go
+    # back to a game that left the bracket.
+    new_boards[key] = replace(board, left_game_key="")
     return new_boards, pool
 
 

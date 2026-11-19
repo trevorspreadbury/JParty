@@ -3,6 +3,7 @@
 from copy import deepcopy
 
 import pytest
+from PyQt6.QtWidgets import QRadioButton
 
 from jparty.domain.tournament_setup import TournamentBoard
 from jparty.services.question_media import QuestionMediaStatus
@@ -195,3 +196,86 @@ def test_slot_counts_follow_the_saved_board(
         "1",
         "2",
     ]
+
+
+class DeferredRunner:
+    """Hold background work until :meth:`finish` runs it."""
+
+    def __init__(self) -> None:
+        """Start with no work waiting."""
+        self.waiting = []
+
+    def __call__(self, work: object) -> None:
+        """Keep ``work`` for later."""
+        self.waiting.append(work)
+
+    def finish(self) -> None:
+        """Run the waiting work, including work it starts."""
+        while self.waiting:
+            self.waiting.pop(0)()
+
+
+def choose_round(row: dict, source_round_index: int) -> None:
+    """Click a row's radio button for ``source_round_index``."""
+    for radio in row["board_radio_widget"].findChildren(QRadioButton):
+        if radio.property("source_round_index") == source_round_index:
+            radio.click()
+            return
+    raise AssertionError(f"no radio for round {source_round_index}")
+
+
+def test_reopened_board_keeps_its_rounds_if_counts_change_while_loading(
+    qtbot: object, fake_games: list[str]
+) -> None:
+    """Changing a slot count before a reopened board loads keeps its choices."""
+    first = make_picker(qtbot)
+    first.editor.fill_all_slots("4453")
+    # Swap the first two rows' rounds, so the defaults would differ.
+    choose_round(first.editor.rows[0], 1)
+    choose_round(first.editor.rows[1], 0)
+    first.accept()
+    saved = first.board
+    assert [s["source_round_index"] for s in saved.board_selections] == [1, 0, 2]
+
+    runner = DeferredRunner()
+    reopened = BoardPickerDialog("Final: Final", board=saved, run_async=runner)
+    qtbot.addWidget(reopened)
+    assert runner.waiting
+    reopened.editor.final_board_count_spinbox.setValue(2)
+    reopened.editor.final_board_count_spinbox.setValue(1)
+    runner.finish()
+    reopened.accept()
+    assert reopened.board == saved
+
+
+def test_one_game_for_every_slot_starts_from_a_plain_board(
+    qtbot: object, fake_games: list[str]
+) -> None:
+    """Use for Every Slot drops an edited board's values and slot counts."""
+    plain = make_picker(qtbot)
+    plain.editor.fill_all_slots("4453")
+    plain.accept()
+
+    dialog = make_picker(qtbot)
+    editor = dialog.editor
+    editor.fill_all_slots("4453")
+    editor.rows[0]["value_edits"][0].setText("777")
+    editor.rows[0]["value_edits"][0].editingFinished.emit()
+    editor.rows[0]["daily_double_spinbox"].setValue(3)
+    editor.standard_board_count_spinbox.setValue(3)
+    dialog.one_game_edit.setText("4453")
+    dialog.one_game_button.click()
+    dialog.accept()
+
+    def as_aired(board: TournamentBoard) -> list[tuple]:
+        """Return what decides the board, apart from random Daily Doubles."""
+        return [
+            (
+                s["source_round_index"],
+                s.get("row_values"),
+                s.get("daily_double_count"),
+            )
+            for s in board.board_selections
+        ]
+
+    assert as_aired(dialog.board) == as_aired(plain.board)
