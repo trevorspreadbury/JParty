@@ -35,7 +35,7 @@ The two main files are:
 - `general.json`: high-level session metadata
 - `question_history.jsonl`: one JSON object per line for each completed
   clue (including Final Jeopardy), manual score override, score correction,
-  and seat change in the resume lobby
+  seat change in the resume lobby, and tiebreaker clue
 
 ## `general.json`
 
@@ -161,7 +161,7 @@ Resume reads the history before it fetches the game, so a damaged
 
 `question_history.jsonl` is append-only: lines are only ever added to the
 end during play, and the file is never rewritten. Each line is one JSON
-object. There are four line types:
+object. There are five line types:
 
 - clue lines, one per completed clue. JParty writes them without a `type`
   field; a line with no `type`, or with `"type": "question"`, is a clue line
@@ -170,6 +170,8 @@ object. There are four line types:
 - `player_renumber` lines, written when a resumed game starts after the host
   reordered players in the lobby (see
   [Player Numbers](#player-numbers-and-player_renumber))
+- `tiebreaker_clue` lines, one per clue played in a tiebreaker (see
+  [Tiebreaker Clues](#tiebreaker-clues-and-tiebreaker_clue))
 
 Standard clues and Final Jeopardy use the same top-level shape:
 
@@ -325,6 +327,63 @@ This is the same data the end-of-game summary screen uses for:
 - questions buzzed on
 - early buzzes
 - buzzer race win percentage
+
+## Tiebreaker Clues and `tiebreaker_clue`
+
+When the game ends with two or more players tied for first (at any score),
+the host can play a tiebreaker with clues from another game (see
+[HOST.md](../HOST.md#tiebreaker)). Each tiebreaker clue writes one line when
+a tied player answers it correctly or nobody does:
+
+```json
+{
+  "type": "tiebreaker_clue",
+  "question_number": 62,
+  "source_game_id": "1234",
+  "source_question_index": [3, 4],
+  "category": "RIVERS",
+  "value": 2000,
+  "text": "This river flows through Baghdad",
+  "answer": "the Tigris",
+  "contenders": [0, 1],
+  "buzz_phases": [],
+  "answer_attempts": [
+    {"player_index": 1, "answer_correct": false, "timestamp": 1700001101.0},
+    {"player_index": 0, "answer_correct": true, "timestamp": 1700001106.0}
+  ],
+  "winner": 0,
+  "completed_at": 1700001107.0
+}
+```
+
+Field notes:
+
+- `question_number`: continues the session's running clue number
+- `source_game_id`: the game the clue came from. The host typed it, or it
+  was picked at random.
+- `source_question_index`: `[category_index, row_index]` of the clue in its
+  source game's round
+- `category`, `value`, `text`, `answer`: the clue as it was shown. The
+  value is only the source game's value; it isn't added to any score.
+- `contenders`: player numbers of the players tied for first, the only
+  players who could buzz
+- `buzz_phases`: the same shape as on a clue line. Each buzz attempt's
+  `question_index` is `null`, because the clue is not on this game's boards.
+- `answer_attempts`: each ruling, with no `score_before` or `score_after`
+- `winner`: player number of the player who answered correctly, or `null`
+  when nobody did and the host moved on to another clue
+
+Tiebreaker rulings never change a score, so these lines are not part of the
+[score chain](#the-score-chain). They are also left out of the end-of-game
+stats and score graph, and resume doesn't treat them as played board clues.
+The end-of-game summary (and `jparty summary`) names the `winner` of the last
+won tiebreaker clue as the game's winner. `player_renumber` lines remap
+`contenders` and `winner` along with every `player_index`.
+
+On resume, question numbering continues after the highest `question_number`
+of the clue and `tiebreaker_clue` lines. If the game's tiebreaker was already
+won, the resumed game ends with that winner. If the app closed before anyone
+won, the end of the game offers the tiebreaker again.
 
 ## Score Corrections and Logging
 

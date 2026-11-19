@@ -25,6 +25,7 @@ from jparty.domain.gameplay import (
     FinalJeopardyFlow,
     PlayerStateBroadcaster,
     ScoreRecorder,
+    TiebreakerFlow,
 )
 from jparty.domain.input import (
     MAX_PLAYERS,
@@ -47,13 +48,18 @@ from jparty.domain.state import (
     current_saved_players,
     history_score_totals,
     is_question_history_entry,
+    is_tiebreaker_clue,
     load_question_history,
     load_saved_game_data,
     question_for_history_entry,
     read_history_file,
     save_general_state,
+    tiebreaker_winner_number,
 )
-from jparty.services.game_loader import build_game_from_board_selection_configs
+from jparty.services.game_loader import (
+    build_game_from_board_selection_configs,
+    load_tiebreaker_clues,
+)
 from jparty.ui.widgets.common import CompoundObject, SongPlayer
 
 DEFAULT_DAILY_DOUBLE_WAGER_CAP = 1000
@@ -130,6 +136,7 @@ class Game(QObject):
     answer_trigger = pyqtSignal(object, str)
     toolate_trigger = pyqtSignal()
     lectern_update_trigger = pyqtSignal(int, dict)
+    tiebreaker_loaded_trigger = pyqtSignal(int, str, object)
 
     def __init__(self) -> None:
         """Initialize a game controller with default runtime state.
@@ -227,6 +234,30 @@ class Game(QObject):
             self.final_incorrect_answer,
             self.arrowhints,
         )
+        self.keystroke_manager.addEvent(
+            "START_TIEBREAKER",
+            Qt.Key.Key_Space,
+            self.start_tiebreaker,
+            self.spacehints,
+        )
+        self.keystroke_manager.addEvent(
+            "TIEBREAKER_SHOW_CLUE",
+            Qt.Key.Key_Space,
+            self.tiebreaker_show_clue,
+            self.spacehints,
+        )
+        self.keystroke_manager.addEvent(
+            "TIEBREAKER_REVEAL_ANSWER",
+            Qt.Key.Key_Space,
+            self.tiebreaker_reveal_answer,
+            self.spacehints,
+        )
+        self.keystroke_manager.addEvent(
+            "TIEBREAKER_NEXT_CLUE",
+            Qt.Key.Key_Space,
+            self.tiebreaker_next_clue,
+            self.spacehints,
+        )
         for player_index in range(MAX_PLAYERS):
             self.keystroke_manager.addEvent(
                 f"BUZZED_{player_index}",
@@ -245,6 +276,7 @@ class Game(QObject):
         self.final_finished_trigger.connect(self.__handle_final_finished_song)
         self.toolate_trigger.connect(self.__toolate)
         self.lectern_update_trigger.connect(self.__broadcast_lectern_update)
+        self.tiebreaker_loaded_trigger.connect(self.__handle_tiebreaker_loaded)
         self._game_state_dir = None
         # Whether this session's history has a non-Final clue the score
         # editor can change. Kept in memory so refreshing the Edit Score
@@ -276,6 +308,12 @@ class Game(QObject):
         self.score_recorder = ScoreRecorder(self)
         self.clue_flow = ClueFlow(self)
         self.final_jeopardy_flow = FinalJeopardyFlow(self)
+        self.tiebreaker_flow = TiebreakerFlow(self)
+        # Player who won a tiebreaker, or None. The scores stay tied; the
+        # saved tiebreaker_clue line is what records the win.
+        self.tiebreaker_winner = None
+        # Replaced in tests so loading runs without a thread or network.
+        self.load_tiebreaker_clues = load_tiebreaker_clues
 
     def startable(self) -> bool:
         """Determine whether the game can start with the current connections.
@@ -811,12 +849,26 @@ class Game(QObject):
         )
         self._mark_completed_questions(question_history)
         self._restore_player_scores(raw_history)
-        if question_history:
+        # Tiebreaker clues use question numbers too, so continue after them.
+        numbered_entries = question_history + [
+            entry for entry in raw_history if is_tiebreaker_clue(entry)
+        ]
+        if numbered_entries:
             self.question_number = (
-                max(entry.get("question_number", 0) for entry in question_history) + 1
+                max(entry.get("question_number", 0) for entry in numbered_entries) + 1
             )
         else:
             self.question_number = 1
+        # A tiebreaker won before the app closed still decides the game.
+        saved_winner_number = tiebreaker_winner_number(raw_history)
+        self.tiebreaker_winner = next(
+            (
+                player
+                for player in self.players
+                if player.player_number == saved_winner_number
+            ),
+            None,
+        )
         self.current_round = self._get_resume_round()
         self.active_question = None
         self._awaiting_stumped_answer_reveal = False
@@ -887,9 +939,14 @@ class Game(QObject):
 
         Returns:
             A ``(round_index, question_index)`` tuple for the active clue, or
-            ``None`` when no active clue is available.
+            ``None`` when no active clue is available or a tiebreaker clue
+            is being played.
         """
         if not self.active_question or not self.data:
+            return None
+        # A tiebreaker clue comes from another game, so it has no place in
+        # this game's rounds.
+        if self.tiebreaker_flow.active:
             return None
         try:
             round_index = self.data.rounds.index(self.current_round)
@@ -1136,6 +1193,11 @@ class Game(QObject):
         """
         if self.active_question is not None or self.soliciting_player:
             return False
+        # A tie for first fixes who plays the tiebreaker, so a later edit
+        # could leave the wrong players in it or a winner the summary
+        # disagrees with.
+        if self.tiebreaker_flow.locks_scores():
+            return False
         return self._has_editable_clue
 
     def _is_editable_clue_entry(self, entry: dict) -> bool:
@@ -1306,8 +1368,7 @@ class Game(QObject):
         self.dc.scoreboard.refresh_players()
         self._refresh_score_edit_controls()
         self.host_display.welcome_widget.check_start()
-        for player in self.players:
-            self._update_lectern_for_player(player)
+        self._update_all_lecterns()
 
     def remove_player(self, player: object) -> None:
         """Remove a player from the active roster and refresh displays.
@@ -1332,8 +1393,9 @@ class Game(QObject):
         self.dc.scoreboard.refresh_players()
         self._refresh_score_edit_controls()
         self.host_display.welcome_widget.check_start()
-        for player in self.players:
-            self._update_lectern_for_player(player)
+        # The removed player's seat, or the last seat after renumbering, is
+        # now empty, so its lectern goes back to the logo.
+        self._update_all_lecterns()
 
     def move_player_up(self, player: object) -> None:
         """Move a player one slot earlier in the roster order.
@@ -1711,6 +1773,87 @@ class Game(QObject):
         self._flush_pending_history()
         self.final_jeopardy_flow.generate_final_score_graphs()
 
+    def prompt_tiebreaker_game_id(self) -> str | None:
+        """Ask the host which game to take tiebreaker clues from.
+
+        Returns:
+            The game id the host typed, ``""`` for a random game, or ``None``
+            when the host cancelled and the game should end in a tie.
+        """
+        # Signed names are image data, so show seats for them instead.
+        names = " and ".join(
+            player.text_name() for player in self.tiebreaker_flow.contenders
+        )
+        game_id, accepted = QInputDialog.getText(
+            self.host_display,
+            "Tiebreaker",
+            f"{names} are tied for first.\n\n"
+            "Enter a J-Archive game ID for the tiebreaker clues,\n"
+            "or leave it blank for a random game.\n\n"
+            "Cancel ends the game in a tie.",
+        )
+        if not accepted:
+            return None
+        return game_id
+
+    def run_in_background(self, work: object) -> None:
+        """Run ``work`` on a daemon thread so the host UI stays responsive.
+
+        Args:
+            work: Callable with no arguments.
+
+        Returns:
+            ``None``.
+        """
+        Thread(target=work, daemon=True).start()
+
+    def start_tiebreaker(self) -> None:
+        """Prompt for a tiebreaker game and load its clues.
+
+        Returns:
+            ``None``.
+        """
+        self.tiebreaker_flow.offer()
+
+    def __handle_tiebreaker_loaded(
+        self, token: int, game_id: str, clues: object
+    ) -> None:
+        """Receive tiebreaker clues on the game object's Qt thread.
+
+        Args:
+            token: Load request the clues belong to.
+            game_id: Game the clues came from.
+            clues: Loaded clues, highest value first.
+
+        Returns:
+            ``None``.
+        """
+        self.tiebreaker_flow.clues_loaded(token, game_id, clues)
+
+    def tiebreaker_show_clue(self) -> None:
+        """Reveal the current tiebreaker clue after its category.
+
+        Returns:
+            ``None``.
+        """
+        self.tiebreaker_flow.show_clue()
+
+    def tiebreaker_reveal_answer(self) -> None:
+        """Reveal the answer to a tiebreaker clue nobody got.
+
+        Returns:
+            ``None``.
+        """
+        self.tiebreaker_flow.reveal_answer()
+
+    def tiebreaker_next_clue(self) -> None:
+        """Move on to the next tiebreaker clue.
+
+        Returns:
+            ``None``.
+        """
+        self.tiebreaker_flow.next_clue()
+
     def _load_question_history(self) -> object:
         """Load per-question history for the current game session.
 
@@ -1770,6 +1913,9 @@ class Game(QObject):
         self._has_editable_clue = False
         self._game_started_at = None
         self._starting_roster = None
+        self.tiebreaker_flow.reset()
+        self.tiebreaker_winner = None
+        self.previous_answerers = set()
         self.dc.restart()
         self.begin()
         self._refresh_score_edit_controls()
@@ -1846,6 +1992,9 @@ class Game(QObject):
         Returns:
             ``None``.
         """
+        if self.tiebreaker_flow.active:
+            self.tiebreaker_flow.correct_answer()
+            return
         self.clue_flow.correct_answer()
 
     def incorrect_answer(self) -> None:
@@ -1854,6 +2003,9 @@ class Game(QObject):
         Returns:
             ``None``.
         """
+        if self.tiebreaker_flow.active:
+            self.tiebreaker_flow.incorrect_answer()
+            return
         self.clue_flow.incorrect_answer()
 
     def stumped(self) -> None:
@@ -1879,6 +2031,9 @@ class Game(QObject):
         """
         if not self.accepting_responses or self.answering_player is not None:
             logging.info("Ignoring stumped timeout: responses are closed")
+            return
+        if self.tiebreaker_flow.active:
+            self.tiebreaker_flow.stumped()
             return
         self.clue_flow.stumped()
 
@@ -1948,7 +2103,9 @@ class Game(QObject):
 
         Edits are ignored until a game has started (in the lobby before Start
         and after Close Game). There is no save to record them in yet, and an
-        edited score would break the new save's score chain.
+        edited score would break the new save's score chain. They are also
+        ignored once a tie for first has been offered a tiebreaker, for the
+        same reason as :meth:`can_open_score_editor`.
 
         Args:
             player: Player whose score should be edited.
@@ -1959,6 +2116,8 @@ class Game(QObject):
         if self.current_round is None:
             return
         if self.active_question is not None or self.soliciting_player:
+            return
+        if self.tiebreaker_flow.locks_scores():
             return
         (new_score, answered) = QInputDialog.getInt(
             self.host_display, "Adjust Score", "Enter a new score:", value=player.score

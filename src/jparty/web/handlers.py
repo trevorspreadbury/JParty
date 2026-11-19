@@ -14,6 +14,7 @@ from base64 import urlsafe_b64decode
 from typing import TYPE_CHECKING, Any
 
 import tornado.escape
+import tornado.ioloop
 import tornado.web
 import tornado.websocket
 
@@ -31,6 +32,10 @@ MAX_ANSWER_LENGTH = 500
 # Websocket close code sent to a lectern page when another page takes its slot.
 # lectern.js checks for it, so keep the two in step.
 LECTERN_REPLACED_CLOSE_CODE = 4000
+# How often the server sends each lectern a ``HEARTBEAT`` message. lectern.js
+# reconnects when it hears nothing for a few of these, which catches a
+# connection that dropped without closing (a laptop's Wi-Fi going away, say).
+LECTERN_HEARTBEAT_SECONDS = 3
 # Websocket close code sent to a buzzer page when the same player reconnects
 # from another tab or screen. buzzer.js checks for it and stops reloading, so
 # two tabs with one player's cookie don't keep taking the player from each
@@ -424,7 +429,10 @@ class LecternHandler(tornado.web.RequestHandler):
         """Render the lectern page for the requested player slot.
 
         The player number is written into a script on the page, so anything
-        other than a valid slot number is rejected.
+        other than a valid slot number is rejected. With no ``player`` at
+        all, the page uses the seat it last showed on this browser, or asks
+        for one (press 1 to 6), so every lectern laptop can open the same
+        address.
 
         Returns:
             ``None``.
@@ -432,13 +440,16 @@ class LecternHandler(tornado.web.RequestHandler):
         Raises:
             tornado.web.HTTPError: 400 when ``player`` is not a valid slot.
         """
-        try:
-            player_number = int(self.get_argument("player", "0"))
-        except ValueError:
-            raise tornado.web.HTTPError(400, "Invalid player number") from None
-        if not 0 <= player_number < MAXPLAYERS:
-            raise tornado.web.HTTPError(400, "Player number out of range")
-        self.render("lectern.html", player_number=player_number)
+        raw_player = self.get_argument("player", None)
+        player_number = None
+        if raw_player is not None:
+            try:
+                player_number = int(raw_player)
+            except ValueError:
+                raise tornado.web.HTTPError(400, "Invalid player number") from None
+            if not 0 <= player_number < MAXPLAYERS:
+                raise tornado.web.HTTPError(400, "Player number out of range")
+        self.render("lectern.html", player_number=player_number, max_players=MAXPLAYERS)
 
 
 class LecternSocketHandler(tornado.websocket.WebSocketHandler):
@@ -447,6 +458,7 @@ class LecternSocketHandler(tornado.websocket.WebSocketHandler):
     application: Application
     controller: BuzzerController
     player_number: int | None
+    heartbeat: tornado.ioloop.PeriodicCallback | None
 
     def initialize(self) -> None:
         """Attach controller references for this lectern websocket.
@@ -456,6 +468,7 @@ class LecternSocketHandler(tornado.websocket.WebSocketHandler):
         """
         self.controller = self.application.controller
         self.player_number = None
+        self.heartbeat = None
 
     def get_compression_options(self) -> dict[str, Any]:
         """Enable default websocket compression support.
@@ -467,6 +480,9 @@ class LecternSocketHandler(tornado.websocket.WebSocketHandler):
 
     def open(self) -> None:
         """Register the lectern connection and send its initial state.
+
+        Also starts the heartbeat, so the page can tell a quiet connection
+        from a dead one.
 
         A lectern that already holds this slot is closed, so only one
         lectern socket per slot gets updates.
@@ -491,6 +507,18 @@ class LecternSocketHandler(tornado.websocket.WebSocketHandler):
             # pages for one slot don't keep taking it from each other.
             previous.close(LECTERN_REPLACED_CLOSE_CODE, "Opened on another screen")
         self.send_initial_state()
+        self.heartbeat = tornado.ioloop.PeriodicCallback(
+            self.send_heartbeat, LECTERN_HEARTBEAT_SECONDS * 1000
+        )
+        self.heartbeat.start()
+
+    def send_heartbeat(self) -> None:
+        """Tell the lectern page the connection is still alive.
+
+        Returns:
+            ``None``.
+        """
+        self.send("HEARTBEAT", "")
 
     def send(self, msg: str, text: str = "") -> None:
         """Send a structured websocket message to the lectern client.
@@ -513,10 +541,14 @@ class LecternSocketHandler(tornado.websocket.WebSocketHandler):
     def send_initial_state(self) -> None:
         """Send the current player-state payload for this lectern slot.
 
+        An empty seat always gets ``NO_PLAYER``, so a lectern that reconnects
+        after JParty restarts drops the previous session's player and shows
+        the logo.
+
         Returns:
             ``None``.
         """
-        if self.player_number is None or not self.controller.game:
+        if self.player_number is None:
             return
         player = self.controller.get_player_by_number(self.player_number)
         if player:
@@ -545,5 +577,8 @@ class LecternSocketHandler(tornado.websocket.WebSocketHandler):
         Returns:
             ``None``.
         """
+        if self.heartbeat is not None:
+            self.heartbeat.stop()
+            self.heartbeat = None
         if self.controller.lectern_connections.get(self.player_number) is self:
             del self.controller.lectern_connections[self.player_number]

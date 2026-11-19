@@ -308,6 +308,8 @@ class FakeDisplay:
         self.loaded_end_game_summaries = []
         self.restart_calls = 0
         self.image_review_questions = []
+        self.loaded_tiebreakers = []
+        self.unloaded_tiebreakers = 0
 
     def hide_welcome_widgets(self) -> None:
         """Test hide welcome widgets."""
@@ -325,6 +327,15 @@ class FakeDisplay:
     def load_final(self, question: object) -> None:
         """Test load final."""
         self.loaded_finals.append(question)
+
+    def load_tiebreaker(self, question: object) -> None:
+        """Test load tiebreaker."""
+        self.loaded_tiebreakers.append(question)
+        self.question_widget = FakeQuestionWidget()
+
+    def unload_tiebreaker(self) -> None:
+        """Test unload tiebreaker."""
+        self.unloaded_tiebreakers += 1
 
     def load_final_judgement(self) -> None:
         """Test load final judgement."""
@@ -374,6 +385,7 @@ class FakeBuzzerController:
         self.prompt_answers_calls = 0
         self.toolate_calls = 0
         self.broadcasts = []
+        self.cleared_lecterns = []
         self.restart_calls = 0
         self.lectern_connections = {}
         self.saved_player_profiles = {}
@@ -411,6 +423,17 @@ class FakeBuzzerController:
         """Test toolate."""
         self.toolate_calls += 1
 
+    def show_tiebreaker_buzzers(self, contenders: object) -> None:
+        """Test show tiebreaker buzzers: tied players buzz, others sit out."""
+        contenders = list(contenders)
+        for player in self.connected_players:
+            player.page = "buzz" if player in contenders else "sitout"
+
+    def end_tiebreaker_buzzers(self) -> None:
+        """Test end tiebreaker buzzers: every phone is cleared."""
+        for player in self.connected_players:
+            player.page = "null"
+
     def get_player_state_dict(self, player: object) -> object:
         """Test get player state dict."""
         return {
@@ -425,6 +448,14 @@ class FakeBuzzerController:
     def broadcast_to_lecterns(self, player_number: object, state_dict: object) -> None:
         """Test broadcast to lecterns."""
         self.broadcasts.append((player_number, state_dict))
+
+    def clear_empty_lecterns(self) -> None:
+        """Test clear empty lecterns: record each empty seat that is cleared."""
+        taken = {player.player_number for player in self.game.players}
+        for player_number in sorted(self.lectern_connections):
+            if player_number not in taken:
+                self.cleared_lecterns.append(player_number)
+                self.lectern_connections[player_number].send("NO_PLAYER", "")
 
     def restart(self) -> None:
         """Test restart."""

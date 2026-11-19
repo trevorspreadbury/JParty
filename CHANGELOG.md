@@ -6,6 +6,53 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Lecterns can be set up from the keyboard, without the mouse (#46):
+  - `/lectern` with no seat asks which lectern it is (press 1 to 6), and
+    the browser remembers the answer. Every lectern laptop can open the same
+    address.
+  - `F` turns full screen on or off, `1` to `6` change the seat without
+    reloading, and `H` shows which lectern this is.
+  - `R` turns the lectern a quarter turn for monitors mounted on their side,
+    so the laptop's display settings can stay as they are. `rotate=` in the
+    address does the same, and the page remembers it.
+  - The mouse cursor hides itself after two seconds.
+- HOST.md has a new "Setting Up Lecterns" section: showing only the external
+  monitor, kiosk-mode commands and keeping the laptop awake, for Windows,
+  macOS and Ubuntu.
+
+### Changed
+- `/lectern` with no `player` no longer opens lectern 1. It opens the seat
+  this browser used last, or asks for one. `/lectern?player=0` still opens
+  lectern 1.
+
+### Fixed
+- Lectern pages no longer need a manual refresh (#46):
+  - They keep reconnecting for as long as they are open, through JParty
+    restarts, instead of giving up after about 30 seconds with "Connection
+    lost". They never reload themselves, so a full-screen lectern stays full
+    screen.
+  - The server sends each lectern a heartbeat every 3 seconds. A lectern
+    that hears nothing for 10 seconds drops the dead connection and
+    reconnects.
+  - A lectern shows the logo whenever its seat is empty. That includes the
+    last seat after a player is removed in the lobby (it used to keep the
+    removed player's name), and any lectern 5 seconds after JParty closes.
+  - In the resume lobby, a lectern shows the player in its seat. It used to
+    show whoever was at that position in the roster, which was wrong after a
+    seat was released.
+  - The lectern page no longer loads jQuery from the internet, so it starts
+    on a laptop with no internet access.
+  - On restart, JParty waits up to 3 seconds for port 8080 to free up before
+    moving to the next port, where open lecterns would never find it.
+- Tiebreaker tossups. When players tie for first, the host can enter a game
+  ID (or leave it blank for a random game) and play that game's
+  highest-value clues until a tied player answers one correctly. Only the
+  tied players can buzz (the other players' phones say they are sitting
+  out), scores don't change, and the summary names the winner. Scores are
+  locked once the tie is offered. Each tiebreaker clue is saved to `question_history.jsonl` as a new
+  `tiebreaker_clue` line (#44).
+
 ## [3.0.0] - 2026-11-14
 
 First stable 3.0 release. It contains everything since the May 2026

@@ -257,3 +257,28 @@ def test_regular_players_log_in_by_token(controller: BuzzerController) -> None:
 
     assert controller.player_with_token(player.token.hex()) is player
     assert controller.player_with_token("not-a-token") is None
+
+
+def test_tiebreaker_pages_show_the_buzzer_only_to_tied_players(
+    controller: BuzzerController,
+) -> None:
+    """Tied phones get the buzz page; the rest sit out, then all clear."""
+    alice = Player("Alice", FakeSocket(), 0)
+    bob = Player("Bob", FakeSocket(), 1)
+    cara = Player("Cara", FakeSocket(), 2)
+    for player in (alice, bob, cara):
+        player.page = "null"
+        controller.new_player(player)
+
+    controller.show_tiebreaker_buzzers([alice, bob])
+    assert [p.waiter.sent[-1] for p in (alice, bob, cara)] == [
+        ("SHOW_PAGE", "buzz"),
+        ("SHOW_PAGE", "buzz"),
+        ("SHOW_PAGE", "sitout"),
+    ]
+    # A phone that reconnects is sent its page from ``Player.state``.
+    assert cara.state()["page"] == "sitout"
+
+    controller.end_tiebreaker_buzzers()
+    assert {p.waiter.sent[-1] for p in (alice, bob, cara)} == {("SHOW_PAGE", "null")}
+    assert {p.page for p in (alice, bob, cara)} == {"null"}

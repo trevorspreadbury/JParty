@@ -19,7 +19,9 @@ from jparty.ui.widgets.question import (
     HostFinalJeopardyWidget,
     HostImageQuestionWidget,
     HostQuestionWidget,
+    HostTiebreakerWidget,
     QuestionWidget,
+    TiebreakerWidget,
 )
 from jparty.ui.widgets.scoreboard import HostScoreBoard, ScoreBoard
 from jparty.ui.widgets.welcome import QRWidget, QuestionMediaPreview, Welcome
@@ -135,6 +137,17 @@ class DisplayWindow(QMainWindow):
             A final-question widget appropriate for this display.
         """
         return FinalJeopardyWidget(q, self)
+
+    def create_tiebreaker_widget(self, q: object) -> object:
+        """Create the widget for one tiebreaker clue.
+
+        Args:
+            q: Tiebreaker clue.
+
+        Returns:
+            A ``TiebreakerWidget`` instance.
+        """
+        return TiebreakerWidget(q, self)
 
     def resizeEvent(self, event: object) -> None:
         """Resize overlay widgets when the window geometry changes.
@@ -260,6 +273,41 @@ class DisplayWindow(QMainWindow):
         self.final_display = None
         self.final_window = None
         self.hide_question()
+
+    def load_tiebreaker(self, q: object) -> None:
+        """Show a tiebreaker clue's category in the board slot.
+
+        The winner/tie card is hidden while the clue is played. The clue
+        replaces whatever is in the board slot: the board, the Final clue,
+        or the previous tiebreaker clue (which is discarded).
+
+        Args:
+            q: Tiebreaker clue.
+
+        Returns:
+            ``None``.
+        """
+        widget = self.create_tiebreaker_widget(q)
+        if self.final_display is not None:
+            self.final_display.setVisible(False)
+        layout_item = self.board_layout.itemAt(1)
+        current_widget = layout_item.widget() if layout_item is not None else None
+        if current_widget is not None:
+            current_widget.setVisible(False)
+            self.board_layout.replaceWidget(current_widget, widget)
+            if current_widget is not self.board_widget:
+                current_widget.deleteLater()
+        self.question_widget = widget
+
+    def unload_tiebreaker(self) -> None:
+        """Bring the winner/tie card back after the tiebreaker.
+
+        Returns:
+            ``None``.
+        """
+        if self.final_display is not None:
+            self.final_display.setVisible(True)
+            self.final_display.raise_()
 
     def load_end_game_summary(self, summary: object) -> None:
         """Show the audience-facing end-of-game summary screen.
@@ -457,6 +505,17 @@ class HostDisplayWindow(DisplayWindow):
             A ``HostFinalJeopardyWidget`` instance.
         """
         return HostFinalJeopardyWidget(q, self)
+
+    def create_tiebreaker_widget(self, q: object) -> object:
+        """Create the host widget for one tiebreaker clue.
+
+        Args:
+            q: Tiebreaker clue.
+
+        Returns:
+            A ``HostTiebreakerWidget`` instance.
+        """
+        return HostTiebreakerWidget(q, self)
 
     def keyPressEvent(self, event: object) -> None:
         """Forward key presses to the game's keystroke manager.
