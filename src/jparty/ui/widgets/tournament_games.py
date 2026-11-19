@@ -1,8 +1,8 @@
 """A tournament's Games tab: which board each bracket game plays.
 
-"Set Board..." (or double-clicking a game) opens the welcome screen's board
-tools in a dialog, in Advanced Options mode, to choose or edit that game's
-board. Boards can be swapped between games, and boards whose game leaves the
+"Set Board..." (or double-clicking a game) opens the board picker
+(:mod:`jparty.ui.widgets.board_setup`), which uses the same advanced board
+editor as the welcome screen, to choose or edit that game's board. Boards can be swapped between games, and boards whose game leaves the
 bracket wait in an unassigned pool. The assignment rules live in
 :mod:`jparty.domain.tournament_setup`.
 """
@@ -36,6 +36,7 @@ from jparty.domain.tournament_setup import (
     unassign_board,
 )
 from jparty.services.question_media import detect_question_media
+from jparty.ui.widgets.board_setup import pick_board
 
 LAYOUT_SPACING = 8
 COLUMN_GAME = 0
@@ -68,26 +69,6 @@ def missing_media_ids(board: TournamentBoard) -> list[str]:
     return missing
 
 
-def pick_board_with_dialog(
-    game_key: str, board: TournamentBoard | None, parent: QWidget | None
-) -> TournamentBoard | None:
-    """Open the board picker for one game.
-
-    Args:
-        game_key: The tournament game.
-        board: Its current board, to edit, or ``None``.
-        parent: Parent for the dialog.
-
-    Returns:
-        The chosen board, or ``None`` if the host cancelled.
-    """
-    # Imported here: the picker reuses the welcome screen, which imports the
-    # Tournament window, which imports this module.
-    from jparty.ui.widgets.board_setup import pick_board
-
-    return pick_board(game_key, board, parent)
-
-
 class GamesEditor(QWidget):
     """Assign boards to a tournament's games.
 
@@ -103,7 +84,7 @@ class GamesEditor(QWidget):
         parent: QWidget | None = None,
         pick_board: Callable[
             [str, TournamentBoard | None, QWidget | None], TournamentBoard | None
-        ] = pick_board_with_dialog,
+        ] = pick_board,
         missing_media: Callable[[TournamentBoard], list[str]] = missing_media_ids,
     ) -> None:
         """Build the games table and the unassigned pool.

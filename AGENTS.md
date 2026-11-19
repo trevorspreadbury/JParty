@@ -66,15 +66,24 @@ the smallest relevant Qt subset first.
 
 ### Welcome screen
 
-Most startup complexity lives in `src/jparty/ui/widgets/welcome.py`.
+Most startup complexity lives in `src/jparty/ui/widgets/welcome.py` and the
+advanced board editor it embeds, `src/jparty/ui/widgets/advanced_boards.py`.
 
-Important behaviors there include:
+Important behaviors in `welcome.py` include:
 
 - debounced single-game loading
-- advanced "Frankenstein" board composition
-- source-board row caching and async loading
 - round selection and summary warnings
+- pushing the chosen board (regular or advanced) into the game for Start
 - local question media preview before game start
+
+`AdvancedBoardEditor` in `advanced_boards.py` owns the advanced "Frankenstein"
+board rows: source-board row caching and async loading, per-row Random and
+media import, and composing the board. It never touches a game object; it
+emits `setup_changed` and callers read `current_setup()`. The welcome screen
+and the tournament board picker (`ui/widgets/board_setup.py`) both use it, so
+change board-slot behavior there, not in either caller. Helpers both the
+single-game and advanced setups share (Random's search, warnings, summaries)
+live in `src/jparty/ui/board_sources.py`.
 
 If you change advanced options:
 
@@ -94,11 +103,11 @@ Daily Double handling now has two important invariants:
 DD rules live in `src/jparty/services/game_loader.py`:
 `select_advanced_daily_double_indices` picks the baseline to keep for an
 advanced board, and `normalize_standard_board_daily_doubles` applies the layout
-and draws any extras. `src/jparty/ui/widgets/welcome.py` only calls them and
-keeps each row's chosen coordinates stable across reloads.
+and draws any extras. `src/jparty/ui/widgets/advanced_boards.py` only calls
+them and keeps each row's chosen coordinates stable across reloads.
 
 If you touch DD logic, run `tests/unit/test_game_loading.py` and the relevant
-Qt tests in `tests/qt/test_welcome_widget.py`.
+Qt tests in `tests/qt/test_welcome_widget.py` and `tests/qt/test_board_picker.py`.
 
 ### Saved game state
 

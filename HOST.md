@@ -247,8 +247,8 @@ shows where the game's players come from, its board, and whether the board
 has question media. The tab title counts the games that have a board.
 
 To give a game a board, double-click the game, or select it and click
-`Set Board...`. This opens the welcome screen's board tools for that game,
-already in `Advanced Options` mode:
+`Set Board...`. This opens the same board slots as the welcome screen's
+`Advanced Options`:
 
 1. Fill each board slot: type a game id (or click `Random`), pick its round,
    and adjust point values and Daily Doubles as you would on the welcome
@@ -257,8 +257,9 @@ already in `Advanced Options` mode:
    counts to change how many boards the game plays.
 2. Click `Use This Board`. It turns on once every slot is filled.
 
-To play one game as it aired, uncheck `Advanced Options`, enter its id, and
-pick its rounds.
+To play one game as it aired, type its id under `Same game for every slot`
+and click `Use for Every Slot`. Each slot loads that game and picks its
+matching round.
 
 Opening a game that already has a board shows that board, so you can edit it.
 The edited board replaces the old one. `Cancel` leaves the game as it was.

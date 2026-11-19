@@ -13,11 +13,6 @@ from jparty.domain.tournament_store import (
     save_tournament,
 )
 from jparty.ui.widgets import tournament_editor
-from jparty.ui.widgets.board_setup import (
-    BoardPickerDialog,
-    BoardSetupSession,
-    BoardSetupWidget,
-)
 from jparty.ui.widgets.tournament_editor import TAB_BRACKET, TAB_GAMES
 from jparty.ui.widgets.tournament_games import (
     COLUMN_BOARD,
@@ -27,7 +22,6 @@ from jparty.ui.widgets.tournament_games import (
     GamesEditor,
 )
 from tests.qt.test_tournament_roster import FakeFetcher, make_editor
-from tests.qt.test_welcome_widget import StubGame
 
 pytestmark = pytest.mark.qt
 
@@ -277,154 +271,3 @@ def test_logo_preview_and_save(
     editor.remove_logo_button.click()
     editor.buttons.button(editor.buttons.StandardButton.Save).click()
     assert not (folder / "logo.png").exists()
-
-
-def regular_setup(qtbot: object) -> BoardSetupWidget:
-    """Return a board setup in regular mode with StubGame's game loaded."""
-    setup = BoardSetupWidget()
-    qtbot.addWidget(setup)
-    setup.advanced_options_checkbox.setChecked(False)
-    setup.game.data = StubGame().data
-    setup.textbox.blockSignals(True)
-    setup.textbox.setText("4453")
-    setup.textbox.blockSignals(False)
-    return setup
-
-
-def test_board_setup_starts_in_advanced_mode(qtbot: object) -> None:
-    """The picker reuses the welcome screen, in Advanced Options mode."""
-    setup = BoardSetupWidget()
-    qtbot.addWidget(setup)
-    assert setup.advanced_options_checkbox.isChecked()
-    assert setup.advanced_controls_widget.isVisibleTo(setup)
-    for hidden in (
-        setup.title_label,
-        setup.start_button,
-        setup.advanced_start_button,
-        setup.resume_button,
-        setup.tournament_button,
-        setup.quit_button,
-    ):
-        assert not hidden.isVisibleTo(setup)
-    assert setup.current_board() is None
-    assert not setup.is_board_ready()
-
-
-def test_board_setup_regular_mode_board(qtbot: object) -> None:
-    """Regular mode hands over the rounds Start would play."""
-    setup = regular_setup(qtbot)
-    assert setup.textbox.isVisibleTo(setup)
-    assert not setup.start_button.isVisibleTo(setup)
-    assert not setup.resume_button.isVisibleTo(setup)
-    assert setup.load_media_button.isVisibleTo(setup)
-    ready = []
-    setup.board_ready_changed.connect(ready.append)
-    setup.game.set_selected_round_indices([0, 2])
-    current = setup.current_board()
-    assert current.label == "4453 (Jeopardy!, Final Jeopardy!)"
-    assert [s["source_round_index"] for s in current.board_selections] == [0, 2]
-    assert ready[-1] is True
-
-    setup.game.set_selected_round_indices([])
-    assert setup.current_board() is None
-    assert ready[-1] is False
-
-
-def test_board_setup_shows_a_saved_board_in_advanced_rows(
-    qtbot: object, monkeypatch: object
-) -> None:
-    """Editing a board fills one advanced row per round and reloads each."""
-    reloads = []
-    monkeypatch.setattr(
-        BoardSetupWidget,
-        "reload_advanced_row",
-        lambda self, index, selection=None: reloads.append((index, selection)),
-    )
-    saved = TournamentBoard(
-        "mixed",
-        (
-            {
-                "game_id": "11",
-                "source_round_index": 1,
-                "source_round_label": "Double Jeopardy!",
-                "board_type": "standard",
-                "row_values": [100, 200, 300, 400, 500],
-                "daily_double_count": 1,
-                "daily_double_indices": [[2, 3]],
-            },
-            {
-                "game_id": "22",
-                "source_round_index": 2,
-                "source_round_label": "Final Jeopardy!",
-                "board_type": "final",
-                "row_values": [],
-            },
-        ),
-    )
-    setup = BoardSetupWidget(board=saved)
-    qtbot.addWidget(setup)
-    assert setup.standard_board_count_spinbox.value() == 1
-    assert setup.final_board_count_spinbox.value() == 1
-    rows = setup._advanced_rows
-    assert [row["gameid_edit"].text() for row in rows] == ["11", "22"]
-    assert [edit.text() for edit in rows[0]["value_edits"]] == [
-        "100",
-        "200",
-        "300",
-        "400",
-        "500",
-    ]
-    standard_reload = next(sel for index, sel in reloads if index == 0)
-    assert standard_reload["selected_round_index"] == 1
-    assert standard_reload["daily_double_indices"] == [[2, 3]]
-    assert standard_reload["daily_double_source_round_index"] == 1
-    final_reload = next(sel for index, sel in reloads if index == 1)
-    assert final_reload["selected_round_index"] == 2
-
-
-def test_picker_dialog_uses_only_a_complete_board(qtbot: object) -> None:
-    """Use This Board follows readiness and returns the board."""
-    dialog = BoardPickerDialog("Final: Final")
-    qtbot.addWidget(dialog)
-    assert dialog.windowTitle() == "Board for Final: Final"
-    assert not dialog.use_button.isEnabled()
-    dialog.accept()
-    assert dialog.board is None
-    assert dialog.result() != dialog.DialogCode.Accepted
-
-    setup = dialog.setup
-    setup.advanced_options_checkbox.setChecked(False)
-    setup.game.data = StubGame().data
-    setup.textbox.blockSignals(True)
-    setup.textbox.setText("4453")
-    setup.textbox.blockSignals(False)
-    setup.game.set_selected_round_indices([0, 1, 2])
-    setup.check_start()
-    assert dialog.use_button.isEnabled()
-    dialog.use_button.click()
-    assert dialog.result() == dialog.DialogCode.Accepted
-    assert dialog.board.source_game_ids == ("4453",)
-    assert len(dialog.board.board_selections) == 3
-
-
-def test_board_setup_session_mirrors_engine_board_state() -> None:
-    """The stand-in keeps board state like the engine, with no players."""
-    session = BoardSetupSession()
-    assert not session.startable()
-    session.data = StubGame().data
-    assert session.startable()
-    configs = [{"game_id": "1", "source_round_index": 0}]
-    session.set_board_selection_configs(configs)
-    session.set_composed_game_data(configs, "composed")
-    assert session.matching_composed_game_data(configs) == "composed"
-    configs[0]["game_id"] = "changed"
-    assert session.board_selection_configs() == [
-        {"game_id": "1", "source_round_index": 0}
-    ]
-    session.set_board_selection_configs([{"game_id": "2"}])
-    assert session.matching_composed_game_data([{"game_id": "2"}]) is None
-    session.set_selected_round_indices([2, 0, 2])
-    assert session.selected_round_indices() == [0, 2]
-    session.clear_resume_state()
-    assert session.board_selection_configs() == []
-    assert session.selected_round_indices() == []
