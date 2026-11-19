@@ -410,3 +410,33 @@ def test_cant_play_is_saved_and_forgets_removed_players(
     saved, _slots = load_tournament(temp_dir / "Fun")
     assert saved.boards["Final: Final"].cant_play == (keep,)
     assert saved.unassigned_boards[0].cant_play == ()
+
+
+def test_cant_play_on_an_unassigned_board(qtbot: object) -> None:
+    """Unassigned boards take exclusions too, and keep them when assigned."""
+    chooser = FakeChooser(["cy-id"], None, ["ann-id", "cy-id"])
+    games = make_games(qtbot, choose_cant_play=chooser, missing_media=lambda _b: [])
+    games.set_players(PLAYERS)
+    games.set_boards({}, [board("1"), board("2")])
+    assert not games.pool_cant_play_button.isEnabled()
+
+    games.pool_list.setCurrentRow(1)
+    games.pool_cant_play_button.click()
+    assert chooser.calls[-1] == ("Can't Play: 2 (Jeopardy!)", PLAYERS, ())
+    assert games.unassigned[1].cant_play == ("cy-id",)
+    assert games.unassigned[0].cant_play == ()
+    assert games.pool_list.item(1).text() == "2 (Jeopardy!) (can't play: Cy)"
+    assert games.pool_list.currentRow() == 1
+
+    # A cancelled checklist changes nothing; double-click opens it too.
+    games.pool_list.itemDoubleClicked.emit(games.pool_list.item(1))
+    assert chooser.calls[-1][2] == ("cy-id",)
+    assert games.unassigned[1].cant_play == ("cy-id",)
+    games.pool_list.itemDoubleClicked.emit(games.pool_list.item(1))
+    assert games.unassigned[1].cant_play == ("ann-id", "cy-id")
+
+    select_rows(games.table, 0)
+    games.pool_list.setCurrentRow(1)
+    games.assign_pool_button.click()
+    assert cell(games, 0, COLUMN_CANT_PLAY) == "Ann, Cy"
+    assert games.unassigned == [board("1")]

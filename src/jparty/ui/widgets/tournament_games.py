@@ -258,12 +258,20 @@ class GamesEditor(QWidget):
         self.pool_list = QListWidget(self)
         self.pool_list.setMaximumHeight(110)
         self.pool_list.itemSelectionChanged.connect(self._update_buttons)
+        self.pool_list.itemDoubleClicked.connect(self.set_selected_pool_cant_play)
         self.assign_pool_button = QPushButton("Assign to Selected Game", self)
         self.assign_pool_button.clicked.connect(self.assign_selected_pool_board)
+        self.pool_cant_play_button = QPushButton("Can't Play...", self)
+        self.pool_cant_play_button.setToolTip(
+            "Choose players who must not play the selected unassigned board."
+            " Double-clicking the board does the same."
+        )
+        self.pool_cant_play_button.clicked.connect(self.set_selected_pool_cant_play)
         self.delete_pool_button = QPushButton("Delete Board", self)
         self.delete_pool_button.clicked.connect(self.delete_selected_pool_board)
         pool_buttons = QHBoxLayout()
         pool_buttons.addWidget(self.assign_pool_button)
+        pool_buttons.addWidget(self.pool_cant_play_button)
         pool_buttons.addWidget(self.delete_pool_button)
         pool_buttons.addStretch(1)
 
@@ -417,14 +425,49 @@ class GamesEditor(QWidget):
         Returns:
             ``None``.
         """
-        board = self.boards[key]
-        chosen = self.choose_cant_play(
-            f"Can't Play: {key}", self._players, board.cant_play, self
-        )
-        if chosen is None:
+        board = self._ask_cant_play(key, self.boards[key])
+        if board is not None:
+            self.boards = {**self.boards, key: board}
+            self._changed()
+
+    def set_selected_pool_cant_play(self, *_args: object) -> None:
+        """Choose who can't play the selected unassigned board.
+
+        Returns:
+            ``None``.
+        """
+        pool_index = self.pool_list.currentRow()
+        if not 0 <= pool_index < len(self.unassigned):
             return
-        self.boards = {**self.boards, key: with_cant_play(board, chosen)}
+        board = self._ask_cant_play(
+            self.unassigned[pool_index].label, self.unassigned[pool_index]
+        )
+        if board is None:
+            return
+        self.unassigned = [
+            board if index == pool_index else other
+            for index, other in enumerate(self.unassigned)
+        ]
         self._changed()
+        # Redrawing clears the pool list; keep the edited board selected.
+        self.pool_list.setCurrentRow(pool_index)
+
+    def _ask_cant_play(
+        self, title: str, board: TournamentBoard
+    ) -> TournamentBoard | None:
+        """Ask the host who can't play ``board``.
+
+        Args:
+            title: What the board is for, shown in the checklist's title.
+            board: The board.
+
+        Returns:
+            The board with the chosen exclusions, or ``None`` if cancelled.
+        """
+        chosen = self.choose_cant_play(
+            f"Can't Play: {title}", self._players, board.cant_play, self
+        )
+        return None if chosen is None else with_cant_play(board, chosen)
 
     def swap_selected(self) -> None:
         """Swap the boards of the two selected games.
@@ -574,6 +617,7 @@ class GamesEditor(QWidget):
         self.unassign_button.setEnabled(any(key in self.boards for key in keys))
         pool_selected = bool(self.pool_list.selectedItems())
         self.assign_pool_button.setEnabled(pool_selected and len(keys) == 1)
+        self.pool_cant_play_button.setEnabled(pool_selected)
         self.delete_pool_button.setEnabled(pool_selected)
 
     def _show_status(self, message: str, problem: bool = False) -> None:

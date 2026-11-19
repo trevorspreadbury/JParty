@@ -271,7 +271,9 @@ Setting up a tournament board doesn't change the game on the welcome screen.
 
 To keep players off a board (for example, players who have seen that
 episode or wrote its clues), select the game and click `Can't Play...`, or
-double-click its `Can't Play` cell, then tick those players. The list stays
+double-click its `Can't Play` cell, then tick those players. For a board in
+`Unassigned boards`, select it and click the `Can't Play...` button next to
+`Assign to Selected Game`, or double-click the board. The list stays
 with the board: if you swap, unassign, or edit the board, the same players
 still can't play it. Renaming a player keeps their place on the list, and
 removing a player takes them off it when you save.
