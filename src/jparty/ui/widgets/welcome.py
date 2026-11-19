@@ -31,8 +31,10 @@ from jparty import __version__ as version
 from jparty.app.helptext import helpmsg
 from jparty.app.paths import GAME_STATES_DIR, TOURNAMENTS_DIR
 from jparty.domain.models import GameData
+from jparty.domain.tournament_store import TournamentFileError
 from jparty.services.game_loader import (
     RANDOM_GAME_MAX_ATTEMPTS,
+    build_game_from_board_selection_configs,
     compose_game_from_resolved_board_selections,
     describe_source_round,
     get_game,
@@ -45,6 +47,7 @@ from jparty.services.question_media import (
     local_media_questions,
 )
 from jparty.ui.board_sources import (
+    composed_board_summary_text,
     composed_session_game_id,
     find_random_game_with_media,
     game_warning_lines,
@@ -62,6 +65,7 @@ from jparty.ui.widgets.common import (
     choose_question_media_path,
     resource_path,
 )
+from jparty.ui.widgets.tournament_play import TournamentPlayPanel
 from jparty.ui.widgets.tournament_window import TournamentWindow
 
 ROUND_CHECKBOX_STYLE = """
@@ -214,6 +218,8 @@ class Welcome(StartWidget):
     summary_load_result_trigger = pyqtSignal(int, str, object, object, object, bool)
     # (request_id, selected_dir, loaded_save, error)
     saved_game_result_trigger = pyqtSignal(int, str, object, object)
+    # (request_id, game_key, data, error) for a tournament game's board
+    tournament_board_result_trigger = pyqtSignal(int, str, object, object)
 
     def __init__(self, game: object, parent: object = None) -> None:
         """Initialize the welcome screen and its lobby controls.
@@ -349,6 +355,27 @@ class Welcome(StartWidget):
         self.tournament_button = DynamicButton("Tournament", self)
         self.tournament_button.clicked.connect(self.show_tournament_window)
         self.tournament_window = None
+        # While a tournament is played, this panel replaces the game id and
+        # round controls; see enter_tournament_mode.
+        self.tournament_mode = False
+        self.tournament_panel = TournamentPlayPanel(self)
+        self.tournament_panel.setVisible(False)
+        self.tournament_start_button = DynamicButton("Start!", self.tournament_panel)
+        self.tournament_start_button.setEnabled(False)
+        self.tournament_start_button.clicked.connect(self.on_start_clicked)
+        self.tournament_panel.layout().addWidget(
+            self.tournament_start_button, 0, Qt.AlignmentFlag.AlignHCenter
+        )
+        self.tournament_panel.selection_changed.connect(
+            self.on_tournament_selection_changed
+        )
+        self.tournament_panel.leave_requested.connect(self.leave_tournament_mode)
+        self.tournament_panel.results_changed.connect(self.check_start)
+        # Newest board load for the chosen tournament game.
+        self._tournament_request = LatestRequest()
+        # Key of the tournament game whose board is in ``game.data``, or None.
+        self._tournament_board_key = None
+        self._tournament_summary_text = ""
         footer_layout = QHBoxLayout()
         footer_layout.addStretch(5)
         footer_layout.addWidget(self.quit_button, 3)
@@ -363,6 +390,7 @@ class Welcome(StartWidget):
         main_layout.addWidget(self.version_label, 1)
         main_layout.addStretch(1)
         main_layout.addWidget(self.regular_workflow_widget, 5)
+        main_layout.addWidget(self.tournament_panel, 16)
         main_layout.addStretch(1)
         main_layout.addWidget(self.summary_label, 7)
         main_layout.addWidget(self.rounds_widget, 4)
@@ -374,6 +402,9 @@ class Welcome(StartWidget):
         self.summary_trigger.connect(self.set_summary)
         self.summary_load_result_trigger.connect(self.handle_summary_load_result)
         self.saved_game_result_trigger.connect(self.handle_saved_game_result)
+        self.tournament_board_result_trigger.connect(
+            self.handle_tournament_board_result
+        )
         self.setLayout(main_layout)
         self.update_reveal_answers_after_triple_stumper(
             self.reveal_answers_radio.isChecked()
@@ -407,6 +438,7 @@ class Welcome(StartWidget):
         logging.info("Showing tournament window")
         if self.tournament_window is None:
             self.tournament_window = TournamentWindow(TOURNAMENTS_DIR, self)
+            self.tournament_window.play_requested.connect(self.enter_tournament_mode)
         self.tournament_window.show()
         self.tournament_window.raise_()
         self.tournament_window.activateWindow()
@@ -485,6 +517,207 @@ QCheckBox {{
             elif isinstance(widget, QLabel):
                 widget.setStyleSheet(rounds_label_style)
         self.advanced_boards.apply_scale(self.height(), self.width())
+        self.tournament_panel.apply_scale(self.height())
+        self.tournament_start_button.setMinimumSize(
+            max(int(self.width() * 0.14), 150), max(int(self.height() * 0.06), 36)
+        )
+
+    def enter_tournament_mode(self, folder: object) -> bool:
+        """Show a tournament's games in place of the regular game controls.
+
+        Any prepared resume or loaded regular game is dropped. The host picks
+        a game and its players on the panel, and Start plays that game.
+
+        Args:
+            folder: The tournament's folder.
+
+        Returns:
+            Whether the tournament could be read.
+        """
+        try:
+            self.tournament_panel.load(Path(folder))
+        except TournamentFileError as exc:
+            logging.error("Couldn't open tournament %s: %s", folder, exc)
+            QMessageBox.warning(self, "Couldn't open tournament", str(exc))
+            return False
+        logging.info("Playing tournament %s", folder)
+        self.debounce_timer.stop()
+        self._summary_request.cancel()
+        self._loading_summary = False
+        self.advanced_options_checkbox.setChecked(False)
+        self.resume_path = None
+        self.game.clear_resume_state()
+        self.clear_round_selector()
+        self.tournament_mode = True
+        self._show_tournament_controls(True)
+        self._clear_tournament_board()
+        self.on_tournament_selection_changed()
+        return True
+
+    def leave_tournament_mode(self) -> None:
+        """Go back to choosing a regular game.
+
+        Returns:
+            ``None``.
+        """
+        logging.info("Leaving tournament mode")
+        self.tournament_mode = False
+        self._tournament_request.cancel()
+        self._clear_tournament_board()
+        self.game.clear_resume_state()
+        self._show_tournament_controls(False)
+        self.show_summary(self)
+
+    def _show_tournament_controls(self, shown: bool) -> None:
+        """Swap the regular game controls for the tournament panel."""
+        self.tournament_panel.setVisible(shown)
+        self.regular_workflow_widget.setVisible(not shown)
+        self.advanced_options_checkbox.setVisible(not shown)
+        if shown:
+            self.rounds_widget.setVisible(False)
+            self.advanced_boards.setVisible(False)
+        self.tournament_button.setEnabled(not shown)
+
+    def _clear_tournament_board(self) -> None:
+        """Forget any tournament board pushed into the game."""
+        self._tournament_board_key = None
+        self._tournament_summary_text = ""
+        self.game.data = None
+        if hasattr(self.game, "set_board_selection_configs"):
+            self.game.set_board_selection_configs(None)
+        if hasattr(self.game, "set_tournament_game"):
+            self.game.set_tournament_game(None)
+
+    def on_tournament_selection_changed(self) -> None:
+        """Load the chosen game's board, then update Start.
+
+        The board loads on a worker thread, since its source games may come
+        from the network. Start stays off until it is in the game.
+
+        Returns:
+            ``None``.
+        """
+        if not self.tournament_mode:
+            return
+        key = self.tournament_panel.selected_key()
+        board = self.tournament_panel.selected_board()
+        if key is None or board is None:
+            self._tournament_request.cancel()
+            self._clear_tournament_board()
+        elif key != self._tournament_board_key:
+            self._clear_tournament_board()
+            self._tournament_summary_text = "Loading the board..."
+            request_id = self._tournament_request.begin()
+            selections = [dict(selection) for selection in board.board_selections]
+            self.loader.run_async(
+                partial(self._load_tournament_board, request_id, key, selections)
+            )
+        self.check_start()
+
+    def _load_tournament_board(
+        self, request_id: int, key: str, selections: list[dict]
+    ) -> None:
+        """Build a tournament board's game on a worker thread."""
+        try:
+            data = build_game_from_board_selection_configs(selections)
+            error = None
+        except Exception as exc:  # noqa: BLE001 - shown to the host
+            logging.exception("Couldn't load the board for %s", key)
+            data, error = None, exc
+        self.tournament_board_result_trigger.emit(request_id, key, data, error)
+
+    def handle_tournament_board_result(
+        self, request_id: int, key: str, data: object, error: object
+    ) -> None:
+        """Push a loaded tournament board into the game, if still wanted.
+
+        Args:
+            request_id: The load's request id.
+            key: The game the board belongs to.
+            data: The built game, or ``None`` if it couldn't be built.
+            error: The error, if loading raised one.
+
+        Returns:
+            ``None``.
+        """
+        if not self.tournament_mode or not self._tournament_request.is_current(
+            request_id
+        ):
+            return
+        board = self.tournament_panel.selected_board()
+        if self.tournament_panel.selected_key() != key or board is None:
+            return
+        if data is None or not data.rounds:
+            detail = f": {error}" if error else ""
+            self._tournament_summary_text = f"Couldn't load this game's board{detail}."
+            self.check_start()
+            return
+        selections = [dict(selection) for selection in board.board_selections]
+        self.game.set_board_selection_configs(selections)
+        self.game.set_composed_game_data(selections, data)
+        self.game.set_selected_round_indices(list(range(len(data.rounds))))
+        self.game.set_session_game_id(
+            composed_session_game_id(selections) or board.label
+        )
+        self.game.data = data
+        self._tournament_board_key = key
+        daily_double_counts = [
+            selection.get("daily_double_count")
+            for selection in selections
+            if selection.get("board_type") != "final"
+        ]
+        # A board taken as it aired has no counts; check it like a regular
+        # game instead.
+        if None in daily_double_counts:
+            daily_double_counts = None
+        self._tournament_summary_text = composed_board_summary_text(
+            selections, data, daily_double_counts
+        )
+        self.check_start()
+
+    def _tournament_phone_names(self) -> list[object]:
+        """Return each connected phone's player name, in podium order."""
+        players = sorted(
+            getattr(self.game, "players", []) or [],
+            key=lambda player: player.player_number,
+        )
+        return [player.name for player in players]
+
+    def _check_tournament_start(self) -> None:
+        """Enable Start once the chosen game, board, and phones are ready."""
+        names = self._tournament_phone_names()
+        self.tournament_panel.set_phones(names)
+        problem = self.tournament_panel.problem(len(names))
+        board_ready = (
+            self._tournament_board_key is not None
+            and self._tournament_board_key == self.tournament_panel.selected_key()
+        )
+        startable = bool(getattr(self.game, "startable", lambda: False)())
+        enabled = problem is None and board_ready and startable
+        self.tournament_start_button.setEnabled(enabled)
+        if problem is None and not board_ready:
+            problem = "Loading the board..."
+        self.tournament_panel.show_status(problem or "Ready to start.", not enabled)
+        self.summary_label.setText(self._tournament_summary_text)
+
+    def start_tournament_game(self) -> None:
+        """Seat the chosen players and start their tournament game.
+
+        Podium ``i`` is the ``i``-th phone. The local-media preview opens
+        first if the board has local media.
+
+        Returns:
+            ``None``.
+        """
+        self.game.set_tournament_game(
+            self.tournament_panel.game_ref(), self.tournament_panel.chosen_players()
+        )
+        preview_questions = self.preview_questions()
+        parent = self.parent()
+        if preview_questions and hasattr(parent, "load_question_media_preview"):
+            parent.load_question_media_preview(preview_questions)
+            return
+        self.game.start_game()
 
     def _begin_summary_request(self, loading: bool) -> int:
         """Invalidate any single-game load in flight and return a new request id.
@@ -929,7 +1162,14 @@ QCheckBox {{
             self.game.set_session_game_id("")
 
     def sync_active_configuration(self) -> None:
-        """Push either the regular or advanced startup config into the game."""
+        """Push either the regular or advanced startup config into the game.
+
+        In tournament mode the chosen tournament board is already in the
+        game, so only Start is updated.
+        """
+        if self.tournament_mode:
+            self.check_start()
+            return
         if self.advanced_options_checkbox.isChecked():
             self.sync_advanced_configuration()
             return
@@ -1066,6 +1306,17 @@ QCheckBox {{
         """
         self.sync_active_configuration()
         self.check_start()
+        if self.tournament_mode:
+            if not self.tournament_start_button.isEnabled():
+                return
+            parent = self.parent()
+            if hasattr(parent, "load_contestant_intro"):
+                parent.load_contestant_intro(
+                    self.tournament_panel.intro_lines(), self.start_tournament_game
+                )
+                return
+            self.start_tournament_game()
+            return
         active_start_button = (
             self.advanced_start_button
             if self.advanced_options_checkbox.isChecked()
@@ -1257,6 +1508,9 @@ QCheckBox {{
         Returns:
             ``None``.
         """
+        if self.tournament_mode:
+            self._check_tournament_start()
+            return
         self.presenter.set_advanced_enabled(self.advanced_options_checkbox.isChecked())
         self.presenter.set_resume_path(self.resume_path)
         self.presenter.set_summary_text(self._base_summary_text)
@@ -1280,6 +1534,12 @@ QCheckBox {{
         self.start_button.setText("Start!")
         self.advanced_options_checkbox.setChecked(False)
         self.clear_round_selector()
+        if self.tournament_mode:
+            # Back from a tournament game: show what's been played since.
+            self._clear_tournament_board()
+            self.tournament_panel.reload()
+            self.on_tournament_selection_changed()
+            return
         self.show_summary(self)
 
     def update_reveal_answers_after_triple_stumper(self, checked: bool) -> None:
@@ -1412,6 +1672,62 @@ QCheckBox {{
         if self.advanced_options_checkbox.isChecked():
             return local_media_questions(self.game, range(len(self.game.data.rounds)))
         return local_media_questions(self.game, self.game.selected_round_indices())
+
+
+class ContestantIntro(StartWidget):
+    """The host's introduction of a tournament game's players.
+
+    Shown on the host screen after Start, before the game begins, so the
+    host can read each player's introduction aloud.
+    """
+
+    def __init__(
+        self,
+        lines: list[str],
+        on_back: object,
+        on_start: object,
+        parent: object = None,
+    ) -> None:
+        """Show ``lines``: a heading, then one line per player.
+
+        Args:
+            lines: The introduction, heading first.
+            on_back: Called by Back, to return to the welcome screen.
+            on_start: Called by Start Game.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__(parent)
+        self.lines = list(lines)
+        main_layout = QVBoxLayout()
+        main_layout.addStretch(1)
+        main_layout.addLayout(self.icon_layout, 3)
+        heading = self.lines[0] if self.lines else ""
+        self.title_label = DynamicLabel(heading, lambda: self.height() * 0.07, self)
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(self.title_label, 2)
+        self.line_labels = []
+        for line in self.lines[1:]:
+            label = DynamicLabel(line, lambda: self.height() * 0.045, self)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setWordWrap(True)
+            main_layout.addWidget(label, 2)
+            self.line_labels.append(label)
+        button_layout = QHBoxLayout()
+        button_layout.addStretch(3)
+        self.back_button = DynamicButton("Back", self)
+        self.back_button.clicked.connect(on_back)
+        button_layout.addWidget(self.back_button, 2)
+        button_layout.addStretch(1)
+        self.start_button = DynamicButton("Start Game", self)
+        self.start_button.clicked.connect(on_start)
+        button_layout.addWidget(self.start_button, 2)
+        button_layout.addStretch(3)
+        main_layout.addLayout(button_layout, 2)
+        main_layout.addStretch(1)
+        self.setLayout(main_layout)
 
 
 class QuestionMediaPreview(StartWidget):

@@ -239,6 +239,10 @@ class Player:
         self.player_number = player_number
         self.key = index_to_key[player_number]
         self.connected = True
+        # ``(player_id, actual_name)`` of the roster player this phone plays
+        # as in a tournament game, or ``None``. Saved in general.json so a
+        # resumed game still knows whose results to log.
+        self.tournament_player = None
 
     def __hash__(self) -> object:
         """Return a stable hash derived from the player's random token.

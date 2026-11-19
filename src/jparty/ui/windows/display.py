@@ -24,7 +24,12 @@ from jparty.ui.widgets.question import (
     TiebreakerWidget,
 )
 from jparty.ui.widgets.scoreboard import HostScoreBoard, ScoreBoard
-from jparty.ui.widgets.welcome import QRWidget, QuestionMediaPreview, Welcome
+from jparty.ui.widgets.welcome import (
+    ContestantIntro,
+    QRWidget,
+    QuestionMediaPreview,
+    Welcome,
+)
 
 
 class DisplayWindow(QMainWindow):
@@ -554,6 +559,37 @@ class HostDisplayWindow(DisplayWindow):
             preview_questions,
             on_back=self.show_welcome_from_preview,
             on_start=self.game.start_game,
+            parent=self,
+        )
+        self.preview_widget.setGeometry(self.welcome_widget.geometry())
+        self.preview_widget.setVisible(True)
+        self.preview_widget.raise_()
+
+    def load_contestant_intro(self, lines: list[str], on_start: object) -> None:
+        """Show the host's introduction of a tournament game's players.
+
+        It uses the same spot as the question-media preview, and Back
+        returns to the welcome screen the same way.
+
+        Args:
+            lines: The introduction, heading first.
+            on_start: Called when the host clicks Start Game.
+
+        Returns:
+            ``None``.
+        """
+
+        def start() -> None:
+            """Close the introduction, then start."""
+            self.hide_question_media_preview()
+            on_start()
+
+        self.hide_welcome_widgets()
+        self.hide_question_media_preview()
+        self.preview_widget = ContestantIntro(
+            lines,
+            on_back=self.show_welcome_from_preview,
+            on_start=start,
             parent=self,
         )
         self.preview_widget.setGeometry(self.welcome_widget.geometry())

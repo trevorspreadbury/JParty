@@ -2,7 +2,9 @@
 
 The welcome screen's Tournament button opens this window. Its home page
 creates or loads a tournament, or opens the bracket designer to try formats.
-A created or loaded tournament opens in a :class:`TournamentEditor`.
+A created or loaded tournament opens in a :class:`TournamentEditor`. Its
+Play Games button hides the window and hands the tournament to the welcome
+screen, which plays its games.
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -45,6 +47,9 @@ class TournamentWindow(QDialog):
     Attributes:
         editor: The open tournament, or ``None`` on the home page.
     """
+
+    # The tournament folder, when the host clicks Play Games.
+    play_requested = pyqtSignal(object)
 
     def __init__(
         self,
@@ -248,12 +253,24 @@ class TournamentWindow(QDialog):
             missing_media=self.missing_media,
         )
         editor.close_requested.connect(self.show_home)
+        editor.play_requested.connect(self._play)
         editor.saved.connect(lambda _folder: self._update_editor_title())
         editor.name_edit.textChanged.connect(self._update_editor_title)
         self.editor = editor
         self.stack.addWidget(editor)
         self.stack.setCurrentWidget(editor)
         self._update_editor_title()
+
+    def showEvent(self, event: object) -> None:
+        """Lock boards of games played while the window was hidden."""
+        super().showEvent(event)
+        if self.editor is not None:
+            self.editor.refresh_played()
+
+    def _play(self, folder: Path) -> None:
+        """Hide the window and pass the tournament on to be played."""
+        self.hide()
+        self.play_requested.emit(folder)
 
     def _close_editor(self) -> bool:
         """Close the open tournament if the host agrees.

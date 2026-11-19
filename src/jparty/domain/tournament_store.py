@@ -10,6 +10,10 @@ outside git:
   Actual Name, its linked sign-up answers, and a stable player id.
 - ``logo.<ext>``: the tournament logo, if the host chose one. It lives here,
   not in git.
+- ``results.csv``: one row per player per played game (see
+  :class:`jparty.domain.tournament_play.GameResult`). Games write it when
+  they end, and the host can fix it afterwards. It is separate from
+  ``tournament.json``, so saving the setup never touches results.
 
 Format version 1 files (from before the setup screen) load with the default
 bracket and no boards.
@@ -28,11 +32,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from jparty.domain.roster import ANECDOTE_COLUMNS, PlayerSlot, SignUp, new_player_id
+from jparty.domain.tournament_play import RESULTS, GameResult, record_results
 from jparty.domain.tournament_setup import BracketSettings, TournamentBoard
 from jparty.services.game_cache import write_text_atomic
 
 TOURNAMENT_FILE = "tournament.json"
 PLAYERS_FILE = "players.csv"
+RESULTS_FILE = "results.csv"
 TOURNAMENT_FORMAT_VERSION = 2
 LOGO_STEM = "logo"
 LOGO_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
@@ -45,6 +51,19 @@ PLAYERS_COLUMNS = (
     "hometown",
     *(f"anecdote_{number}" for number in range(1, len(ANECDOTE_COLUMNS) + 1)),
     "player_id",
+)
+
+# The issue's columns come first, so the file reads well in a spreadsheet;
+# the ids after them are what the app matches on.
+RESULTS_COLUMNS = (
+    "player",
+    "score",
+    "coryat",
+    "game",
+    "result",
+    "player_id",
+    "game_key",
+    "saved_game",
 )
 
 _FORBIDDEN_NAME_CHARACTERS = set('<>:"/\\|?*')
@@ -365,3 +384,139 @@ def parse_players_csv(text: str) -> list[PlayerSlot]:
             )
         )
     return slots
+
+
+def results_csv_text(results: Sequence[GameResult]) -> str:
+    """Return ``results.csv`` contents.
+
+    Args:
+        results: Results, in file order.
+
+    Returns:
+        CSV text with a header row and one row per result.
+    """
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(RESULTS_COLUMNS)
+    for result in results:
+        writer.writerow(
+            [
+                result.player,
+                result.score,
+                "" if result.coryat is None else result.coryat,
+                result.game,
+                result.result,
+                result.player_id,
+                result.game_key,
+                result.saved_game,
+            ]
+        )
+    return buffer.getvalue()
+
+
+def _int_cell(text: str, column: str, line: int) -> int:
+    """Return ``text`` as an integer, or raise naming the bad cell."""
+    try:
+        return int(text)
+    except ValueError:
+        raise TournamentFileError(
+            f"{RESULTS_FILE} line {line}: {column} {text!r} isn't a whole number."
+        ) from None
+
+
+def parse_results_csv(text: str) -> list[GameResult]:
+    """Read results from ``results.csv`` contents.
+
+    Args:
+        text: CSV text.
+
+    Returns:
+        The results, in file order. Rows without a game key or player id
+        are skipped, since nothing can match them.
+
+    Raises:
+        TournamentFileError: If a score isn't a whole number, or a result
+            isn't ``win`` or ``loss``.
+    """
+    reader = csv.DictReader(io.StringIO(text, newline=""))
+    if reader.fieldnames is None:
+        return []
+    results = []
+    for line, row in enumerate(reader, start=2):
+
+        def value(column: str, row: dict = row) -> str:
+            """Return a row's cell for ``column``, or ``""``."""
+            return (row.get(column) or "").strip()
+
+        if not value("game_key") or not value("player_id"):
+            continue
+        result = value("result").lower()
+        if result not in RESULTS:
+            raise TournamentFileError(
+                f"{RESULTS_FILE} line {line}: result {result!r} should be win or loss."
+            )
+        coryat = value("coryat")
+        results.append(
+            GameResult(
+                game_key=value("game_key"),
+                player_id=value("player_id"),
+                player=value("player"),
+                score=_int_cell(value("score"), "score", line),
+                coryat=_int_cell(coryat, "coryat", line) if coryat else None,
+                game=value("game"),
+                result=result,
+                saved_game=value("saved_game"),
+            )
+        )
+    return results
+
+
+def load_results(folder: Path) -> list[GameResult]:
+    """Read a tournament's results.
+
+    Args:
+        folder: The tournament's folder.
+
+    Returns:
+        The results, or an empty list if no game has been played.
+
+    Raises:
+        TournamentFileError: If ``results.csv`` can't be read.
+    """
+    path = Path(folder) / RESULTS_FILE
+    if not path.is_file():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        raise TournamentFileError(f"Couldn't read {RESULTS_FILE}: {exc}") from exc
+    return parse_results_csv(text)
+
+
+def save_results(folder: Path, results: Sequence[GameResult]) -> None:
+    """Write a tournament's results, replacing the file.
+
+    Args:
+        folder: The tournament's folder.
+        results: Every result, in file order.
+
+    Raises:
+        TournamentFileError: If the file can't be written.
+    """
+    try:
+        write_text_atomic(Path(folder) / RESULTS_FILE, results_csv_text(results))
+    except OSError as exc:
+        raise TournamentFileError(f"Couldn't save {RESULTS_FILE}: {exc}") from exc
+
+
+def record_game_results(folder: Path, new_results: Sequence[GameResult]) -> None:
+    """Save one game's results, replacing any rows that game already had.
+
+    Args:
+        folder: The tournament's folder.
+        new_results: The game's rows.
+
+    Raises:
+        TournamentFileError: If ``results.csv`` can't be read or written.
+    """
+    save_results(folder, record_results(load_results(folder), new_results))

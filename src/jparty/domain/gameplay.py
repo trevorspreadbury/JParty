@@ -522,6 +522,8 @@ class FinalJeopardyFlow:
             self.game.tiebreaker_flow.contenders = winners
             self.game.keystroke_manager.activate("START_TIEBREAKER")
         else:
+            # The winner is known; a tie offered a tiebreaker records it there.
+            self.game.record_tournament_results()
             self.game.keystroke_manager.activate("GENERATE_GRAPHS")
         # A tie offer locks Edit Score (see TiebreakerFlow.locks_scores).
         self.game._refresh_score_edit_controls()
@@ -854,5 +856,6 @@ class TiebreakerFlow:
             self.game.dc.player_widget(player).set_lights(player is winner)
         self.game.dc.final_window.show_winner(winner)
         self.game.player_state_broadcaster.update_all()
+        self.game.record_tournament_results()
         self.game.keystroke_manager.activate("GENERATE_GRAPHS")
         self.game._refresh_score_edit_controls()

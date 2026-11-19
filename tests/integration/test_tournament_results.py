@@ -1,0 +1,190 @@
+"""A tournament game saves its players and logs its results when it ends."""
+
+import json
+
+import pytest
+
+from jparty.domain.models import Player
+from jparty.domain.tournament_play import (
+    SAVED_PLAYER_ID,
+    SAVED_PLAYER_NAME,
+    GameResult,
+    TournamentGameRef,
+)
+from jparty.domain.tournament_store import load_results, save_results
+
+REF = TournamentGameRef("Fun", "Quarterfinals: QF 1")
+SEATS = [("ann-id", "Ann"), ("bob-id", "Bob"), ("cy-id", "Cy")]
+
+
+class DummyWaiter:
+    """A phone connection that ignores messages."""
+
+    def send(self, message: object, text: object = "") -> None:
+        """Ignore a message."""
+
+    def close(self) -> None:
+        """Ignore closing."""
+
+
+@pytest.fixture()
+def folders(game: object, monkeypatch: object, temp_dir: object) -> object:
+    """Send saves and tournaments to the temp folder; return the tournament's."""
+    from jparty.domain import game_engine
+    from jparty.services import archive_client, game_loader
+
+    data = game.data
+    monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: data)
+    monkeypatch.setattr(game_engine, "GAME_STATES_DIR", temp_dir / "game_states")
+    monkeypatch.setattr(game_engine, "TOURNAMENTS_DIR", temp_dir / "tournaments")
+    folder = temp_dir / "tournaments" / "Fun"
+    folder.mkdir(parents=True)
+    return folder
+
+
+def _seat_phones(game: object, names: list[str]) -> list[Player]:
+    """Connect a phone per name, in podium order."""
+    players = [Player(name, DummyWaiter(), index) for index, name in enumerate(names)]
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    game.dc.scoreboard.refresh_players()
+    return players
+
+
+def _start_final_only(game: object) -> None:
+    """Start the game at its Final, as a tournament game."""
+    game.set_session_game_id("4453")
+    game.set_selected_round_indices([len(game.data.rounds) - 1])
+    game.set_tournament_game(REF, SEATS)
+    game.start_game()
+
+
+def _finish_final(game: object, scores: list[int], rulings: list[bool]) -> None:
+    """Give the players ``scores``, then play Final with no wagers."""
+    for player, score in zip(game.players, scores, strict=True):
+        game.score_recorder.apply_manual_score_override(player, score)
+    for index in range(len(game.players)):
+        game.wager(index, 0)
+    game.open_final()
+    game.final_open_responses()
+    for player in game.players:
+        game.answer(player, "answer")
+    game.final_jeopardy_flow.finished_song()
+    for is_correct in rulings:
+        game.final_next_player()
+        game.final_show_answer()
+        if is_correct:
+            game.final_correct_answer()
+        else:
+            game.final_incorrect_answer()
+    game.final_next_player()
+
+
+def test_tournament_game_saves_who_plays_and_logs_results(
+    game: object, folders: object
+) -> None:
+    """general.json names the roster players; the end writes results.csv."""
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    _start_final_only(game)
+    general = json.loads((game._game_state_dir / "general.json").read_text())
+    assert general["tournament"] == {"name": "Fun", "game_key": REF.game_key}
+    assert [
+        (player[SAVED_PLAYER_ID], player[SAVED_PLAYER_NAME])
+        for player in general["players"]
+    ] == SEATS
+    saved_game = game._game_state_dir.name
+
+    _finish_final(game, [500, 1200, 300], [True, True, True])
+
+    results = load_results(folders)
+    assert [(r.player_id, r.player, r.score, r.result) for r in results] == [
+        ("ann-id", "Ann", 500, "loss"),
+        ("bob-id", "Bob", 1200, "win"),
+        ("cy-id", "Cy", 300, "loss"),
+    ]
+    assert {r.game for r in results} == {"Fun-4453"}
+    assert {r.game_key for r in results} == {REF.game_key}
+    assert {r.saved_game for r in results} == {saved_game}
+    # Manual score changes aren't clues, so they don't count toward Coryat.
+    assert {r.coryat for r in results} == {0}
+
+
+def test_regular_game_logs_nothing(game: object, folders: object) -> None:
+    """A game that isn't a tournament game leaves results.csv alone."""
+    _seat_phones(game, ["A", "B", "C"])
+    game.set_session_game_id("4453")
+    game.set_selected_round_indices([len(game.data.rounds) - 1])
+    game.start_game()
+    assert "tournament" not in json.loads(
+        (game._game_state_dir / "general.json").read_text()
+    )
+    _finish_final(game, [100, 200, 300], [True, True, True])
+    assert not (folders / "results.csv").exists()
+
+
+def test_resumed_tournament_game_still_logs_results(
+    game: object, folders: object
+) -> None:
+    """Closing mid-game and resuming keeps the tournament players."""
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    _start_final_only(game)
+    saved_dir = game._game_state_dir
+    game.close_game()
+    assert game.tournament_game is None
+
+    game.prepare_resume_from_dir(saved_dir)
+    assert game.tournament_game == REF
+    # The phones rejoin with other names; the saved roster decides who's who.
+    _seat_phones(game, ["X", "Y", "Z"])
+    game.start_game()
+    _finish_final(game, [900, 100, 200], [True, True, True])
+
+    results = load_results(folders)
+    assert [(r.player_id, r.result) for r in results] == [
+        ("ann-id", "win"),
+        ("bob-id", "loss"),
+        ("cy-id", "loss"),
+    ]
+
+
+def test_resuming_a_finished_game_keeps_fixed_results(
+    game: object, folders: object
+) -> None:
+    """A finished game ends again on resume, without undoing the host's fix."""
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    _start_final_only(game)
+    saved_dir = game._game_state_dir
+    _finish_final(game, [500, 1200, 300], [True, True, True])
+    fixed = [
+        GameResult(**{**vars(result), "score": result.score + 1})
+        for result in load_results(folders)
+    ]
+    save_results(folders, fixed)
+    game.close_game()
+
+    game.prepare_resume_from_dir(saved_dir)
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    game.start_game()
+    assert load_results(folders) == fixed
+
+
+def test_unwritable_results_warn_the_host(
+    game: object, folders: object, monkeypatch: object
+) -> None:
+    """A results file that can't be saved is reported, not swallowed."""
+    from jparty.domain import game_engine
+    from jparty.domain.tournament_store import TournamentFileError
+
+    def fail(_folder: object, _results: object) -> None:
+        raise TournamentFileError("disk full")
+
+    monkeypatch.setattr(game_engine, "record_game_results", fail)
+    warnings = []
+    monkeypatch.setattr(
+        game, "show_host_warning", lambda title, text: warnings.append(text)
+    )
+    _seat_phones(game, ["A", "B", "C"])
+    _start_final_only(game)
+    _finish_final(game, [500, 1200, 300], [True, True, True])
+    assert warnings and "disk full" in warnings[0]
