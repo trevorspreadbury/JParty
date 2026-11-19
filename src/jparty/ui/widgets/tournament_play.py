@@ -42,17 +42,27 @@ from PyQt6.QtWidgets import (
 from jparty.domain.models import SIGNATURE_NAME_PREFIX
 from jparty.domain.roster import PlayerSlot
 from jparty.domain.tournament import PLAYERS_PER_GAME, TournamentPlan, plan_tournament
+from jparty.domain.tournament_advancement import (
+    Eligibility,
+    Tiebreak,
+    TiebreakerSession,
+    TieForSpot,
+    advancement_conflicts,
+    eligible_players,
+    open_ties,
+    player_statuses,
+    seating_problem,
+    tie_spot_text,
+    tie_text,
+    tournament_standings,
+)
 from jparty.domain.tournament_play import (
     RESULTS,
-    Eligibility,
     GameResult,
     TournamentGameRef,
-    eligible_players,
     introduction_lines,
     played_game_keys,
-    played_player_ids,
     results_by_game,
-    seating_problem,
     slots_by_id,
 )
 from jparty.domain.tournament_setup import TournamentBoard, plan_games
@@ -60,6 +70,7 @@ from jparty.domain.tournament_store import (
     TournamentFileError,
     TournamentSettings,
     load_results,
+    load_tiebreaks,
     load_tournament,
     save_results,
 )
@@ -157,6 +168,10 @@ class TournamentPlayPanel(QWidget):
         self.settings: TournamentSettings | None = None
         self.slots: list[PlayerSlot] = []
         self.results: list[GameResult] = []
+        # Tiebreakers played to settle ties for wildcards, chasers, and byes.
+        self.tiebreaks: list[Tiebreak] = []
+        # The open tie shown on each tiebreaker row of the games list.
+        self._row_ties: dict[int, TieForSpot] = {}
         self.plan: TournamentPlan | None = None
         # Why the last reload failed, or None. The results shown are then
         # out of date, so no game can start until a reload works.
@@ -222,12 +237,19 @@ class TournamentPlayPanel(QWidget):
 
         self.status_label = QLabel(self)
         self.status_label.setWordWrap(True)
+        # Results fixed after a later game was played, so that game's
+        # players no longer all advanced into it. Hidden when there are none.
+        self.conflicts_label = QLabel(self)
+        self.conflicts_label.setWordWrap(True)
+        self.conflicts_label.setStyleSheet(PROBLEM_STYLE)
+        self.conflicts_label.setVisible(False)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(LAYOUT_SPACING)
         # The app style sets layout margins to zero, so set them here.
         layout.setContentsMargins(*(LAYOUT_SPACING,) * 4)
         layout.addLayout(header)
+        layout.addWidget(self.conflicts_label)
         layout.addLayout(lists, 1)
         layout.addLayout(podiums)
         layout.addWidget(self.status_label)
@@ -245,10 +267,12 @@ class TournamentPlayPanel(QWidget):
         """
         settings, slots = load_tournament(Path(folder))
         results = load_results(Path(folder))
+        tiebreaks = load_tiebreaks(Path(folder))
         self.folder = Path(folder)
         self.settings = settings
         self.slots = slots
         self.results = results
+        self.tiebreaks = tiebreaks
         self.load_error = None
         self.plan = plan_tournament(settings.bracket.options(len(slots)))
         self.title_label.setText(f"Tournament: {settings.name}")
@@ -279,11 +303,36 @@ class TournamentPlayPanel(QWidget):
     def selected_key(self) -> str | None:
         """Return the selected game's key, or ``None``."""
         row = self.games_list.currentRow()
-        if not 0 <= row < len(self._game_keys):
+        if not 0 <= row < len(self._game_keys) or row in self._row_ties:
             return None
         if not self.games_list.item(row).flags() & Qt.ItemFlag.ItemIsEnabled:
             return None
         return self._game_keys[row]
+
+    def selected_tie(self) -> TieForSpot | None:
+        """Return the tie on the selected tiebreaker row, or ``None``."""
+        return self._row_ties.get(self.games_list.currentRow())
+
+    def tiebreaker_session(self) -> TiebreakerSession | None:
+        """Return the selected tie as a tiebreaker to play, or ``None``."""
+        tie = self.selected_tie()
+        if tie is None or self.settings is None:
+            return None
+        names = self._names()
+        return TiebreakerSession(
+            self.settings.name,
+            tie,
+            tuple((player_id, names.get(player_id, "")) for player_id in tie.players),
+        )
+
+    def selected_tie_text(self) -> str:
+        """Return the message for the selected tie, or ``""``."""
+        tie = self.selected_tie()
+        return tie_text(tie, self._names()) if tie is not None else ""
+
+    def _names(self) -> dict[str, str]:
+        """Return each player's Actual Name, by player id."""
+        return {slot.player_id: slot.actual_name.strip() for slot in self.slots}
 
     def selected_board(self) -> TournamentBoard | None:
         """Return the selected game's board, or ``None``."""
@@ -301,7 +350,7 @@ class TournamentPlayPanel(QWidget):
         Returns:
             ``None``.
         """
-        if key in self._game_keys:
+        if key and key in self._game_keys:
             self.games_list.setCurrentRow(self._game_keys.index(key))
 
     def chosen_ids(self) -> list[str | None]:
@@ -357,6 +406,16 @@ class TournamentPlayPanel(QWidget):
         """
         if self.load_error:
             return self.load_error
+        tie = self.selected_tie()
+        if tie is not None:
+            if connected_players == len(tie.players):
+                return None
+            names = self._names()
+            order = ", ".join(names.get(p, p) for p in tie.players)
+            return (
+                f"Wait for {len(tie.players)} phones to join "
+                f"({connected_players} so far), in this order: {order}."
+            )
         key = self.selected_key()
         if key is None:
             return "Choose a game to play."
@@ -448,12 +507,34 @@ class TournamentPlayPanel(QWidget):
         """Fill the games and players lists from the loaded tournament."""
         previous = self.selected_key()
         played_games = played_game_keys(self.results)
-        played_players = played_player_ids(self.results)
         by_game = results_by_game(self.results)
         by_id = slots_by_id(self.slots)
+        names = {slot.player_id: slot.actual_name.strip() for slot in self.slots}
+        standings = (
+            tournament_standings(self.plan, self.results, self.tiebreaks)
+            if self.plan is not None and self.plan.valid
+            else []
+        )
+        chasers = {
+            key: chaser
+            for standing in standings
+            for key, chaser in standing.chasers.items()
+        }
         self.games_list.blockSignals(True)
         self.games_list.clear()
         self._game_keys = []
+        self._row_ties = {}
+        # Open ties come first: the next games can't start until they're
+        # settled.
+        for tie in open_ties(standings):
+            who = ", ".join(names.get(p) or p for p in tie.players)
+            item = QListWidgetItem(
+                f"Tiebreaker: {who} for {tie_spot_text(tie)} in the {tie.round_name}",
+                self.games_list,
+            )
+            item.setToolTip(f"Tied at ${tie.score:,}. Their phones join in this order.")
+            self._row_ties[self.games_list.count() - 1] = tie
+            self._game_keys.append("")
         games = plan_games(self.plan) if self.plan is not None else []
         for key, _round, game in games:
             board = self.settings.boards.get(key) if self.settings else None
@@ -474,19 +555,40 @@ class TournamentPlayPanel(QWidget):
                 _grey(item)
                 _disable(item)
             else:
-                item.setText(f"{key}: {board.label}")
+                text = f"{key}: {board.label}"
+                if key in chasers:
+                    text += f" (chaser: {names.get(chasers[key]) or chasers[key]})"
+                item.setText(text)
             item.setToolTip("Players: " + ", ".join(game.seats))
         self.games_list.setCurrentRow(-1)
         self.games_list.blockSignals(False)
         self.players_list.clear()
+        statuses = player_statuses(self.plan, standings) if standings else {}
         for slot in self.slots:
             name = slot.actual_name.strip()
             if not name:
                 continue
             item = QListWidgetItem(name, self.players_list)
-            if slot.player_id in played_players:
-                item.setText(f"{name} (played)")
-                _grey(item)
+            if slot.player_id in statuses:
+                status, waiting = statuses[slot.player_id]
+                item.setText(f"{name} ({status})")
+                if waiting:
+                    _grey(item)
+        conflicts = (
+            advancement_conflicts(self.plan, standings, self.results, names)
+            if standings
+            else []
+        )
+        self.conflicts_label.setText(
+            "\n".join(
+                [
+                    "Some results changed after later games were played:",
+                    *conflicts,
+                    "Fix those games' results, or delete them and play them again.",
+                ]
+            )
+        )
+        self.conflicts_label.setVisible(bool(conflicts))
         if not games:
             self.show_status(
                 "The bracket doesn't work yet. Fix it on the Bracket tab.", True
@@ -501,11 +603,35 @@ class TournamentPlayPanel(QWidget):
         key = self.selected_key()
         if key is not None and self.plan is not None:
             self._eligibility = eligible_players(
-                self.plan, key, self.slots, self.results, self.selected_board()
+                self.plan,
+                key,
+                self.slots,
+                self.results,
+                self.selected_board(),
+                self.tiebreaks,
             )
         else:
             self._eligibility = Eligibility()
         by_id = slots_by_id(self.slots)
+        tie = self.selected_tie()
+        if tie is not None:
+            # A tiebreaker's players are fixed: show them in the order their
+            # phones join.
+            for index, combo in enumerate(self.podium_combos):
+                combo.blockSignals(True)
+                combo.clear()
+                if index < len(tie.players):
+                    player_id = tie.players[index]
+                    slot = by_id.get(player_id)
+                    combo.addItem(
+                        slot.actual_name.strip() if slot else player_id, player_id
+                    )
+                else:
+                    combo.addItem("-", None)
+                combo.setEnabled(False)
+                combo.blockSignals(False)
+            self._on_podium_changed()
+            return
         for combo in self.podium_combos:
             combo.blockSignals(True)
             combo.clear()

@@ -309,10 +309,16 @@ Semifinal spots:
   highest-scoring players who did not win their game.
 - With `3n + 2` players, `n` regular games are played first, then one chase
   game. Its two new players advance by winning. The third seat goes to the
-  chaser, the first player who would miss out on a wildcard. A chaser who wins
-  opens one more wildcard spot, but their chase-game score does not count, so
-  other players can still overtake their original score.
-- With `3n + 1` players, there are two chase games, played one after the other.
+  chaser, the first player who would miss out on a wildcard after the regular
+  games. A chaser who wins opens one more wildcard spot, but their chase-game
+  score does not count, so other players can still overtake their original
+  score.
+- With `3n + 1` players, there are two chase games. Both chasers are set once
+  the regular games are done: the second player out chases in Chase 1, and the
+  first player out in Chase 2. The second player out only gets in if both
+  chasers win, so they go first; if they lose, Chase 2 still matters to the
+  first player out. The regular games need two non-winners outside the
+  wildcards for this, so some second-round settings aren't allowed.
 
 For larger fields, turn on `Add a second round before the Semifinals`:
 
@@ -449,12 +455,11 @@ way; leaving the tournament puts your choice back.
 2. Pick a player for each podium. Only players who can play that game are
    offered:
    - A first-round game: anyone who hasn't played that round yet.
-   - A chase game's third seat (marked `(chaser)`): a player who lost a game
-     earlier in the same round. The other two seats are new players.
-   - A later round: players who played the round before it (or, for
-     Semifinal byes, the preliminaries) and haven't played this round.
-     Advancement isn't worked out yet, so this includes players who were
-     knocked out; pick the right ones.
+   - A later round: the players who advanced into it (see
+     [Advancement](#advancement)) and haven't played it yet. Until the round
+     before is decided, no one is offered, and the status line says why.
+   - A chase game: two new players, and the round's chaser (marked
+     `(chaser)`, and shown next to the game in `Games`).
    - Players on the board's Can't Play list are never offered.
 3. Have the three players join from their phones as usual. Each podium shows
    the phone on it: the typed name, or the signature a player signed in with. Podium 1 is the first phone in the scoreboard, and so
@@ -481,6 +486,51 @@ scores, and who won (each game needs a winner), or use `Delete Game's
 Results` so a game can be played again. `Leave Tournament` returns to
 choosing a regular game.
 
+### Advancement
+
+JParty works out who advances from `results.csv` each time, so a fixed
+result changes it right away. `Players` shows where each player is, such as
+`(won, in the Semifinals)`, `(wildcard, in the Semifinals)`, `(bye to the
+Semifinals)`, `(chaser in Chase 1)`, `(out)`, or `(champion)`. Players who
+are out, or who are waiting for the rest of their round, are greyed out.
+
+- Every game's winner advances.
+- A round's leftover spots go to wildcards: the players who didn't win
+  their game, by highest final score.
+- A chase game's third seat goes to the chaser: the first player who would
+  miss out on a wildcard once the round's regular games are played. With two
+  chase games, Chase 1 is for the second player out and Chase 2 for the
+  first, and they can be played in either order. A chaser who wins doesn't
+  advance directly; the win opens one more wildcard spot, ranked on
+  everyone's first score of the round, so the chaser's chase-game score
+  doesn't count.
+- With a second round, the top-scoring preliminary winners get byes to the
+  Semifinals. If there are more byes than winners, the top wildcards get
+  the rest.
+
+Players tied on score for the last wildcard spot, a chaser seat, or the
+last bye need a tiebreaker. Until it's played, the next game can't start,
+and the status line says who is tied. To play it:
+
+1. Pick the tie at the top of `Games`, such as `Tiebreaker: Eve, Fay for
+   the last wildcard spot in the Quarterfinals`. The podiums show the tied
+   players in the order their phones join.
+2. Have the tied players join from their phones, in that order. `Start!`
+   turns on once there is one phone per tied player.
+3. Click `Start!`. There's no board or introduction: the screen shows the
+   tie, and the tiebreaker plays as after a tied Final (see
+   [Tiebreaker](#tiebreaker)). `Cancel` on the game id prompt goes back to
+   the tournament without settling the tie.
+4. When someone wins, the win is saved, and `Space` returns to the welcome
+   screen with the tie settled.
+
+If several players are tied for more than one spot, each tiebreaker settles
+one spot; play the next one for the players still tied.
+
+If a fixed result means someone who already played a later game no longer
+advanced into it, a red warning above `Games` lists them. Fix that game's
+results too, or delete them and play it again.
+
 ### Saved files
 
 Each tournament is saved in `tournaments/<name>/` in the JParty data folder,
@@ -504,6 +554,10 @@ outside git:
   JParty won't play a game while it can't read the file, so a game can't
   overwrite results it couldn't read. `Fix Results...` reads it again once
   it's fixed.
+- `tiebreaks.csv` has one row per tiebreaker played to settle a tie:
+  `round`, `winner_name`, `winner` (the winner's player id), and `players`
+  (the tied players' ids, separated by spaces). Playing the same tie again
+  replaces its row. To play a tie again, delete its row.
 
 To reuse a tournament's setup, copy its folder and give the copy a new name;
 the copy saves into its own folder. Tournaments saved by an older JParty

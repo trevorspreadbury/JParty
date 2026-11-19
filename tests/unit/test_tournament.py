@@ -82,8 +82,22 @@ def test_three_n_plus_one_adds_two_chase_games() -> None:
     layout = plan.rounds[0].layout
     assert (layout.regular_games, layout.chase_games, layout.wildcards) == (4, 2, 3)
     assert [game.name for game in plan.rounds[0].games[-2:]] == ["Chase 1", "Chase 2"]
-    assert "after Chase 1" in plan.rounds[0].games[-1].seats[2]
+    # The second player out chases first; the first player out chases last.
+    chase_1, chase_2 = plan.rounds[0].games[-2:]
+    assert chase_1.seats[2] == "Chaser (second out after the regular games)"
+    assert chase_2.seats[2] == "Chaser (first out after the regular games)"
     assert plan.multi_game_players == (9, 11)
+
+
+def test_two_chase_games_need_two_non_winners_outside_the_wildcards() -> None:
+    """Both chasers come from the regular games, so each needs a spare player.
+
+    Sixteen players with a second round and seven byes play four regular
+    preliminaries for seven wildcards: one spare non-winner, two chase games.
+    """
+    plan = plan_tournament(TournamentOptions(16, True, 7))
+    assert not plan.valid
+    assert "all 2 chasers" in plan.problems[0]
 
 
 def test_chase_needs_someone_outside_the_wildcards() -> None:

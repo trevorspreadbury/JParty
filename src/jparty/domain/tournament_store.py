@@ -14,6 +14,9 @@ outside git:
   :class:`jparty.domain.tournament_play.GameResult`). Games write it when
   they end, and the host can fix it afterwards. It is separate from
   ``tournament.json``, so saving the setup never touches results.
+- ``tiebreaks.csv``: one row per tiebreaker played to settle a tie for a
+  wildcard, chaser, or bye (see
+  :class:`jparty.domain.tournament_advancement.Tiebreak`).
 
 Format version 1 files (from before the setup screen) load with the default
 bracket and no boards.
@@ -32,6 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from jparty.domain.roster import ANECDOTE_COLUMNS, PlayerSlot, SignUp, new_player_id
+from jparty.domain.tournament_advancement import Tiebreak
 from jparty.domain.tournament_play import RESULTS, GameResult, record_results
 from jparty.domain.tournament_setup import BracketSettings, TournamentBoard
 from jparty.services.game_cache import write_text_atomic
@@ -39,6 +43,7 @@ from jparty.services.game_cache import write_text_atomic
 TOURNAMENT_FILE = "tournament.json"
 PLAYERS_FILE = "players.csv"
 RESULTS_FILE = "results.csv"
+TIEBREAKS_FILE = "tiebreaks.csv"
 TOURNAMENT_FORMAT_VERSION = 2
 LOGO_STEM = "logo"
 LOGO_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
@@ -67,6 +72,10 @@ RESULTS_COLUMNS = (
 )
 # Columns a results row can't be matched or read without.
 RESULTS_REQUIRED_COLUMNS = ("player_id", "game_key", "score", "result")
+# The winner's name comes first, so the file reads well in a spreadsheet.
+# ``players`` holds the tied players' ids, separated by spaces.
+TIEBREAK_COLUMNS = ("round", "winner_name", "winner", "players")
+TIEBREAK_REQUIRED_COLUMNS = ("round", "winner", "players")
 
 _FORBIDDEN_NAME_CHARACTERS = set('<>:"/\\|?*')
 _RESERVED_WINDOWS_NAMES = {
@@ -548,3 +557,131 @@ def record_game_results(folder: Path, new_results: Sequence[GameResult]) -> None
         TournamentFileError: If ``results.csv`` can't be read or written.
     """
     save_results(folder, record_results(load_results(folder), new_results))
+
+
+def tiebreaks_csv_text(tiebreaks: Sequence[Tiebreak]) -> str:
+    """Return ``tiebreaks.csv`` contents.
+
+    Args:
+        tiebreaks: Tiebreakers, in the order they were played.
+
+    Returns:
+        CSV text with a header row and one row per tiebreaker.
+    """
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(TIEBREAK_COLUMNS)
+    for tiebreak in tiebreaks:
+        writer.writerow(
+            [
+                tiebreak.round_name,
+                tiebreak.winner_name,
+                tiebreak.winner,
+                " ".join(sorted(tiebreak.contenders)),
+            ]
+        )
+    return buffer.getvalue()
+
+
+def parse_tiebreaks_csv(text: str) -> list[Tiebreak]:
+    """Read tiebreakers from ``tiebreaks.csv`` contents.
+
+    Args:
+        text: CSV text.
+
+    Returns:
+        The tiebreakers, in file order. Blank rows are skipped.
+
+    Raises:
+        TournamentFileError: If a column is missing, a row has no round, or
+            its winner isn't one of its players.
+    """
+    try:
+        reader = csv.DictReader(io.StringIO(text, newline=""))
+        if reader.fieldnames is None:
+            return []
+        reader.fieldnames = [(name or "").strip() for name in reader.fieldnames]
+        missing = [
+            column
+            for column in TIEBREAK_REQUIRED_COLUMNS
+            if column not in reader.fieldnames
+        ]
+        if missing:
+            raise TournamentFileError(
+                f"{TIEBREAKS_FILE} has no {', '.join(missing)} column."
+            )
+        tiebreaks = []
+        for line, row in enumerate(reader, start=2):
+            cells = {key: (value or "").strip() for key, value in row.items() if key}
+            if not any(cells.values()):
+                continue
+            players = frozenset(cells.get("players", "").split())
+            if not cells.get("round") or cells.get("winner") not in players:
+                raise TournamentFileError(
+                    f"{TIEBREAKS_FILE} line {line}: a tiebreaker needs its round, "
+                    "and a winner who is one of its players."
+                )
+            tiebreaks.append(
+                Tiebreak(
+                    cells["round"],
+                    players,
+                    cells["winner"],
+                    cells.get("winner_name", ""),
+                )
+            )
+        return tiebreaks
+    except csv.Error as exc:
+        raise TournamentFileError(f"Couldn't read {TIEBREAKS_FILE}: {exc}") from exc
+
+
+def load_tiebreaks(folder: Path) -> list[Tiebreak]:
+    """Read a tournament's tiebreakers.
+
+    Args:
+        folder: The tournament's folder.
+
+    Returns:
+        The tiebreakers, or an empty list if none have been played.
+
+    Raises:
+        TournamentFileError: If ``tiebreaks.csv`` can't be read.
+    """
+    path = Path(folder) / TIEBREAKS_FILE
+    if not path.is_file():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise TournamentFileError(
+            f'{TIEBREAKS_FILE} isn\'t saved as UTF-8. In Excel, save it as "CSV UTF-8".'
+        ) from exc
+    except OSError as exc:
+        raise TournamentFileError(f"Couldn't read {TIEBREAKS_FILE}: {exc}") from exc
+    return parse_tiebreaks_csv(text)
+
+
+def record_tiebreak(folder: Path, tiebreak: Tiebreak) -> None:
+    """Save a tiebreaker, replacing an earlier one between the same players.
+
+    Playing the same tie again replaces its winner instead of adding a
+    second row that might disagree.
+
+    Args:
+        folder: The tournament's folder.
+        tiebreak: The tiebreaker just played.
+
+    Raises:
+        TournamentFileError: If ``tiebreaks.csv`` can't be read or written.
+    """
+    tiebreaks = [
+        earlier
+        for earlier in load_tiebreaks(folder)
+        if (earlier.round_name, earlier.contenders)
+        != (tiebreak.round_name, tiebreak.contenders)
+    ]
+    try:
+        write_text_atomic(
+            Path(folder) / TIEBREAKS_FILE, tiebreaks_csv_text([*tiebreaks, tiebreak])
+        )
+    except OSError as exc:
+        raise TournamentFileError(f"Couldn't save {TIEBREAKS_FILE}: {exc}") from exc

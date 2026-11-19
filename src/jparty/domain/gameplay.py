@@ -612,6 +612,12 @@ class TiebreakerFlow:
         the UI thread because it can reach J-Archive.
         """
         game_id = self.game.prompt_tiebreaker_game_id()
+        if game_id is None and self.game.tiebreaker_session is not None:
+            # A tournament tiebreaker outside a game: nothing was decided, so
+            # go back to the tournament to play it later.
+            logging.info("Host cancelled a tournament tiebreaker")
+            self.game.close_game()
+            return
         if game_id is None and self.game.tournament_game is not None:
             # results.csv needs one winner per game, and only a winner is
             # recorded, so a tournament game can't end in a tie.
@@ -825,6 +831,11 @@ class TiebreakerFlow:
         clue = self.game.active_question
         if clue is None:
             return
+        if self.game.tiebreaker_session is not None:
+            # A tournament tiebreaker has no saved game; its win is saved to
+            # the tournament instead (see finish).
+            self.game.question_number += 1
+            return
         if not self.game._game_state_dir:
             self.game._initialize_game_state_dir()
         self.game._append_history_entry(
@@ -869,6 +880,11 @@ class TiebreakerFlow:
             self.game.dc.player_widget(player).set_lights(player is winner)
         self.game.dc.final_window.show_winner(winner)
         self.game.player_state_broadcaster.update_all()
-        self.game.record_tournament_results()
-        self.game.keystroke_manager.activate("GENERATE_GRAPHS")
+        if self.game.tiebreaker_session is not None:
+            # No game to sum up: save the win, and Space returns to the lobby.
+            self.game.record_tiebreaker_session(winner)
+            self.game.keystroke_manager.activate("CLOSE_GAME")
+        else:
+            self.game.record_tournament_results()
+            self.game.keystroke_manager.activate("GENERATE_GRAPHS")
         self.game._refresh_score_edit_controls()

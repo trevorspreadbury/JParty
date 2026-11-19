@@ -1,9 +1,9 @@
-"""Tests for playing tournament games: eligibility, results, introductions."""
+"""Tests for playing tournament games: results and introductions."""
 
 import pytest
 
 from jparty.domain.roster import PlayerSlot, SignUp
-from jparty.domain.tournament import TournamentOptions, plan_tournament
+from jparty.domain.tournament_advancement import Tiebreak
 from jparty.domain.tournament_play import (
     INTRO_HEADING,
     SAVED_PLAYER_ID,
@@ -12,20 +12,21 @@ from jparty.domain.tournament_play import (
     PlayerOutcome,
     TournamentGameRef,
     already_recorded,
-    eligible_players,
     game_results,
     introduction_line,
     introduction_lines,
     record_results,
-    seating_problem,
 )
-from jparty.domain.tournament_setup import TournamentBoard
 from jparty.domain.tournament_store import (
     RESULTS_FILE,
+    TIEBREAKS_FILE,
     TournamentFileError,
     load_results,
+    load_tiebreaks,
     parse_results_csv,
+    parse_tiebreaks_csv,
     record_game_results,
+    record_tiebreak,
     results_csv_text,
     save_results,
 )
@@ -98,90 +99,6 @@ def test_introduction_line(player: PlayerSlot, expected: str) -> None:
 def test_introduction_lines_start_with_the_heading() -> None:
     """The heading comes first, then players in podium order."""
     assert introduction_lines([slot("A"), slot("B")]) == [INTRO_HEADING, "A", "B"]
-
-
-# Eligibility
-
-
-def test_first_round_is_open_to_players_who_have_not_played_it() -> None:
-    """Players who played a Quarterfinal can't play another one."""
-    plan = plan_tournament(TournamentOptions(11))
-    results = played(QF1, "p0", "p1", "p2")
-    eligibility = eligible_players(plan, QF2, roster(11), results)
-    assert eligibility.entrants == tuple(f"p{index}" for index in range(3, 11))
-    assert eligibility.chasers == ()
-    assert not eligibility.chase
-
-
-def test_cant_play_and_blank_names_are_never_eligible() -> None:
-    """A board's Can't Play list and unnamed slots are left out."""
-    plan = plan_tournament(TournamentOptions(9))
-    slots = [*roster(8), PlayerSlot("  ", player_id="blank")]
-    board = TournamentBoard("b", ({"game_id": "1"},), cant_play=("p1",))
-    eligibility = eligible_players(plan, SF1, slots, [], board)
-    assert "p1" not in eligibility.entrants
-    assert "blank" not in eligibility.entrants
-    assert len(eligibility.entrants) == 7
-
-
-def test_chase_game_offers_new_players_and_this_rounds_losers() -> None:
-    """The chaser seat is for a player who lost earlier in the round."""
-    plan = plan_tournament(TournamentOptions(11))
-    results = played(QF1, "p0", "p1", "p2") + played(QF2, "p3", "p4", "p5")
-    eligibility = eligible_players(plan, CHASE, roster(11), results)
-    assert eligibility.chase
-    assert eligibility.entrants == ("p6", "p7", "p8", "p9", "p10")
-    assert eligibility.chasers == ("p1", "p2", "p4", "p5")
-
-
-def test_later_round_is_open_to_the_previous_rounds_players() -> None:
-    """A Semifinal takes players who played a Quarterfinal, once each."""
-    plan = plan_tournament(TournamentOptions(11))
-    results = (
-        played(QF1, "p0", "p1", "p2")
-        + played(QF2, "p3", "p4", "p5")
-        + played(SF1, "p0", "p3", "p1")
-    )
-    eligibility = eligible_players(plan, "Semifinals: SF 2", roster(11), results)
-    assert eligibility.entrants == ("p2", "p4", "p5")
-
-
-def test_byes_let_preliminary_players_into_the_semifinals() -> None:
-    """With a second round and byes, prelim players can sit a Semifinal."""
-    plan = plan_tournament(
-        TournamentOptions(23, use_second_round=True, semifinal_byes=3)
-    )
-    results = played("Preliminaries: Prelim 1", "p0", "p1", "p2") + played(
-        "Second Round: R2 1", "p3", "p4", "p5"
-    )
-    eligibility = eligible_players(plan, SF1, roster(23), results)
-    assert eligibility.entrants == ("p0", "p1", "p2", "p3", "p4", "p5")
-
-
-def test_unknown_game_has_no_one_eligible() -> None:
-    """A key that isn't in the bracket offers nobody."""
-    plan = plan_tournament(TournamentOptions(9))
-    assert eligible_players(plan, "Nope", roster(9), []).player_ids == ()
-
-
-def test_seating_problems() -> None:
-    """Every podium needs a different, eligible player."""
-    plan = plan_tournament(TournamentOptions(11))
-    eligibility = eligible_players(plan, QF1, roster(11), [])
-    assert "each of the 3 podiums" in seating_problem(eligibility, ["p0", None, "p1"])
-    assert "different player" in seating_problem(eligibility, ["p0", "p0", "p1"])
-    assert "can't play" in seating_problem(eligibility, ["p0", "p1", "ghost"])
-    assert seating_problem(eligibility, ["p0", "p1", "p2"]) is None
-
-
-def test_chase_game_needs_exactly_one_chaser() -> None:
-    """Two new players and one player who already lost this round."""
-    plan = plan_tournament(TournamentOptions(11))
-    results = played(QF1, "p0", "p1", "p2")
-    eligibility = eligible_players(plan, CHASE, roster(11), results)
-    assert "one chaser" in seating_problem(eligibility, ["p3", "p4", "p5"])
-    assert "one chaser" in seating_problem(eligibility, ["p1", "p2", "p5"])
-    assert seating_problem(eligibility, ["p3", "p4", "p1"]) is None
 
 
 # Results
@@ -344,3 +261,58 @@ def test_results_too_big_for_csv_are_refused() -> None:
     huge = '"' + "x" * 200_000 + '"'
     with pytest.raises(TournamentFileError, match="Couldn't read"):
         parse_results_csv(f"{header}\n{huge},1,,g,win,p0,QF,s\n")
+
+
+# Tiebreaks file
+
+
+def test_tiebreaks_csv_round_trips(temp_dir: object) -> None:
+    """Saved tiebreakers read back, with the winner's name for people."""
+    first = Tiebreak("Quarterfinals", frozenset({"e", "f"}), "f", "Fay")
+    second = Tiebreak("Preliminaries", frozenset({"a", "b", "c"}), "a", "Ann")
+    record_tiebreak(temp_dir, first)
+    record_tiebreak(temp_dir, second)
+    assert load_tiebreaks(temp_dir) == [first, second]
+    assert [t.winner_name for t in load_tiebreaks(temp_dir)] == ["Fay", "Ann"]
+    text = (temp_dir / TIEBREAKS_FILE).read_text(encoding="utf-8")
+    assert text.splitlines()[0] == "round,winner_name,winner,players"
+    assert "Quarterfinals,Fay,f,e f" in text
+
+
+def test_playing_a_tie_again_replaces_its_winner(temp_dir: object) -> None:
+    """The same players' tie in the same round keeps only the latest win."""
+    record_tiebreak(temp_dir, Tiebreak("Quarterfinals", frozenset("ef"), "f"))
+    record_tiebreak(temp_dir, Tiebreak("Semifinals", frozenset("ef"), "e"))
+    record_tiebreak(temp_dir, Tiebreak("Quarterfinals", frozenset("ef"), "e"))
+    assert [(t.round_name, t.winner) for t in load_tiebreaks(temp_dir)] == [
+        ("Semifinals", "e"),
+        ("Quarterfinals", "e"),
+    ]
+
+
+def test_no_tiebreaks_file_means_none_played(temp_dir: object) -> None:
+    """A tournament with no tiebreakers has none."""
+    assert load_tiebreaks(temp_dir) == []
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("round;winner;players\nQ;a;a b\n", "no round, winner, players column"),
+        ("round,winner,players\nQ,z,a b\n", "line 2"),
+        ("round,winner,players\n,a,a b\n", "line 2"),
+    ],
+)
+def test_bad_tiebreaks_file_is_refused(text: str, message: str) -> None:
+    """A hand-edited tiebreaks.csv that doesn't make sense says why."""
+    with pytest.raises(TournamentFileError, match=message):
+        parse_tiebreaks_csv(text)
+
+
+def test_tiebreaks_not_saved_as_utf8_are_refused(temp_dir: object) -> None:
+    """Excel's ANSI CSV is a clear error, as with results.csv."""
+    (temp_dir / TIEBREAKS_FILE).write_bytes(
+        "round,winner,players\nQ,é,é\n".encode("cp1252")
+    )
+    with pytest.raises(TournamentFileError, match="CSV UTF-8"):
+        load_tiebreaks(temp_dir)

@@ -58,6 +58,7 @@ from jparty.domain.state import (
     save_general_state,
     tiebreaker_winner_number,
 )
+from jparty.domain.tournament_advancement import TiebreakerSession
 from jparty.domain.tournament_play import (
     PlayerOutcome,
     TournamentGameRef,
@@ -68,6 +69,7 @@ from jparty.domain.tournament_store import (
     TournamentFileError,
     load_results,
     record_game_results,
+    record_tiebreak,
 )
 from jparty.services.game_loader import (
     build_game_from_board_selection_configs,
@@ -328,6 +330,10 @@ class Game(QObject):
         # The tournament game being played, or None for a regular game. Its
         # results go to the tournament's results.csv when the game ends.
         self.tournament_game = None
+        # A tournament tiebreaker played outside any game, or None; see
+        # start_tiebreaker_session. Its tied player id by phone.
+        self.tiebreaker_session = None
+        self._session_player_ids = {}
         # Replaced in tests so loading runs without a thread or network.
         self.load_tiebreaker_clues = load_tiebreaker_clues
 
@@ -372,6 +378,8 @@ class Game(QObject):
         self._composed_game_data = None
         self._session_game_id = ""
         self.tournament_game = None
+        self.tiebreaker_session = None
+        self._session_player_ids = {}
         if self.buzzer_controller:
             self.buzzer_controller.clear_saved_player_reclaim()
 
@@ -547,6 +555,72 @@ class Game(QObject):
             )
             return
         logging.info("Saved results for %s", ref.game_key)
+
+    def start_tiebreaker_session(self, session: TiebreakerSession) -> None:
+        """Play a tournament tiebreaker between the connected phones.
+
+        There's no board: the tie card shows, and Space asks for a game to
+        take tiebreaker clues from, as after a tied Final (see
+        :class:`jparty.domain.gameplay.TiebreakerFlow`). The win is saved to
+        the tournament's ``tiebreaks.csv``. Nothing is written to the saved
+        games, so the session can't be resumed; Cancel returns to the lobby.
+
+        Args:
+            session: The tie. Phone ``i`` plays as ``session.players[i]``.
+
+        Raises:
+            ValueError: If the number of phones doesn't match the tied
+                players.
+        """
+        seated = sorted(self.players, key=lambda player: player.player_number)
+        if len(seated) != len(session.players):
+            raise ValueError(
+                f"The tiebreaker needs one phone per tied player: "
+                f"{len(session.players)} players for {len(seated)} phones"
+            )
+        logging.info("Starting a tiebreaker for %s", session.description)
+        self.tournament_game = None
+        # Nothing about the session is saved as a game, so make sure no
+        # earlier save folder is written into.
+        self._game_state_dir = None
+        self.tiebreaker_session = session
+        self._session_player_ids = {
+            player: player_id
+            for player, (player_id, _name) in zip(seated, session.players, strict=True)
+        }
+        self.dc.hide_welcome_widgets()
+        self.buzzer_controller.accepting_players = False
+        self.song_player.stop()
+        self.song_player.keep_output_awake()
+        self.dc.load_final_judgement()
+        self.dc.final_window.show_tie()
+        self.tiebreaker_flow.contenders = seated
+        self.keystroke_manager.activate("START_TIEBREAKER")
+        self._refresh_score_edit_controls()
+
+    def record_tiebreaker_session(self, winner: object) -> None:
+        """Save the winner of a tiebreaker session to ``tiebreaks.csv``.
+
+        Args:
+            winner: The phone that won.
+
+        Returns:
+            ``None``.
+        """
+        session = self.tiebreaker_session
+        if session is None or winner not in self._session_player_ids:
+            return
+        tiebreak = session.tiebreak(self._session_player_ids[winner])
+        try:
+            record_tiebreak(TOURNAMENTS_DIR / session.tournament, tiebreak)
+        except TournamentFileError as error:
+            logging.error("Couldn't save the tiebreaker: %s", error)
+            self.show_host_warning(
+                "Tiebreaker Not Saved",
+                f"Couldn't save the tiebreaker for {session.description}: {error}",
+            )
+            return
+        logging.info("Saved the tiebreaker for %s", session.description)
 
     def set_reveal_answers_after_triple_stumper(self, enabled: bool) -> None:
         """Store whether triple-stumper clues should reveal their answer.
@@ -1896,15 +1970,19 @@ class Game(QObject):
         names = " and ".join(
             player.text_name() for player in self.tiebreaker_flow.contenders
         )
-        cancel_text = (
-            "A tournament game needs a winner, so Cancel comes back here."
-            if self.tournament_game is not None
-            else "Cancel ends the game in a tie."
-        )
+        if self.tiebreaker_session is not None:
+            tied_for = self.tiebreaker_session.description
+            cancel_text = "Cancel goes back to the tournament without settling it."
+        elif self.tournament_game is not None:
+            tied_for = "first"
+            cancel_text = "A tournament game needs a winner, so Cancel comes back here."
+        else:
+            tied_for = "first"
+            cancel_text = "Cancel ends the game in a tie."
         game_id, accepted = QInputDialog.getText(
             self.host_display,
             "Tiebreaker",
-            f"{names} are tied for first.\n\n"
+            f"{names} are tied for {tied_for}.\n\n"
             "Enter a J-Archive game ID for the tiebreaker clues,\n"
             "or leave it blank for a random game.\n\n"
             f"{cancel_text}",
@@ -2033,6 +2111,8 @@ class Game(QObject):
         self.tiebreaker_flow.reset()
         self.tiebreaker_winner = None
         self.tournament_game = None
+        self.tiebreaker_session = None
+        self._session_player_ids = {}
         self.previous_answerers = set()
         self.dc.restart()
         self.begin()

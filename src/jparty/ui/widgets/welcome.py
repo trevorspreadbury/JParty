@@ -620,6 +620,12 @@ QCheckBox {{
         """
         if not self.tournament_mode:
             return
+        if self.tournament_panel.selected_tie() is not None:
+            # A tiebreaker has no board.
+            self._tournament_request.cancel()
+            self._clear_tournament_board()
+            self.check_start()
+            return
         key = self.tournament_panel.selected_key()
         board = self.tournament_panel.selected_board()
         if key is None or board is None:
@@ -705,6 +711,14 @@ QCheckBox {{
         names = self._tournament_phone_names()
         self.tournament_panel.set_phones(names)
         problem = self.tournament_panel.problem(len(names))
+        if self.tournament_panel.selected_tie() is not None:
+            self._tournament_ready = problem is None
+            self.tournament_start_button.setEnabled(self._tournament_ready)
+            self.tournament_panel.show_status(
+                problem or "Ready to start the tiebreaker.", problem is not None
+            )
+            self.summary_label.setText(self.tournament_panel.selected_tie_text())
+            return
         board_ready = (
             self._tournament_board_key is not None
             and self._tournament_board_key == self.tournament_panel.selected_key()
@@ -1389,6 +1403,11 @@ QCheckBox {{
         self.check_start()
         if self.tournament_mode:
             if not self._tournament_ready:
+                return
+            session = self.tournament_panel.tiebreaker_session()
+            if session is not None:
+                self.update_reveal_answers_after_triple_stumper(True)
+                self.game.start_tiebreaker_session(session)
                 return
             parent = self.parent()
             if hasattr(parent, "load_contestant_intro"):

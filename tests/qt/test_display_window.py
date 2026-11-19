@@ -441,3 +441,50 @@ def test_contestant_intro_back_and_start(qtbot: object) -> None:
     host_window.preview_widget.start_button.click()
     assert starts == [None]
     assert host_window.preview_widget is None
+
+
+def test_tournament_tiebreaker_session_through_real_windows(
+    qtbot: object, game_with_players: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """A tiebreaker session shows the tie, plays a clue, and saves the win."""
+    from jparty.domain import game_engine
+    from jparty.domain.tournament_advancement import (
+        TIE_WILDCARD,
+        TiebreakerSession,
+        TieForSpot,
+    )
+    from jparty.domain.tournament_store import load_tiebreaks
+
+    game = game_with_players
+    board_window, host_window = _game_with_real_windows(qtbot, game, monkeypatch)
+    monkeypatch.setattr(game_engine, "TOURNAMENTS_DIR", temp_dir / "tournaments")
+    clue = Question(
+        index=(0, 4), text="Clue", answer="Answer", category="Category", value=2000
+    )
+    monkeypatch.setattr(
+        game, "load_tiebreaker_clues", lambda game_id, is_cancelled: (game_id, [clue])
+    )
+    monkeypatch.setattr(game, "run_in_background", lambda work: work())
+    monkeypatch.setattr(game, "prompt_tiebreaker_game_id", lambda: "")
+    seats = tuple(
+        (f"id{index}", player.name) for index, player in enumerate(game.players)
+    )
+    tie = TieForSpot("Quarterfinals", TIE_WILDCARD, tuple(p for p, _ in seats), 400, 1)
+    game.start_tiebreaker_session(TiebreakerSession("Fun", tie, seats))
+
+    assert not host_window.welcome_widget.isVisible()
+    for window in (board_window, host_window):
+        assert window.final_window.guess_label.text() == "We have a tie!"
+
+    game.keystroke_manager.call(Qt.Key.Key_Space)  # Load the clue.
+    game.keystroke_manager.call(Qt.Key.Key_Space)  # Show it.
+    game.keystroke_manager.call(Qt.Key.Key_Space)  # Open buzzing.
+    game.buzz(0)
+    game.correct_answer()
+    for window in (board_window, host_window):
+        assert window.final_window.guess_label.text() == "We have a winner!"
+    (tiebreak,) = load_tiebreaks(temp_dir / "tournaments" / "Fun")
+    assert tiebreak.winner == "id0"
+
+    game.keystroke_manager.call(Qt.Key.Key_Space)  # Back to the lobby.
+    _assert_back_in_lobby(board_window, host_window)

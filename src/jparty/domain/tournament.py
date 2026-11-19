@@ -9,11 +9,15 @@ rounds in front of the Semifinals:
   players who did not win their game.
 - A field of ``3n + 2`` players plays ``n`` regular games and then one
   *chase game*. Its two new players advance by winning it. The third seat goes
-  to the *chaser*, the first player who would miss out on a wildcard. A chaser
-  who wins does not advance directly; the win opens one more wildcard spot.
-  The chaser's chase-game score does not count, so other players can still
-  overtake their original score for that spot.
+  to the *chaser*, the first player who would miss out on a wildcard after the
+  regular games. A chaser who wins does not advance directly; the win opens
+  one more wildcard spot. The chaser's chase-game score does not count, so
+  other players can still overtake their original score for that spot.
 - A field of ``3n + 1`` players plays two chase games, one after the other.
+  Both chasers are set once the regular games are done: the second player
+  out chases in Chase 1, and the first player out in Chase 2. The second
+  player out only gets in if both chasers win, so they play first; if they
+  lose, Chase 2 still matters to the first player out.
 - An optional second round sits between the preliminaries and the
   Semifinals. The top-scoring preliminary winners, from regular or chase
   games, get a bye straight to the Semifinals. If there are more byes than
@@ -254,12 +258,14 @@ def layout_qualifying_round(
             f"{regular_games + chase_games} games, which is more winners than "
             f"the {spots} spots in the next round. {too_many_games_hint}"
         )
-    elif chase_games and 2 * regular_games <= wildcards:
-        # The chaser is the first non-winner outside the wildcard spots, so
-        # the regular games need more non-winners than there are wildcards.
+    elif chase_games and 2 * regular_games - wildcards < chase_games:
+        # Chasers are the first non-winners outside the wildcard spots after
+        # the regular games, so those games need one more non-winner than
+        # there are wildcards for each chase game.
+        who = "the chaser" if chase_games == 1 else f"all {chase_games} chasers"
         problems.append(
-            f"{round_name}: every non-winner of the regular games already gets "
-            "a wildcard, so no one is left to be the chaser."
+            f"{round_name}: the regular games don't leave enough non-winners "
+            f"outside the wildcards to be {who}."
         )
     return QualifyingLayout(
         players=players,
@@ -451,11 +457,10 @@ def _qualifying_round(
     ]
     for chase_index in range(layout.chase_games):
         game_seats = seats[layout.regular_games + chase_index]
-        after = "regular games" if chase_index == 0 else f"Chase {chase_index}"
         games.append(
             BracketGame(
                 f"Chase {chase_index + 1}",
-                (*game_seats, f"{SEAT_CHASER} (first out after {after})"),
+                (*game_seats, f"{SEAT_CHASER} ({chaser_place(layout, chase_index)})"),
                 chase=True,
             )
         )
@@ -472,6 +477,25 @@ def _qualifying_round(
     return BracketRound(
         name, tuple(games), layout=layout, byes=byes, advance_text=advance_text
     )
+
+
+def chaser_place(layout: QualifyingLayout, chase_index: int) -> str:
+    """Return which player out chases in a round's chase game.
+
+    Chasers are set once the regular games are done. The last chase game is
+    for the first player out, the one before it for the second, and so on,
+    so a chaser who needs more chase wins to get in plays earlier.
+
+    Args:
+        layout: The round's layout.
+        chase_index: The chase game, counting from 0.
+
+    Returns:
+        Text such as ``"first out after the regular games"``.
+    """
+    place = layout.chase_games - chase_index
+    ordinal = {1: "first", 2: "second", 3: "third"}.get(place, f"#{place}")
+    return f"{ordinal} out after the regular games"
 
 
 def _winners_only_round(name: str, entrants: list[str]) -> BracketRound:
