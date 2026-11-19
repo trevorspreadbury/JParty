@@ -1,30 +1,29 @@
-"""Tournament roster dialogs.
+"""Tournament roster widgets.
 
-:class:`TournamentRosterDialog` creates or edits a tournament's roster from
-its Google Form sign-up sheet. :class:`SignUpMatchDialog` steps the host
-through placing new sign-ups after a refresh. Roster rules live in
-:mod:`jparty.domain.roster`; files live in :mod:`jparty.domain.tournament_store`.
+:class:`RosterEditor` is a tournament's Players tab: it edits the roster and
+fills it from the Google Form sign-up sheet. :class:`SignUpMatchDialog` steps
+the host through placing new sign-ups after a refresh. Roster rules live in
+:mod:`jparty.domain.roster`; saving is done by
+:class:`jparty.ui.widgets.tournament_editor.TournamentEditor`.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from html import escape
-from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QDialog,
-    QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QSpinBox,
     QStyleFactory,
@@ -46,18 +45,12 @@ from jparty.domain.roster import (
     new_sign_ups,
     open_slots,
     parse_sign_up_sheet,
-    roster_name_problem,
     suggest_matches,
     unlink_sign_up,
     update_linked_sign_ups,
 )
 from jparty.domain.tournament import MAX_TOURNAMENT_PLAYERS, MIN_TOURNAMENT_PLAYERS
-from jparty.domain.tournament_store import (
-    TournamentFileError,
-    TournamentSettings,
-    save_tournament,
-    tournament_name_problem,
-)
+from jparty.domain.tournament_store import TournamentSettings
 from jparty.services.game_sources import GameSourceFetcher, SheetAccessError
 from jparty.ui.welcome_loader import WelcomeLoader
 
@@ -72,34 +65,32 @@ TABLE_HEADERS = ("#", "Actual Name", "Full Name (sheet)", "Occupation", "Hometow
 PROBLEM_STYLE = "QLabel { color: #b00020; }"
 
 
-class TournamentRosterDialog(QDialog):
-    """Dialog to create a tournament, or edit a saved one's roster.
+class RosterEditor(QWidget):
+    """A tournament's Players tab: the roster and its sign-up sheet.
 
     Attributes:
-        settings: Settings for the tournament being edited.
+        settings: Settings for the tournament being edited. The editor keeps
+            ``sheet_url`` and ``ignored_sign_ups`` up to date.
         slots: The roster as currently shown.
-        saved_folder: The tournament folder once saved, else ``None``.
     """
 
     sheet_result_trigger = pyqtSignal(int, object, object)
+    roster_changed = pyqtSignal()
 
     def __init__(
         self,
-        root: Path,
-        parent: QWidget | None = None,
-        settings: TournamentSettings | None = None,
+        settings: TournamentSettings,
         slots: Sequence[PlayerSlot] | None = None,
+        parent: QWidget | None = None,
         fetcher: GameSourceFetcher | None = None,
         run_async: Callable[[Callable[[], None]], object] | None = None,
     ) -> None:
-        """Build the dialog for a new tournament or a loaded one.
+        """Build the roster editor.
 
         Args:
-            root: The tournaments folder.
+            settings: The tournament's settings.
+            slots: The roster; empty starts with blank slots.
             parent: Optional parent widget.
-            settings: A loaded tournament's settings, or ``None`` to create
-                a new tournament.
-            slots: A loaded tournament's roster.
             fetcher: Sheet fetcher; tests pass a fake.
             run_async: Runs a callable off the UI thread; tests pass one that
                 runs it inline.
@@ -108,29 +99,15 @@ class TournamentRosterDialog(QDialog):
             ``None``.
         """
         super().__init__(parent)
-        self.root = Path(root)
-        self.creating = settings is None
-        self.settings = settings or TournamentSettings(name="")
+        self.settings = settings
         self.slots: list[PlayerSlot] = list(slots or [])
-        if self.creating and not self.slots:
+        if not self.slots:
             self.slots = [PlayerSlot() for _ in range(DEFAULT_ROSTER_PLAYERS)]
         self.fetcher = fetcher or GameSourceFetcher()
         self.run_async = run_async or WelcomeLoader().run_async
-        self.saved_folder: Path | None = None
         self._sheet_request = 0
         self._filling_table = False
-        self._saved_state: tuple | None = None
 
-        self.setWindowTitle(
-            "Create Tournament"
-            if self.creating
-            else f"Tournament Players: {self.settings.name}"
-        )
-        self.resize(950, 650)
-
-        self.name_edit = QLineEdit(self.settings.name, self)
-        self.name_edit.setPlaceholderText("e.g. Family Fun 2026")
-        self.name_edit.setReadOnly(not self.creating)
         self.sheet_edit = QLineEdit(self.settings.sheet_url, self)
         self.sheet_edit.setPlaceholderText(
             "https://docs.google.com/spreadsheets/d/.../edit"
@@ -156,7 +133,6 @@ class TournamentRosterDialog(QDialog):
 
         form = QFormLayout()
         form.setSpacing(LAYOUT_SPACING)
-        form.addRow("Tournament name:", self.name_edit)
         form.addRow("Sign-up sheet:", sheet_layout)
         form.addRow("Players:", self.player_spinbox)
 
@@ -196,28 +172,23 @@ class TournamentRosterDialog(QDialog):
         row_buttons.addStretch(1)
         row_buttons.addWidget(self.restore_ignored_button)
 
-        self.buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save
-            | QDialogButtonBox.StandardButton.Cancel,
-            self,
-        )
-        self.buttons.accepted.connect(self.save)
-        self.buttons.rejected.connect(self.reject)
-
         layout = QVBoxLayout(self)
         layout.setSpacing(LAYOUT_SPACING)
         # The app style sets layout margins to zero, so set them here.
-        layout.setContentsMargins(*(LAYOUT_SPACING * 2,) * 4)
+        layout.setContentsMargins(*(LAYOUT_SPACING,) * 4)
         layout.addLayout(form)
         layout.addWidget(self.status_label)
         layout.addWidget(self.table, 1)
         layout.addLayout(row_buttons)
-        layout.addWidget(self.buttons)
 
         self.sheet_result_trigger.connect(self.handle_sheet_result)
+        self.sheet_edit.textChanged.connect(self.roster_changed)
         self.set_player_count(self.player_spinbox.value())
         self._update_row_buttons()
-        self._saved_state = self._state()
+
+    def sheet_link(self) -> str:
+        """Return the sign-up sheet link as typed, without outer spaces."""
+        return self.sheet_edit.text().strip()
 
     def set_player_count(self, count: int) -> None:
         """Add blank slots, or drop trailing blank slots, to reach ``count``.
@@ -237,6 +208,7 @@ class TournamentRosterDialog(QDialog):
             self.slots.pop()
         self._sync_player_spinbox()
         self._fill_table()
+        self.roster_changed.emit()
 
     def on_item_changed(self, item: QTableWidgetItem) -> None:
         """Store an edited Actual Name in its slot.
@@ -252,8 +224,9 @@ class TournamentRosterDialog(QDialog):
         row = item.row()
         if 0 <= row < len(self.slots):
             slot = self.slots[row]
-            self.slots[row] = PlayerSlot(item.text().strip(), slot.sign_up)
+            self.slots[row] = replace(slot, actual_name=item.text().strip())
             self._sync_player_spinbox()
+            self.roster_changed.emit()
 
     def refresh_sheet(self) -> None:
         """Fetch the sign-up sheet in the background.
@@ -261,7 +234,7 @@ class TournamentRosterDialog(QDialog):
         Returns:
             ``None``.
         """
-        link = self.sheet_edit.text().strip()
+        link = self.sheet_link()
         if not link:
             self._show_status("Paste the link to the sign-up sheet first.", True)
             return
@@ -311,7 +284,7 @@ class TournamentRosterDialog(QDialog):
         if error is not None or sign_ups is None:
             self._show_status(error or "Couldn't read the sign-up sheet.", True)
             return
-        self.settings.sheet_url = self.sheet_edit.text().strip()
+        self.settings.sheet_url = self.sheet_link()
         self.slots = update_linked_sign_ups(self.slots, sign_ups)
         unplaced = new_sign_ups(self.slots, sign_ups, self.settings.ignored_sign_ups)
         self.slots, remaining = fill_blank_slots(self.slots, unplaced, sign_ups)
@@ -333,33 +306,6 @@ class TournamentRosterDialog(QDialog):
         if remaining:
             message += f" {len(remaining)} not placed yet; refresh again to place them."
         self._show_status(message)
-
-    def save(self) -> None:
-        """Check the roster and save the tournament folder.
-
-        Returns:
-            ``None``.
-        """
-        name = self.name_edit.text()
-        problem = tournament_name_problem(name)
-        if problem is None and self.creating and (self.root / name).exists():
-            problem = f'A tournament named "{name}" already exists.'
-        if problem is None:
-            problem = roster_name_problem(self.slots)
-        if problem:
-            self._show_status(problem, True)
-            return
-        self.settings.name = name
-        self.settings.sheet_url = self.sheet_edit.text().strip()
-        try:
-            self.saved_folder = save_tournament(self.root, self.settings, self.slots)
-        except (OSError, TournamentFileError) as exc:
-            QMessageBox.warning(self, "Couldn't save tournament", str(exc))
-            return
-        logging.info("Saved tournament %s", name)
-        self._saved_state = self._state()
-        self._drop_pending_fetch()
-        self.accept()
 
     def unlink_selected(self) -> None:
         """Drop the sign-up from each selected player, keeping their names.
@@ -401,48 +347,13 @@ class TournamentRosterDialog(QDialog):
         count = len(self.settings.ignored_sign_ups)
         self.settings.ignored_sign_ups = []
         self._update_row_buttons()
+        self.roster_changed.emit()
         if count:
             self._show_status(
                 f"{count} ignored response(s) will be asked about on the next refresh."
             )
 
-    def has_unsaved_changes(self) -> bool:
-        """Whether the roster or settings changed since opening or saving."""
-        return self._state() != self._saved_state
-
-    def reject(self) -> None:
-        """Close without saving, after asking if there are unsaved changes.
-
-        Escape, Cancel, and the window's close button all come here. A sheet
-        fetch still running is dropped, so its result can't open the match
-        dialog after the roster is closed.
-
-        Returns:
-            ``None``.
-        """
-        if self.isVisible() and self.has_unsaved_changes():
-            answer = QMessageBox.question(
-                self,
-                "Discard changes?",
-                "Close without saving? Your changes to this tournament will be lost.",
-                QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel,
-            )
-            if answer != QMessageBox.StandardButton.Discard:
-                return
-        self._drop_pending_fetch()
-        super().reject()
-
-    def _state(self) -> tuple:
-        """Return what Save would write, to spot unsaved changes."""
-        return (
-            self.name_edit.text(),
-            self.sheet_edit.text().strip(),
-            tuple(self.slots),
-            tuple(self.settings.ignored_sign_ups),
-        )
-
-    def _drop_pending_fetch(self) -> None:
+    def drop_pending_fetch(self) -> None:
         """Make any sheet fetch still running stale, so its result is dropped."""
         self._sheet_request += 1
         self.refresh_button.setEnabled(True)
@@ -457,6 +368,7 @@ class TournamentRosterDialog(QDialog):
         self._sync_player_spinbox()
         self._fill_table()
         self._update_row_buttons()
+        self.roster_changed.emit()
 
     def _update_row_buttons(self) -> None:
         """Enable the row buttons that apply to the current selection."""

@@ -11,8 +11,7 @@ For the saved-state and clue-history file format, see
 - [Before You Start](#before-you-start)
 - [Welcome Screen Overview](#welcome-screen-overview)
 - [Pre-Game Image Preview](#pre-game-image-preview)
-- [Planning a Tournament](#planning-a-tournament)
-- [Tournament Players](#tournament-players)
+- [Tournaments](#tournaments)
 - [Resume Flow](#resume-flow)
 - [Core Game Flow](#core-game-flow)
 - [Editing Scores](#editing-scores)
@@ -148,11 +147,32 @@ That preview screen shows:
 
 Use this as a last sanity check before contestants see the board.
 
-## Planning a Tournament
+## Tournaments
 
-The `Bracket Designer` button at the bottom of the welcome screen opens the
-Tournament Designer. Use it to try bracket shapes before you run a tournament.
-It only plans the bracket; you still start each game from the welcome screen.
+The `Tournament` button at the bottom of the welcome screen opens the
+Tournament window. Everything for a tournament happens there:
+
+- `Create Tournament` starts a new tournament.
+- `Load Tournament` opens the tournament selected under `Saved tournaments`.
+  Double-clicking it works too.
+- `Bracket Designer` lets you try bracket formats for any number of players,
+  without saving anything. `Back to Tournaments` returns to the list.
+
+A created or loaded tournament opens with its name and logo at the top and
+three tabs: `Players`, `Bracket`, and `Games`. Everything stays editable. One
+`Save` button saves all three tabs. `Close` goes back to the tournament list.
+Closing the window or the tournament with unsaved changes asks before
+discarding them. A tournament without unsaved changes stays open when you
+close the window, so reopening the window takes you back to it.
+
+The tournament name becomes the folder name, so it can't contain characters
+like `/` or `:`. It can't be changed after the first save.
+
+`Choose Logo...` picks the tournament logo. It is copied into the
+tournament's folder when you save, so it stays out of git. `Remove Logo`
+deletes it on the next save.
+
+### Bracket rules
 
 Every tournament ends with a three-player Final. With 9 players, three
 Semifinal winners meet in the Final. With more, a first round fills the nine
@@ -182,24 +202,20 @@ games the champion plays. Ranges such as `9-10` depend on whether chasers win.
 If the options cannot work (for example, 28 players with no second round), the
 designer explains why.
 
-## Tournament Players
+### Players tab
 
-`Create Tournament` sets up a tournament's players from your Google Form
-sign-up sheet. `Load Tournament` reopens a saved tournament to edit its players
-or refresh the sheet.
+The `Players` tab fills the tournament's players from your Google Form
+sign-up sheet.
 
-1. Enter a tournament name. It becomes the folder name, so it can't contain
-   characters like `/` or `:`.
-2. Paste the link to the form's response sheet. In the sheet, choose `Share`
+1. Paste the link to the form's response sheet. In the sheet, choose `Share`
    and set General access to `Anyone with the link`. The sheet needs
    `Timestamp` and `Full Name` columns; `Occupation`, `Hometown`, and
    `Anecdote #1` to `#3` are saved too.
-3. Set `Players` to the number of players. It can be more than the sheet has
-   rows.
-4. Click `Refresh Sheet`. Sign-ups fill the player slots in sheet order.
-5. Edit the `Actual Name` column if someone used a silly name, and type names
+2. Set `Players` to the number of players. It can be more than the sheet has
+   rows. This count also sets the bracket's size.
+3. Click `Refresh Sheet`. Sign-ups fill the player slots in sheet order.
+4. Edit the `Actual Name` column if someone used a silly name, and type names
    for players who haven't signed up yet.
-6. Click `Save`.
 
 Click `Refresh Sheet` again as more people sign up. If you've typed names that
 aren't linked to a sign-up yet, JParty steps through each new sign-up and
@@ -215,14 +231,94 @@ update their answers.
 
 To fix a mistake, select a row and click `Unlink Sign-up` (the sign-up is
 asked about again on the next refresh) or `Remove Player`. `Restore Ignored`
-makes the next refresh ask about every ignored response again. Closing the
-window with unsaved changes asks before discarding them.
+makes the next refresh ask about every ignored response again.
+
+### Bracket tab
+
+The `Bracket` tab is the bracket designer for this tournament. The player
+count comes from the `Players` tab; choose the second round and byes here.
+The tab shows `Bracket (!)` while the options can't make a bracket. You can
+still save, and JParty reminds you that the bracket won't work yet. If the
+field drops to 9 or fewer players, the second round turns off; it turns back
+on if the field grows again.
+
+### Games tab
+
+The `Games` tab lists every game in the bracket in playing order. Each row
+shows where the game's players come from, its board, who can't play that
+board, and whether the board has question media. The tab title counts the
+games that have a board and the boards waiting in `Unassigned boards`, for
+example `Games (3/10 boards, 2 unassigned)`.
+
+To give a game a board, double-click the game, or select it and click
+`Set Board...`. With no game selected, `Set Board...` makes a new board for
+`Unassigned boards`, so you can set boards up before deciding which game gets
+each one. Either way it opens the same board slots as the welcome screen's
+`Advanced Options`:
+
+1. Fill each board slot: type a game id (or click `Random`), pick its round,
+   and adjust point values and Daily Doubles as you would on the welcome
+   screen (see [`Advanced Options`](#advanced-options)). `Load Media` loads
+   question media for a slot. Use the `Jeopardy Boards` and `Final Boards`
+   counts to change how many boards the game plays.
+2. Click `Use This Board`. It turns on once every slot is filled.
+
+To play one game as it aired, type its id under `Same game for every slot`
+and click `Use for Every Slot`. The slots go back to two boards and Final
+Jeopardy! with the usual values and Daily Doubles, then each loads that game
+and picks its matching round.
+
+Opening a game that already has a board shows that board, so you can edit it.
+The edited board replaces the old one. `Cancel` leaves the game as it was.
+Setting up a tournament board doesn't change the game on the welcome screen.
+
+To keep players off a board (for example, players who have seen that
+episode or wrote its clues), select the game and click `Can't Play...`, or
+double-click its `Can't Play` cell, then tick those players. For a board in
+`Unassigned boards`, select it and click the `Can't Play...` button next to
+`Assign to Selected Game`, or double-click the board. The list stays
+with the board: if you swap, unassign, or edit the board, the same players
+still can't play it. Renaming a player keeps their place on the list, and
+removing a player takes them off it when you save.
+
+Other buttons:
+
+- `Swap Boards`: select two games to swap their boards.
+- `Unassign`: move the selected games' boards to `Unassigned boards`.
+- `Assign to Selected Game`: give the selected game the selected unassigned
+  board.
+- `Delete Board`: remove the selected unassigned board.
+
+If the bracket changes and a game leaves it (for example, the field shrinks
+and loses a chase game), that game's board moves to `Unassigned boards`
+instead of being lost. If the game comes back before you close the
+tournament (for example, the player count changes back) and it has no board,
+the board returns to it. While the bracket can't work, boards stay where they
+are.
+
+The summary above the table lists games whose boards have no question media,
+meaning one of the board's source games has no folder or zip in the question
+media folder (see [`Load Question Media`](#load-question-media)). It also
+warns when two games play the same round of the same source game, because
+players would see the same clues twice.
+
+### Saved files
 
 Each tournament is saved in `tournaments/<name>/` in the JParty data folder,
-outside git: `players.csv` holds the players and their answers, and
-`tournament.json` holds the sheet link and the ignored responses. To reuse a
-tournament's setup, copy its folder and give the copy a new name; the copy
-saves into its own folder.
+outside git:
+
+- `players.csv` holds the players, their sign-up answers, and an id for each
+  player that other settings refer to. If you edit it by hand, leave the
+  `player_id` column as it is.
+- `tournament.json` holds the sheet link, the ignored responses, the bracket
+  options, each game's board and who can't play it, the unassigned boards,
+  and the logo's file name.
+  The app writes it; you don't need to edit it by hand.
+- `logo.png` (or `.jpg`, and so on) is the logo, if you chose one.
+
+To reuse a tournament's setup, copy its folder and give the copy a new name;
+the copy saves into its own folder. Tournaments saved by an older JParty
+still load, with the default bracket and no boards.
 
 Back to [Table of Contents](#table-of-contents).
 
