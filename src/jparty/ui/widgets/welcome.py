@@ -376,6 +376,9 @@ class Welcome(StartWidget):
         # Key of the tournament game whose board is in ``game.data``, or None.
         self._tournament_board_key = None
         self._tournament_summary_text = ""
+        # Whether the chosen tournament game can start; see
+        # _check_tournament_start.
+        self._tournament_ready = False
         footer_layout = QHBoxLayout()
         footer_layout.addStretch(5)
         footer_layout.addWidget(self.quit_button, 3)
@@ -708,6 +711,10 @@ QCheckBox {{
         )
         startable = bool(getattr(self.game, "startable", lambda: False)())
         enabled = problem is None and board_ready and startable
+        # Kept apart from the button: the host window disables the whole
+        # welcome screen while the introduction shows, and a button in a
+        # disabled widget always reports itself disabled.
+        self._tournament_ready = enabled
         self.tournament_start_button.setEnabled(enabled)
         if problem is None and not board_ready:
             problem = "Loading the board..."
@@ -759,7 +766,7 @@ QCheckBox {{
             Whether the game can still start.
         """
         self.check_start()
-        if self.tournament_start_button.isEnabled():
+        if self._tournament_ready:
             return True
         logging.warning(
             "Not starting the tournament game: %s",
@@ -1381,7 +1388,7 @@ QCheckBox {{
         self.sync_active_configuration()
         self.check_start()
         if self.tournament_mode:
-            if not self.tournament_start_button.isEnabled():
+            if not self._tournament_ready:
                 return
             parent = self.parent()
             if hasattr(parent, "load_contestant_intro"):

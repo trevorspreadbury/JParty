@@ -157,19 +157,27 @@ class IntroParent(QWidget):
         self.preview_start = None
         self.returned_to_welcome = 0
 
+    def _set_welcome_enabled(self, enabled: bool) -> None:
+        """Enable or disable the welcome screen, as the host window does."""
+        for welcome in self.findChildren(Welcome):
+            welcome.setDisabled(not enabled)
+
     def load_contestant_intro(self, lines: list[str], on_start: object) -> None:
-        """Show the introduction widget, as the host window does."""
+        """Show the introduction widget, with the welcome screen disabled."""
+        self._set_welcome_enabled(False)
         self.intro = ContestantIntro(lines, on_back=lambda: None, on_start=on_start)
 
     def load_question_media_preview(
         self, questions: list, on_start: object = None
     ) -> None:
-        """Keep the media preview's Start callback."""
+        """Keep the media preview's Start callback; the welcome stays disabled."""
+        self._set_welcome_enabled(False)
         self.preview_start = on_start
 
     def show_welcome_from_preview(self) -> None:
-        """Count returns to the welcome screen."""
+        """Count returns to the welcome screen, and enable it again."""
         self.returned_to_welcome += 1
+        self._set_welcome_enabled(True)
 
 
 @pytest.fixture()
@@ -692,6 +700,8 @@ def test_tournament_mode_always_reveals_triple_stumper_answers(
     assert game.start_game_calls == 1
     assert game.reveal_answers_after_triple_stumper_enabled()
 
+    # Back in the lobby after the game, the welcome screen is enabled again.
+    widget.setDisabled(False)
     widget.tournament_panel.leave_button.click()
     assert not widget.reveal_answers_radio.isHidden()
     assert not widget.reveal_answers_radio.isChecked()
