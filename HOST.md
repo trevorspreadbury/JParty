@@ -439,7 +439,9 @@ it back, or delete that game's results with `Fix Results...` first.
 
 `Play Games` in a tournament puts the welcome screen into tournament mode.
 The game id box, round checkboxes, and `Advanced Options` are replaced by
-the tournament's games and players:
+the tournament's games and players. `Reveal Answers after Triple Stumper` is
+hidden and always on for tournament games, so every game is played the same
+way; leaving the tournament puts your choice back.
 
 1. Pick a game from `Games`. Its board loads by itself, and its summary
    shows below. Games already played, and games with no board, are greyed
@@ -455,7 +457,7 @@ the tournament's games and players:
      knocked out; pick the right ones.
    - Players on the board's Can't Play list are never offered.
 3. Have the three players join from their phones as usual. Each podium shows
-   the phone on it. Podium 1 is the first phone in the scoreboard, and so
+   the phone on it: the typed name, or the signature a player signed in with. Podium 1 is the first phone in the scoreboard, and so
    on; use the scoreboard's `▲`/`▼` to put the phones in podium order.
 4. Click `Start!`. The host screen shows "Let's meet today's contestants:"
    and an introduction for each player, such as "A teacher from Chicago,

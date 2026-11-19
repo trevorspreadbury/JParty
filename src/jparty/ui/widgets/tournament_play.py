@@ -14,10 +14,11 @@ game.
 from __future__ import annotations
 
 import logging
+from base64 import urlsafe_b64decode
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QFont
+from PyQt6.QtGui import QBrush, QColor, QFont, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -88,6 +89,29 @@ def phone_label(name: object) -> str:
     if text.startswith(SIGNATURE_NAME_PREFIX):
         return SIGNED_NAME_TEXT
     return text
+
+
+def signature_pixmap(name: object) -> QPixmap | None:
+    """Return a phone's handwritten name as an image, or ``None``.
+
+    Args:
+        name: A player's name, which phones send as a PNG data URL when the
+            player signs it.
+
+    Returns:
+        The signature, or ``None`` if ``name`` isn't one or can't be read.
+    """
+    text = str(name or "")
+    if not text.startswith(SIGNATURE_NAME_PREFIX):
+        return None
+    image = QImage()
+    try:
+        data = urlsafe_b64decode(text[len(SIGNATURE_NAME_PREFIX) + 1 :])
+    except ValueError:
+        return None
+    if not image.loadFromData(data, "PNG"):
+        return None
+    return QPixmap.fromImage(image)
 
 
 def _grey(item: QListWidgetItem) -> None:
@@ -182,14 +206,17 @@ class TournamentPlayPanel(QWidget):
             if fusion is not None:
                 combo.setStyle(fusion)
             combo.currentIndexChanged.connect(self._on_podium_changed)
+            # Names come from phones, so never read them as rich text.
             phone = QLabel(self)
+            phone.setTextFormat(Qt.TextFormat.PlainText)
             podiums.addWidget(QLabel(f"Podium {index + 1}:", self), index, 0)
             podiums.addWidget(combo, index, 1)
-            podiums.addWidget(phone, index, 2)
+            podiums.addWidget(QLabel("Phone:", self), index, 2)
+            podiums.addWidget(phone, index, 3)
             self.podium_combos.append(combo)
             self.phone_labels.append(phone)
         podiums.setColumnStretch(1, 2)
-        podiums.setColumnStretch(2, 1)
+        podiums.setColumnStretch(3, 1)
 
         self.status_label = QLabel(self)
         self.status_label.setWordWrap(True)
@@ -355,7 +382,20 @@ class TournamentPlayPanel(QWidget):
         self._phone_names = list(names)
         for index, label in enumerate(self.phone_labels):
             name = self._phone_names[index] if index < len(self._phone_names) else None
-            label.setText(f"Phone: {phone_label(name)}")
+            pixmap = signature_pixmap(name)
+            if pixmap is None:
+                label.setText(phone_label(name))
+                label.setToolTip("")
+                continue
+            # Show the signature the player logged in with, at about the
+            # height of two lines of text, so the host can match them.
+            label.setPixmap(
+                pixmap.scaledToHeight(
+                    self._font_pixels * 2,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+            label.setToolTip(SIGNED_NAME_TEXT)
 
     def apply_scale(self, height: int) -> None:
         """Size the panel's text for a welcome screen ``height`` pixels tall.
@@ -373,6 +413,8 @@ class TournamentPlayPanel(QWidget):
         title_font = self.title_label.font()
         title_font.setPixelSize(max(16, int(height * 0.035)))
         self.title_label.setFont(title_font)
+        # Signatures are sized to the text, so redraw them at the new size.
+        self.set_phones(self._phone_names)
 
     def fix_results(self) -> None:
         """Open the results editor, then show any changes.

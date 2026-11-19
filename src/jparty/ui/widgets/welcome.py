@@ -518,6 +518,7 @@ QCheckBox {{
                 widget.setStyleSheet(rounds_label_style)
         self.advanced_boards.apply_scale(self.height(), self.width())
         self.tournament_panel.apply_scale(self.height())
+        self._size_footer_buttons()
         self.tournament_start_button.setMinimumSize(
             max(int(self.width() * 0.14), 150), max(int(self.height() * 0.06), 36)
         )
@@ -577,6 +578,23 @@ QCheckBox {{
             self.rounds_widget.setVisible(False)
             self.advanced_boards.setVisible(False)
         self.tournament_button.setEnabled(not shown)
+        # Tournament games always reveal the answer after a triple stumper,
+        # so every game is played the same way. Leaving restores the choice.
+        self.reveal_answers_radio.setVisible(not shown)
+        self.update_reveal_answers_after_triple_stumper(
+            True if shown else self.reveal_answers_radio.isChecked()
+        )
+        self._size_footer_buttons()
+
+    def _size_footer_buttons(self) -> None:
+        """Keep the footer buttons readable while the tournament panel is up.
+
+        The panel takes most of the screen's height, which would otherwise
+        leave Quit, Show help, and Tournament only a few pixels tall.
+        """
+        height = max(int(self.height() * 0.045), 32) if self.tournament_mode else 0
+        for button in (self.quit_button, self.help_button, self.tournament_button):
+            button.setMinimumHeight(height)
 
     def _clear_tournament_board(self) -> None:
         """Forget any tournament board pushed into the game."""
@@ -727,6 +745,7 @@ QCheckBox {{
         self.game.set_tournament_game(
             self.tournament_panel.game_ref(), self.tournament_panel.chosen_players()
         )
+        self.update_reveal_answers_after_triple_stumper(True)
         self.game.start_game()
 
     def _tournament_still_ready(self) -> bool:

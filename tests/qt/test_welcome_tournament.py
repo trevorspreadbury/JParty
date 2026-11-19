@@ -25,6 +25,7 @@ from jparty.ui.widgets.tournament_play import (
     TournamentPlayPanel,
     TournamentResultsDialog,
     phone_label,
+    signature_pixmap,
 )
 from jparty.ui.widgets.welcome import ContestantIntro, Welcome
 from tests.qt.test_tournament_games import board, select_rows
@@ -228,9 +229,9 @@ def test_choosing_a_game_loads_its_board_then_start_introduces_players(
         panel.choose(podium, player_id)
     assert widget.tournament_start_button.isEnabled()
     assert [label.text() for label in panel.phone_labels] == [
-        "Phone: Phone 0",
-        "Phone: Phone 1",
-        "Phone: Phone 2",
+        "Phone 0",
+        "Phone 1",
+        "Phone 2",
     ]
     # Picking players doesn't reload the board.
     assert widget.built == [["2222"]]
@@ -628,3 +629,82 @@ def test_board_that_fails_to_load_says_so(
         widget.summary_label.text()
     )
     assert not widget.tournament_start_button.isEnabled()
+
+
+def _signature() -> str:
+    """Return a signed name as phones send it: a PNG data URL."""
+    from base64 import urlsafe_b64encode
+
+    from PyQt6.QtCore import QBuffer, QIODevice
+    from PyQt6.QtGui import QColor, QImage
+
+    image = QImage(300, 80, QImage.Format.Format_ARGB32)
+    image.fill(QColor("#1010a1"))
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    image.save(buffer, "PNG")
+    return "data:image/png;base64," + urlsafe_b64encode(bytes(buffer.data())).decode()
+
+
+def test_podium_shows_the_signature_a_phone_signed_in_with(qtbot: object) -> None:
+    """A signed name is shown as the image itself, sized to the text."""
+    panel = TournamentPlayPanel()
+    qtbot.addWidget(panel)
+    panel.apply_scale(800)
+    panel.set_phones(["Ann", _signature()])
+
+    assert panel.phone_labels[0].text() == "Ann"
+    signed = panel.phone_labels[1]
+    assert signed.text() == ""
+    assert signed.pixmap().height() == panel._font_pixels * 2
+    assert signed.toolTip() == SIGNED_NAME_TEXT
+    assert panel.phone_labels[2].text() == NO_PHONE_TEXT
+
+    # Rescaling redraws it; a phone that leaves goes back to text.
+    panel.apply_scale(1200)
+    assert signed.pixmap().height() == panel._font_pixels * 2
+    panel.set_phones(["Ann"])
+    assert signed.text() == NO_PHONE_TEXT
+    assert signed.pixmap().isNull()
+
+
+def test_signature_pixmap_ignores_typed_and_broken_names() -> None:
+    """Only a readable PNG data URL becomes an image."""
+    assert signature_pixmap("Ann") is None
+    assert signature_pixmap(None) is None
+    assert signature_pixmap("data:image/png;base64,not-a-png") is None
+    assert signature_pixmap(_signature()) is not None
+
+
+def test_tournament_mode_always_reveals_triple_stumper_answers(
+    tournament_welcome: tuple,
+) -> None:
+    """The reveal option is hidden and on in tournament mode, then restored."""
+    widget, game, parent = tournament_welcome
+    assert widget.reveal_answers_radio.isHidden()
+    assert game.reveal_answers_after_triple_stumper_enabled()
+
+    _ready_to_start(widget)
+    game.set_reveal_answers_after_triple_stumper(False)
+    widget.tournament_start_button.click()
+    parent.intro.start_button.click()
+    assert game.start_game_calls == 1
+    assert game.reveal_answers_after_triple_stumper_enabled()
+
+    widget.tournament_panel.leave_button.click()
+    assert not widget.reveal_answers_radio.isHidden()
+    assert not widget.reveal_answers_radio.isChecked()
+    assert not game.reveal_answers_after_triple_stumper_enabled()
+
+
+def test_footer_buttons_stay_readable_in_tournament_mode(
+    tournament_welcome: tuple,
+) -> None:
+    """Quit, Show help, and Tournament keep a usable height beside the panel."""
+    widget, _game, _parent = tournament_welcome
+    widget.resize(1280, 720)
+    widget.resizeEvent(None)
+    for button in (widget.quit_button, widget.help_button, widget.tournament_button):
+        assert button.minimumHeight() >= 32
+    widget.tournament_panel.leave_button.click()
+    assert widget.quit_button.minimumHeight() == 0
