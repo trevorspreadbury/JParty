@@ -152,10 +152,22 @@ class IntroParent(QWidget):
         """Start with no introduction shown."""
         super().__init__()
         self.intro = None
+        self.preview_start = None
+        self.returned_to_welcome = 0
 
     def load_contestant_intro(self, lines: list[str], on_start: object) -> None:
         """Show the introduction widget, as the host window does."""
         self.intro = ContestantIntro(lines, on_back=lambda: None, on_start=on_start)
+
+    def load_question_media_preview(
+        self, questions: list, on_start: object = None
+    ) -> None:
+        """Keep the media preview's Start callback."""
+        self.preview_start = on_start
+
+    def show_welcome_from_preview(self) -> None:
+        """Count returns to the welcome screen."""
+        self.returned_to_welcome += 1
 
 
 @pytest.fixture()
@@ -246,7 +258,61 @@ def test_start_waits_for_three_phones(tournament_welcome: tuple) -> None:
     assert not widget.tournament_start_button.isEnabled()
     assert "2 so far" in panel.status_label.text()
     widget.on_start_clicked()
+    assert _parent.intro is None
     assert game.start_game_calls == 0
+
+
+def _ready_to_start(widget: Welcome) -> None:
+    """Pick SF2 and three eligible players, so Start! turns on."""
+    panel = widget.tournament_panel
+    panel.select_game(SF2)
+    for podium, player_id in enumerate(("p0", "p4", "p5")):
+        panel.choose(podium, player_id)
+    assert widget.tournament_start_button.isEnabled()
+
+
+@pytest.mark.parametrize("change", ["drop", "join"])
+def test_start_game_rechecks_phones_after_the_intro(
+    tournament_welcome: tuple, change: str
+) -> None:
+    """A phone joining or dropping during the intro stops Start Game."""
+    widget, game, parent = tournament_welcome
+    _ready_to_start(widget)
+    widget.tournament_start_button.click()
+    assert parent.intro is not None
+
+    if change == "drop":
+        game.players = game.players[:2]
+    else:
+        game.players.append(SimpleNamespace(name="Phone 3", player_number=3))
+    parent.intro.start_button.click()
+
+    assert game.start_game_calls == 0
+    assert game.tournament_calls[-1] == (None, [])
+    assert parent.returned_to_welcome == 1
+    assert not widget.tournament_start_button.isEnabled()
+    assert "phone" in widget.tournament_panel.status_label.text().lower()
+
+
+def test_media_preview_start_rechecks_phones(tournament_welcome: tuple) -> None:
+    """The local-media preview's Start re-checks too, then seats and starts."""
+    widget, game, parent = tournament_welcome
+    _ready_to_start(widget)
+    widget.preview_questions = lambda: [(0, object())]
+    widget.tournament_start_button.click()
+    parent.intro.start_button.click()
+    assert parent.preview_start is not None
+    assert game.start_game_calls == 0
+
+    game.players = game.players[:2]
+    parent.preview_start()
+    assert game.start_game_calls == 0
+    assert parent.returned_to_welcome == 1
+
+    game.players.append(SimpleNamespace(name="Phone 2", player_number=2))
+    parent.preview_start()
+    assert game.start_game_calls == 1
+    assert game.tournament_calls[-1][0] == TournamentGameRef("Fun", SF2)
 
 
 def test_after_a_game_the_panel_shows_new_results(

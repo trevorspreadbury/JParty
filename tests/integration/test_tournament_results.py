@@ -3,8 +3,9 @@
 import json
 
 import pytest
+from PyQt6.QtCore import Qt
 
-from jparty.domain.models import Player
+from jparty.domain.models import Player, Question
 from jparty.domain.tournament_play import (
     SAVED_PLAYER_ID,
     SAVED_PLAYER_NAME,
@@ -188,3 +189,87 @@ def test_unwritable_results_warn_the_host(
     _start_final_only(game)
     _finish_final(game, [500, 1200, 300], [True, True, True])
     assert warnings and "disk full" in warnings[0]
+
+
+def _tie_then_offer_tiebreaker(game: object, monkeypatch: object) -> list[str]:
+    """Tie Ann and Bob for first; return the host warnings shown after."""
+    warnings = []
+    monkeypatch.setattr(
+        game, "show_host_warning", lambda title, text: warnings.append(text)
+    )
+    clues = [
+        Question(
+            index=(0, 4),
+            text="Tiebreaker clue",
+            answer="Tiebreaker answer",
+            category="Tiebreaker category",
+            value=2000,
+        )
+    ]
+    monkeypatch.setattr(
+        game, "load_tiebreaker_clues", lambda game_id, is_cancelled: (game_id, clues)
+    )
+    monkeypatch.setattr(game, "run_in_background", lambda work: work())
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    _start_final_only(game)
+    _finish_final(game, [1000, 1000, 200], [False, False, False])
+    assert game.keystroke_manager._events["START_TIEBREAKER"].active
+    return warnings
+
+
+def _space(game: object) -> None:
+    """Press Space on the host keyboard."""
+    game.keystroke_manager.call(Qt.Key.Key_Space)
+
+
+def test_tiebreaker_win_logs_one_winner(
+    game: object, folders: object, monkeypatch: object
+) -> None:
+    """A tie writes nothing until the tiebreaker is won; then one win."""
+    _tie_then_offer_tiebreaker(game, monkeypatch)
+    assert not (folders / "results.csv").exists()
+
+    monkeypatch.setattr(game, "prompt_tiebreaker_game_id", lambda: "1234")
+    _space(game)  # Pick the game and load its clues.
+    _space(game)  # Show the clue after its category.
+    _space(game)  # Open buzzing.
+    game.buzz(1)
+    game.correct_answer()
+
+    results = load_results(folders)
+    assert [(r.player_id, r.score, r.result) for r in results] == [
+        ("ann-id", 1000, "loss"),
+        ("bob-id", 1000, "win"),
+        ("cy-id", 200, "loss"),
+    ]
+
+
+def test_tournament_tie_cant_be_declined(
+    game: object, folders: object, monkeypatch: object
+) -> None:
+    """Cancelling the tiebreaker warns the host and keeps the tie open."""
+    warnings = _tie_then_offer_tiebreaker(game, monkeypatch)
+    monkeypatch.setattr(game, "prompt_tiebreaker_game_id", lambda: None)
+    _space(game)
+
+    assert len(warnings) == 1 and "needs a winner" in warnings[0]
+    assert game.keystroke_manager._events["START_TIEBREAKER"].active
+    assert not game.keystroke_manager._events["GENERATE_GRAPHS"].active
+    assert not (folders / "results.csv").exists()
+
+    # The host can still settle it.
+    monkeypatch.setattr(game, "prompt_tiebreaker_game_id", lambda: "")
+    _space(game)
+    _space(game)
+    _space(game)
+    game.buzz(0)
+    game.correct_answer()
+    assert [r.result for r in load_results(folders)] == ["win", "loss", "loss"]
+
+
+def test_seating_needs_one_player_per_phone(game: object, folders: object) -> None:
+    """Seating three players on two phones is refused, not paired by position."""
+    _seat_phones(game, ["Phone A", "Phone C"])
+    with pytest.raises(ValueError, match="one player per phone"):
+        game.set_tournament_game(REF, SEATS)
+    assert game.tournament_game is None

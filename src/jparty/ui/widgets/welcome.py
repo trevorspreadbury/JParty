@@ -701,23 +701,59 @@ QCheckBox {{
         self.summary_label.setText(self._tournament_summary_text)
 
     def start_tournament_game(self) -> None:
-        """Seat the chosen players and start their tournament game.
+        """Start the chosen tournament game, after the introduction.
 
-        Podium ``i`` is the ``i``-th phone. The local-media preview opens
-        first if the board has local media.
+        The local-media preview opens first if the board has local media.
+        Each step checks the game is still ready, since phones can join or
+        leave while the introduction or preview is up.
 
         Returns:
             ``None``.
         """
-        self.game.set_tournament_game(
-            self.tournament_panel.game_ref(), self.tournament_panel.chosen_players()
-        )
+        if not self._tournament_still_ready():
+            return
         preview_questions = self.preview_questions()
         parent = self.parent()
         if preview_questions and hasattr(parent, "load_question_media_preview"):
-            parent.load_question_media_preview(preview_questions)
+            parent.load_question_media_preview(
+                preview_questions, on_start=self._seat_and_start_tournament_game
+            )
             return
+        self._seat_and_start_tournament_game()
+
+    def _seat_and_start_tournament_game(self) -> None:
+        """Seat the chosen players on the phones and start the game.
+
+        Podium ``i`` is the ``i``-th phone.
+        """
+        if not self._tournament_still_ready():
+            return
+        self.game.set_tournament_game(
+            self.tournament_panel.game_ref(), self.tournament_panel.chosen_players()
+        )
         self.game.start_game()
+
+    def _tournament_still_ready(self) -> bool:
+        """Re-check Start, and go back to the welcome screen if it's off.
+
+        The lobby stays open until the game starts, so a phone may have
+        joined or dropped since Start! was clicked. Seating then would log
+        results under the wrong players. The status line says what's wrong.
+
+        Returns:
+            Whether the game can still start.
+        """
+        self.check_start()
+        if self.tournament_start_button.isEnabled():
+            return True
+        logging.warning(
+            "Not starting the tournament game: %s",
+            self.tournament_panel.status_label.text(),
+        )
+        parent = self.parent()
+        if hasattr(parent, "show_welcome_from_preview"):
+            parent.show_welcome_from_preview()
+        return False
 
     def _begin_summary_request(self, loading: bool) -> int:
         """Invalidate any single-game load in flight and return a new request id.

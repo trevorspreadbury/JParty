@@ -460,10 +460,13 @@ the tournament's games and players:
    Jane Smith (Ziggy)". The name appears once when the sheet's Full Name
    and the Actual Name match, and a player with no sign-up is introduced by
    their Actual Name. Click `Start Game` to begin (`Back` returns to the
-   welcome screen).
+   welcome screen). If a phone joins or drops while the introduction is
+   showing, `Start Game` goes back to the welcome screen, and the status
+   line says what's missing.
 
 When the game ends, after Final Jeopardy or a tiebreaker, its results are
-saved to the tournament's `results.csv`. Back on the welcome screen, the
+saved to the tournament's `results.csv`. A tie for first has to be settled
+by a tiebreaker before the results are saved. Back on the welcome screen, the
 game and its players are greyed out. A tournament game you close part way
 through and resume with `Load Saved` still saves its results when it ends.
 
@@ -601,7 +604,8 @@ or below), JParty shows the tie and offers a tiebreaker.
 
 1. Press `Space`. JParty asks for a J-Archive game ID to take the
    tiebreaker clues from. Leave it blank for a random game, or press
-   `Cancel` to end the game in a tie.
+   `Cancel` to end the game in a tie. A tournament game can't end in a
+   tie, so there `Cancel` goes back to the tie screen.
 2. JParty loads that game in the background and picks its highest-value
    clues, in random order. Lower-value clues are only used once the top ones
    run out. Final Jeopardy, blank clues, and image clues are skipped.

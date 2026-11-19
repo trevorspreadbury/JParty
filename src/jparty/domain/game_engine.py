@@ -478,9 +478,19 @@ class Game(QObject):
 
         Returns:
             ``None``.
+
+        Raises:
+            ValueError: If ``ref`` is set and the number of ``players``
+                doesn't match the connected players. Pairing them anyway
+                would log one player's results under another's name.
         """
-        self.tournament_game = ref
         choices = list(players or []) if ref is not None else []
+        if ref is not None and len(choices) != len(self.players):
+            raise ValueError(
+                f"{ref.game_key} needs one player per phone: "
+                f"{len(choices)} players for {len(self.players)} phones"
+            )
+        self.tournament_game = ref
         seated = sorted(self.players, key=lambda player: player.player_number)
         for index, player in enumerate(seated):
             player.tournament_player = (
@@ -1886,13 +1896,18 @@ class Game(QObject):
         names = " and ".join(
             player.text_name() for player in self.tiebreaker_flow.contenders
         )
+        cancel_text = (
+            "A tournament game needs a winner, so Cancel comes back here."
+            if self.tournament_game is not None
+            else "Cancel ends the game in a tie."
+        )
         game_id, accepted = QInputDialog.getText(
             self.host_display,
             "Tiebreaker",
             f"{names} are tied for first.\n\n"
             "Enter a J-Archive game ID for the tiebreaker clues,\n"
             "or leave it blank for a random game.\n\n"
-            "Cancel ends the game in a tie.",
+            f"{cancel_text}",
         )
         if not accepted:
             return None

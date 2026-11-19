@@ -607,10 +607,23 @@ class TiebreakerFlow:
         """Ask the host for a tiebreaker game and start loading its clues.
 
         Cancelling the prompt keeps the tie, and the next ``Space`` shows the
-        end-of-game summary. Loading runs off the UI thread because it can
-        reach J-Archive.
+        end-of-game summary. In a tournament game, cancelling goes back to
+        the tie instead, since its results need a winner. Loading runs off
+        the UI thread because it can reach J-Archive.
         """
         game_id = self.game.prompt_tiebreaker_game_id()
+        if game_id is None and self.game.tournament_game is not None:
+            # results.csv needs one winner per game, and only a winner is
+            # recorded, so a tournament game can't end in a tie.
+            logging.info("Host declined a tiebreaker in a tournament game")
+            self.game.show_host_warning(
+                "Tiebreaker",
+                "A tournament game needs a winner, so its results are saved "
+                "only once a tiebreaker is won. Press Space to pick a game "
+                "for the tiebreaker.",
+            )
+            self._show_tie_again()
+            return
         if game_id is None:
             logging.info("Host declined a tiebreaker; the game ends in a tie")
             self.game.keystroke_manager.activate("GENERATE_GRAPHS")
