@@ -24,7 +24,12 @@ from jparty.ui.widgets.question import (
     TiebreakerWidget,
 )
 from jparty.ui.widgets.scoreboard import HostScoreBoard, ScoreBoard
-from jparty.ui.widgets.welcome import QRWidget, QuestionMediaPreview, Welcome
+from jparty.ui.widgets.welcome import (
+    ContestantIntro,
+    QRWidget,
+    QuestionMediaPreview,
+    Welcome,
+)
 
 
 class DisplayWindow(QMainWindow):
@@ -544,16 +549,57 @@ class HostDisplayWindow(DisplayWindow):
         self.scoreboard.hide_close_buttons()
 
     def load_question_media_preview(
-        self, preview_questions: list[tuple[int, object]]
+        self,
+        preview_questions: list[tuple[int, object]],
+        on_start: object = None,
     ) -> None:
-        """Show the pre-start question-media preview widget."""
+        """Show the pre-start question-media preview widget.
+
+        Args:
+            preview_questions: ``(round_index, question)`` pairs to preview.
+            on_start: Called by Start; defaults to starting the game.
+
+        Returns:
+            ``None``.
+        """
         self.hide_welcome_widgets()
         self.hide_question_media_preview()
         self.preview_widget = QuestionMediaPreview(
             self.game,
             preview_questions,
             on_back=self.show_welcome_from_preview,
-            on_start=self.game.start_game,
+            on_start=on_start or self.game.start_game,
+            parent=self,
+        )
+        self.preview_widget.setGeometry(self.welcome_widget.geometry())
+        self.preview_widget.setVisible(True)
+        self.preview_widget.raise_()
+
+    def load_contestant_intro(self, lines: list[str], on_start: object) -> None:
+        """Show the host's introduction of a tournament game's players.
+
+        It uses the same spot as the question-media preview, and Back
+        returns to the welcome screen the same way.
+
+        Args:
+            lines: The introduction, heading first.
+            on_start: Called when the host clicks Start Game.
+
+        Returns:
+            ``None``.
+        """
+
+        def start() -> None:
+            """Close the introduction, then start."""
+            self.hide_question_media_preview()
+            on_start()
+
+        self.hide_welcome_widgets()
+        self.hide_question_media_preview()
+        self.preview_widget = ContestantIntro(
+            lines,
+            on_back=self.show_welcome_from_preview,
+            on_start=start,
             parent=self,
         )
         self.preview_widget.setGeometry(self.welcome_widget.geometry())
@@ -569,11 +615,16 @@ class HostDisplayWindow(DisplayWindow):
         self.preview_widget = None
 
     def show_welcome_from_preview(self) -> None:
-        """Return from the preview widget to the welcome screen."""
+        """Return from the preview widget to the welcome screen.
+
+        The preview hid the scoreboard's remove and reorder buttons, so they
+        come back too: the host may be here to fix the phones.
+        """
         self.hide_question_media_preview()
         self.welcome_widget.setVisible(True)
         self.welcome_widget.setDisabled(False)
         self.welcome_widget.raise_()
+        self.scoreboard.show_close_buttons()
 
     def load_image_review_screen(self, q: object) -> None:
         """Replace the board with the host image review screen.

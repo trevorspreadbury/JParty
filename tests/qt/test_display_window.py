@@ -409,3 +409,35 @@ def test_tiebreaker_clue_replaces_final_and_winner_returns(
     assert _board_slot_widget(board_window) is board_window.graph_display
     game.keystroke_manager.call(Qt.Key.Key_Space)
     _assert_back_in_lobby(board_window, host_window)
+
+
+def test_contestant_intro_back_and_start(qtbot: object) -> None:
+    """The intro replaces the welcome screen; Back returns, Start Game starts."""
+    from jparty.ui.widgets.welcome import ContestantIntro
+
+    host_window = StubHostDisplayWindow(_stub_game())
+    qtbot.addWidget(host_window)
+    lines = ["Let's meet today's contestants:", "A teacher from Chicago, Jane Smith"]
+    starts = []
+
+    def on_start() -> None:
+        """Record the start, and whether the intro was already closed."""
+        starts.append(host_window.preview_widget)
+
+    host_window.load_contestant_intro(lines, on_start)
+    intro = host_window.preview_widget
+    assert isinstance(intro, ContestantIntro)
+    assert intro.title_label.text() == lines[0]
+    assert [label.text() for label in intro.line_labels] == lines[1:]
+    assert host_window.welcome_widget.isHidden()
+
+    intro.back_button.click()
+    assert host_window.preview_widget is None
+    assert not host_window.welcome_widget.isHidden()
+    assert host_window.welcome_widget.isEnabled()
+    assert starts == []
+
+    host_window.load_contestant_intro(lines, on_start)
+    host_window.preview_widget.start_button.click()
+    assert starts == [None]
+    assert host_window.preview_widget is None

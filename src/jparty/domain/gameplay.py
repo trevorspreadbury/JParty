@@ -522,6 +522,8 @@ class FinalJeopardyFlow:
             self.game.tiebreaker_flow.contenders = winners
             self.game.keystroke_manager.activate("START_TIEBREAKER")
         else:
+            # The winner is known; a tie offered a tiebreaker records it there.
+            self.game.record_tournament_results()
             self.game.keystroke_manager.activate("GENERATE_GRAPHS")
         # A tie offer locks Edit Score (see TiebreakerFlow.locks_scores).
         self.game._refresh_score_edit_controls()
@@ -605,10 +607,23 @@ class TiebreakerFlow:
         """Ask the host for a tiebreaker game and start loading its clues.
 
         Cancelling the prompt keeps the tie, and the next ``Space`` shows the
-        end-of-game summary. Loading runs off the UI thread because it can
-        reach J-Archive.
+        end-of-game summary. In a tournament game, cancelling goes back to
+        the tie instead, since its results need a winner. Loading runs off
+        the UI thread because it can reach J-Archive.
         """
         game_id = self.game.prompt_tiebreaker_game_id()
+        if game_id is None and self.game.tournament_game is not None:
+            # results.csv needs one winner per game, and only a winner is
+            # recorded, so a tournament game can't end in a tie.
+            logging.info("Host declined a tiebreaker in a tournament game")
+            self.game.show_host_warning(
+                "Tiebreaker",
+                "A tournament game needs a winner, so its results are saved "
+                "only once a tiebreaker is won. Press Space to pick a game "
+                "for the tiebreaker.",
+            )
+            self._show_tie_again()
+            return
         if game_id is None:
             logging.info("Host declined a tiebreaker; the game ends in a tie")
             self.game.keystroke_manager.activate("GENERATE_GRAPHS")
@@ -854,5 +869,6 @@ class TiebreakerFlow:
             self.game.dc.player_widget(player).set_lights(player is winner)
         self.game.dc.final_window.show_winner(winner)
         self.game.player_state_broadcaster.update_all()
+        self.game.record_tournament_results()
         self.game.keystroke_manager.activate("GENERATE_GRAPHS")
         self.game._refresh_score_edit_controls()

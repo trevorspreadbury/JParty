@@ -15,6 +15,7 @@ from itertools import zip_longest
 from pathlib import Path
 
 from jparty.domain.models import FinalBoard
+from jparty.domain.tournament_play import SAVED_PLAYER_ID, SAVED_PLAYER_NAME
 from jparty.services.game_cache import write_text_atomic
 
 QUESTION_HISTORY_FILE_NAME = "question_history.jsonl"
@@ -151,9 +152,7 @@ def get_current_game_state(game: object) -> object:
     if game._starting_roster is not None:
         players = game._starting_roster
     else:
-        players = [
-            {"name": p.name, "player_number": p.player_number} for p in game.players
-        ]
+        players = [saved_player_entry(p) for p in game.players]
     state = {
         "game_id": game_id,
         "players": players,
@@ -169,7 +168,29 @@ def get_current_game_state(game: object) -> object:
         state["history_format"] = game._history_format
     if game._started_by_version is not None:
         state["jparty_version"] = game._started_by_version
+    tournament_game = getattr(game, "tournament_game", None)
+    if tournament_game is not None:
+        state["tournament"] = tournament_game.to_json()
     return state
+
+
+def saved_player_entry(player: object) -> dict:
+    """Return a player's entry in ``general.json``'s players list.
+
+    Args:
+        player: A ``Player``.
+
+    Returns:
+        ``{"name", "player_number"}``, plus the roster player's id and name
+        when the player plays as a tournament player.
+    """
+    entry = {"name": player.name, "player_number": player.player_number}
+    tournament_player = getattr(player, "tournament_player", None)
+    if tournament_player is not None:
+        player_id, actual_name = tournament_player
+        entry[SAVED_PLAYER_ID] = player_id
+        entry[SAVED_PLAYER_NAME] = actual_name
+    return entry
 
 
 def get_history_entry_type(entry: dict) -> str:

@@ -30,18 +30,24 @@ from PyQt6.QtWidgets import (
 )
 
 from jparty.domain.roster import PlayerSlot, roster_name_problem
+from jparty.domain.tournament_play import played_game_keys
 from jparty.domain.tournament_setup import TournamentBoard, forget_removed_players
 from jparty.domain.tournament_store import (
     LOGO_SUFFIXES,
     TournamentFileError,
     TournamentSettings,
+    load_results,
     logo_problem,
     save_tournament,
     tournament_name_problem,
 )
 from jparty.services.game_sources import GameSourceFetcher
 from jparty.ui.widgets.tournament import BracketDesigner
-from jparty.ui.widgets.tournament_games import GamesEditor, missing_media_ids
+from jparty.ui.widgets.tournament_games import (
+    GamesEditor,
+    dropped_played_games_problem,
+    missing_media_ids,
+)
 from jparty.ui.widgets.tournament_roster import RosterEditor
 
 LAYOUT_SPACING = 8
@@ -64,6 +70,8 @@ class TournamentEditor(QWidget):
 
     saved = pyqtSignal(object)
     close_requested = pyqtSignal()
+    # The tournament folder, when the host clicks Play Games.
+    play_requested = pyqtSignal(object)
 
     def __init__(
         self,
@@ -156,6 +164,13 @@ class TournamentEditor(QWidget):
         )
         self.buttons.accepted.connect(self.save)
         self.buttons.rejected.connect(self.close_requested)
+        self.play_button = self.buttons.addButton(
+            "Play Games", QDialogButtonBox.ButtonRole.ActionRole
+        )
+        self.play_button.setToolTip(
+            "Save, then choose and start this tournament's games on the welcome screen."
+        )
+        self.play_button.clicked.connect(self.play)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(LAYOUT_SPACING)
@@ -170,6 +185,7 @@ class TournamentEditor(QWidget):
         self.games.set_players(self._roster_players())
         self.games.set_boards(self.settings.boards, self.settings.unassigned_boards)
         self.games.set_plan(self.bracket.plan)
+        self.games.set_played(self._played_game_keys())
         self.roster.roster_changed.connect(self._on_roster_changed)
         self.bracket.plan_changed.connect(self._on_plan_changed)
         self.games.games_changed.connect(self._update_tab_titles)
@@ -201,6 +217,12 @@ class TournamentEditor(QWidget):
             problem = f'A tournament named "{name}" already exists.'
         if problem is None:
             problem = roster_name_problem(self.roster.slots)
+        if problem is None:
+            # Saving would move a played game's board to the pool and leave
+            # its results matching no game.
+            dropped = self.games.dropped_played_games()
+            if dropped:
+                problem = dropped_played_games_problem(dropped)
         if problem:
             self._show_status(problem, True)
             return
@@ -239,6 +261,27 @@ class TournamentEditor(QWidget):
         else:
             self._show_status("Saved.")
         self.saved.emit(self.saved_folder)
+
+    def play(self) -> None:
+        """Save if needed, then ask to play the tournament's games.
+
+        Nothing is played while the bracket doesn't work, or if saving
+        fails.
+
+        Returns:
+            ``None``.
+        """
+        plan = self.bracket.plan
+        if plan is None or not plan.valid:
+            self._show_status(
+                "Fix the bracket before playing; see the Bracket tab.", True
+            )
+            return
+        if self.creating or self.has_unsaved_changes():
+            self.save()
+            if self.creating or self.has_unsaved_changes():
+                return
+        self.play_requested.emit(self.root / self.settings.name)
 
     def confirm_discard(self) -> bool:
         """Ask before throwing away unsaved changes.
@@ -316,6 +359,24 @@ class TournamentEditor(QWidget):
                 )
             )
         self.remove_logo_button.setEnabled(path is not None)
+
+    def refresh_played(self) -> None:
+        """Lock the boards of games played since the editor opened.
+
+        Returns:
+            ``None``.
+        """
+        self.games.set_played(self._played_game_keys())
+
+    def _played_game_keys(self) -> set[str]:
+        """Return the keys of games with saved results, so their boards lock."""
+        if self.creating:
+            return set()
+        try:
+            return played_game_keys(load_results(self.root / self.settings.name))
+        except TournamentFileError as exc:
+            logging.error("Couldn't read tournament results: %s", exc)
+            return set()
 
     def _roster_players(self) -> list[tuple[str, str]]:
         """Return ``(player_id, name)`` for each named player, in roster order."""

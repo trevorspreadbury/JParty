@@ -53,6 +53,7 @@ COLUMN_BOARD = 2
 COLUMN_CANT_PLAY = 3
 COLUMN_MEDIA = 4
 TABLE_HEADERS = ("Game", "Players", "Board", "Can't Play", "Question media")
+PLAYED_SUFFIX = " (played)"
 NO_BOARD_TEXT = "Unassigned"
 NEW_POOL_BOARD_TARGET = "New unassigned board"
 SWAP_GAME_COUNT = 2
@@ -161,6 +162,23 @@ def choose_cant_play(
     return None
 
 
+def dropped_played_games_problem(keys: Sequence[str]) -> str:
+    """Return the message for a bracket that drops played games.
+
+    Args:
+        keys: The played games the bracket no longer has.
+
+    Returns:
+        A message for the host.
+    """
+    games = ", ".join(keys)
+    return (
+        f"{games} has been played, so the bracket must keep it. Change the "
+        "bracket or roster back, or delete its results with Fix Results on "
+        "the welcome screen."
+    )
+
+
 class GamesEditor(QWidget):
     """Assign boards to a tournament's games.
 
@@ -206,6 +224,8 @@ class GamesEditor(QWidget):
         self._players: list[tuple[str, str]] = []
         self._game_keys: list[str] = []
         self._plan: TournamentPlan | None = None
+        # Games with saved results. Their boards can't change any more.
+        self._played: set[str] = set()
 
         self.summary_label = QLabel(self)
         self.summary_label.setWordWrap(True)
@@ -320,8 +340,50 @@ class GamesEditor(QWidget):
         self._game_keys = [key for key, _, _ in plan_games(plan)]
         changed = self._reconcile()
         self._redraw()
+        dropped = self.dropped_played_games()
+        if dropped:
+            self._show_status(dropped_played_games_problem(dropped), problem=True)
         if changed:
             self.games_changed.emit()
+
+    def dropped_played_games(self) -> list[str]:
+        """Return played games the current bracket no longer has.
+
+        Their results would no longer match any game, so the tournament
+        can't be saved this way. An invalid bracket drops nothing, since
+        its assignments are left alone.
+
+        Returns:
+            The games' keys, sorted.
+        """
+        if self._plan is None or not self._plan.valid:
+            return []
+        return sorted(self._played - set(self._game_keys))
+
+    def set_played(self, keys: set[str]) -> None:
+        """Lock the boards of games that have been played.
+
+        Args:
+            keys: Keys of games with saved results.
+
+        Returns:
+            ``None``.
+        """
+        self._played = set(keys)
+        self._redraw()
+        dropped = self.dropped_played_games()
+        if dropped:
+            self._show_status(dropped_played_games_problem(dropped), problem=True)
+
+    def _refuse_if_played(self, keys: Sequence[str]) -> bool:
+        """Tell the host if any of ``keys`` was played; return whether one was."""
+        played = [key for key in keys if key in self._played]
+        if played:
+            self._show_status(
+                f"{', '.join(played)} has been played, so its board can't change.",
+                problem=True,
+            )
+        return bool(played)
 
     def set_players(self, players: RosterPlayers) -> None:
         """Set the roster players offered for Can't Play, and show their names.
@@ -386,6 +448,8 @@ class GamesEditor(QWidget):
         Returns:
             ``None``.
         """
+        if self._refuse_if_played([key]):
+            return
         previous = self.boards.get(key)
         board = self.pick_board(key, previous, self)
         if board is None:
@@ -476,7 +540,7 @@ class GamesEditor(QWidget):
             ``None``.
         """
         keys = self.selected_keys()
-        if len(keys) == SWAP_GAME_COUNT:
+        if len(keys) == SWAP_GAME_COUNT and not self._refuse_if_played(keys):
             self.boards = swap_boards(self.boards, *keys)
             self._changed()
 
@@ -486,7 +550,10 @@ class GamesEditor(QWidget):
         Returns:
             ``None``.
         """
-        for key in self.selected_keys():
+        keys = self.selected_keys()
+        if self._refuse_if_played(keys):
+            return
+        for key in keys:
             self.boards, self.unassigned = unassign_board(
                 self.boards, self.unassigned, key
             )
@@ -501,6 +568,8 @@ class GamesEditor(QWidget):
         keys = self.selected_keys()
         pool_index = self.pool_list.currentRow()
         if len(keys) != 1 or not 0 <= pool_index < len(self.unassigned):
+            return
+        if self._refuse_if_played(keys):
             return
         self.boards, self.unassigned = assign_from_pool(
             self.boards, self.unassigned, pool_index, keys[0]
@@ -571,10 +640,13 @@ class GamesEditor(QWidget):
                 media_text = "None for " + ", ".join(missing)
             else:
                 media_text = "Yes"
+            board_text = board.label if board is not None else NO_BOARD_TEXT
+            if key in self._played:
+                board_text += PLAYED_SUFFIX
             cells = (
                 key,
                 "; ".join(game.seats),
-                board.label if board is not None else NO_BOARD_TEXT,
+                board_text,
                 self.cant_play_text(board) if board is not None else "",
                 media_text,
             )
@@ -610,15 +682,22 @@ class GamesEditor(QWidget):
     def _update_buttons(self) -> None:
         """Enable the buttons that apply to the current selection."""
         keys = self.selected_keys()
+        any_played = any(key in self._played for key in keys)
         # No game selected adds a board to the pool; two or more is unclear.
-        self.set_board_button.setEnabled(len(keys) <= 1)
+        self.set_board_button.setEnabled(len(keys) <= 1 and not any_played)
         self.cant_play_button.setEnabled(len(keys) == 1 and keys[0] in self.boards)
         self.swap_button.setEnabled(
-            len(keys) == SWAP_GAME_COUNT and any(key in self.boards for key in keys)
+            len(keys) == SWAP_GAME_COUNT
+            and any(key in self.boards for key in keys)
+            and not any_played
         )
-        self.unassign_button.setEnabled(any(key in self.boards for key in keys))
+        self.unassign_button.setEnabled(
+            any(key in self.boards for key in keys) and not any_played
+        )
         pool_selected = bool(self.pool_list.selectedItems())
-        self.assign_pool_button.setEnabled(pool_selected and len(keys) == 1)
+        self.assign_pool_button.setEnabled(
+            pool_selected and len(keys) == 1 and not any_played
+        )
         self.pool_cant_play_button.setEnabled(pool_selected)
         self.delete_pool_button.setEnabled(pool_selected)
 

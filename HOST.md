@@ -286,6 +286,8 @@ Tournament window. Everything for a tournament happens there:
 A created or loaded tournament opens with its name and logo at the top and
 three tabs: `Players`, `Bracket`, and `Games`. Everything stays editable. One
 `Save` button saves all three tabs. `Close` goes back to the tournament list.
+`Play Games` saves if needed and hands the tournament to the welcome screen;
+see [Playing tournament games](#playing-tournament-games).
 Closing the window or the tournament with unsaved changes asks before
 discarding them. A tournament without unsaved changes stays open when you
 close the window, so reopening the window takes you back to it.
@@ -427,6 +429,58 @@ media folder (see [`Load Question Media`](#load-question-media)). It also
 warns when two games play the same round of the same source game, because
 players would see the same clues twice.
 
+Once a game has been played, its board is locked: `Set Board...`, `Swap
+Boards`, `Unassign`, and `Assign to Selected Game` no longer change it, and
+its board shows `(played)`. A Bracket or Players change that would drop a
+played game warns you, and the tournament can't be saved that way: change
+it back, or delete that game's results with `Fix Results...` first.
+
+### Playing tournament games
+
+`Play Games` in a tournament puts the welcome screen into tournament mode.
+The game id box, round checkboxes, and `Advanced Options` are replaced by
+the tournament's games and players. `Reveal Answers after Triple Stumper` is
+hidden and always on for tournament games, so every game is played the same
+way; leaving the tournament puts your choice back.
+
+1. Pick a game from `Games`. Its board loads by itself, and its summary
+   shows below. Games already played, and games with no board, are greyed
+   out and can't be picked.
+2. Pick a player for each podium. Only players who can play that game are
+   offered:
+   - A first-round game: anyone who hasn't played that round yet.
+   - A chase game's third seat (marked `(chaser)`): a player who lost a game
+     earlier in the same round. The other two seats are new players.
+   - A later round: players who played the round before it (or, for
+     Semifinal byes, the preliminaries) and haven't played this round.
+     Advancement isn't worked out yet, so this includes players who were
+     knocked out; pick the right ones.
+   - Players on the board's Can't Play list are never offered.
+3. Have the three players join from their phones as usual. Each podium shows
+   the phone on it: the typed name, or the signature a player signed in with. Podium 1 is the first phone in the scoreboard, and so
+   on; use the scoreboard's `▲`/`▼` to put the phones in podium order.
+4. Click `Start!`. The host screen shows "Let's meet today's contestants:"
+   and an introduction for each player, such as "A teacher from Chicago,
+   Jane Smith (Ziggy)". The name appears once when the sheet's Full Name
+   and the Actual Name match, and a player with no sign-up is introduced by
+   their Actual Name. Click `Start Game` to begin (`Back` returns to the
+   welcome screen). If another phone joins while the introduction is
+   showing, `Start Game` goes back to the welcome screen, and the status
+   line says what's wrong; remove the extra phone, or use `▲`/`▼` to fix
+   the order. A phone that drops keeps its podium and rejoins it when it
+   reconnects.
+
+When the game ends, after Final Jeopardy or a tiebreaker, its results are
+saved to the tournament's `results.csv`. A tie for first has to be settled
+by a tiebreaker before the results are saved. Back on the welcome screen, the
+game and its players are greyed out. A tournament game you close part way
+through and resume with `Load Saved` still saves its results when it ends.
+
+`Fix Results...` opens the saved results. You can change scores, Coryat
+scores, and who won (each game needs a winner), or use `Delete Game's
+Results` so a game can be played again. `Leave Tournament` returns to
+choosing a regular game.
+
 ### Saved files
 
 Each tournament is saved in `tournaments/<name>/` in the JParty data folder,
@@ -440,6 +494,16 @@ outside git:
   and the logo's file name.
   The app writes it; you don't need to edit it by hand.
 - `logo.png` (or `.jpg`, and so on) is the logo, if you chose one.
+- `results.csv` has one row per player per played game: `player` (Actual
+  Name), `score`, `coryat`, `game` (`<tournament name>-<game id>`, where the
+  game id is the board's id, as in the saved game's folder name), and
+  `result` (`win` or `loss`). The `player_id`, `game_key`, and `saved_game`
+  columns after them are what JParty matches on; leave them as they are if
+  you edit the file by hand. Saving the tournament's setup never changes it.
+  If you edit it in Excel, save it as "CSV UTF-8" with commas between cells.
+  JParty won't play a game while it can't read the file, so a game can't
+  overwrite results it couldn't read. `Fix Results...` reads it again once
+  it's fixed.
 
 To reuse a tournament's setup, copy its folder and give the copy a new name;
 the copy saves into its own folder. Tournaments saved by an older JParty
@@ -550,7 +614,8 @@ or below), JParty shows the tie and offers a tiebreaker.
 
 1. Press `Space`. JParty asks for a J-Archive game ID to take the
    tiebreaker clues from. Leave it blank for a random game, or press
-   `Cancel` to end the game in a tie.
+   `Cancel` to end the game in a tie. A tournament game can't end in a
+   tie, so there `Cancel` goes back to the tie screen.
 2. JParty loads that game in the background and picks its highest-value
    clues, in random order. Lower-value clues are only used once the top ones
    run out. Final Jeopardy, blank clues, and image clues are skipped.

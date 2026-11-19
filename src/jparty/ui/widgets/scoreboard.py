@@ -561,3 +561,25 @@ class HostScoreBoard(ScoreBoard):
             if hasattr(pw, "down_button"):
                 pw.down_button.setVisible(False)
                 pw.down_button.setEnabled(False)
+
+    def show_close_buttons(self) -> None:
+        """Show player removal and reorder controls again, back in the lobby.
+
+        Undoes :meth:`hide_close_buttons` when the host returns to the
+        welcome screen without starting, for example from the question-media
+        preview or a tournament's introduction. ``▲``/``▼`` are enabled as
+        :meth:`refresh_players` would.
+
+        Returns:
+            ``None``.
+        """
+        last = len(self.player_widgets) - 1
+        for index, pw in enumerate(self.player_widgets):
+            pw.remove_button.setVisible(True)
+            pw.remove_button.setEnabled(True)
+            if hasattr(pw, "up_button"):
+                pw.up_button.setVisible(True)
+                pw.up_button.setEnabled(index > 0)
+            if hasattr(pw, "down_button"):
+                pw.down_button.setVisible(True)
+                pw.down_button.setEnabled(index < last)
