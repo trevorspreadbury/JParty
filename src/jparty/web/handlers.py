@@ -452,6 +452,25 @@ class LecternHandler(tornado.web.RequestHandler):
         self.render("lectern.html", player_number=player_number, max_players=MAXPLAYERS)
 
 
+class HostHandler(tornado.web.RequestHandler):
+    """Serve the host's phone page: each tournament player's prompts and intro.
+
+    Anyone on the local network can open it, like the buzzer page. Sign-up
+    answers come from a shared sheet, so the template escapes everything it
+    shows.
+    """
+
+    def get(self) -> None:
+        """Render the page for the tournament being played.
+
+        Returns:
+            ``None``.
+        """
+        page = self.application.controller.host_page()
+        self.set_header("Cache-Control", "no-store")
+        self.render("host.html", page=page)
+
+
 class LecternSocketHandler(tornado.websocket.WebSocketHandler):
     """Handle live websocket traffic for host-side lectern displays."""
 

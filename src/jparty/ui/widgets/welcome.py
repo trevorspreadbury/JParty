@@ -547,6 +547,7 @@ QCheckBox {{
             QMessageBox.warning(self, "Couldn't open tournament", str(exc))
             return False
         logging.info("Playing tournament %s", folder)
+        self._set_host_tournament(Path(folder))
         self.debounce_timer.stop()
         self._summary_request.cancel()
         self._loading_summary = False
@@ -559,6 +560,12 @@ QCheckBox {{
         self._clear_tournament_board()
         self.on_tournament_selection_changed()
         return True
+
+    def _set_host_tournament(self, folder: Path | None) -> None:
+        """Show ``folder``'s players on the phone ``/host`` page, or none."""
+        controller = getattr(self.game, "buzzer_controller", None)
+        if controller is not None:
+            controller.host_tournament = folder
 
     def _tournament_change_problem(self) -> str | None:
         """Return why a dropout can't be saved now, or ``None``.
@@ -596,6 +603,7 @@ QCheckBox {{
             ``None``.
         """
         logging.info("Leaving tournament mode")
+        self._set_host_tournament(None)
         self.tournament_mode = False
         self._tournament_request.cancel()
         self._clear_tournament_board()

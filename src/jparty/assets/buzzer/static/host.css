@@ -1,0 +1,104 @@
+/* The host's phone page: a scrolling list of tournament players. */
+
+body {
+    margin: 0;
+    padding: 0 12px 24px;
+    background: #060ce9;
+    color: #ffffff;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 18px;
+    line-height: 1.4;
+}
+
+header {
+    position: sticky;
+    top: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 0;
+    background: #060ce9;
+}
+
+h1 {
+    margin: 0;
+    font-size: 22px;
+}
+
+h2 {
+    margin: 20px 0 8px;
+    font-size: 16px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #ffcc00;
+}
+
+.refresh {
+    flex-shrink: 0;
+    padding: 6px 12px;
+    border-radius: 6px;
+    background: #ffcc00;
+    color: #000000;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.filter {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 10px;
+    border: 0;
+    border-radius: 6px;
+    font-size: 18px;
+}
+
+.player {
+    margin: 8px 0;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.3);
+}
+
+.player summary {
+    cursor: pointer;
+}
+
+.name {
+    font-weight: bold;
+    font-size: 20px;
+}
+
+.status {
+    margin-left: 8px;
+    font-size: 14px;
+    color: #c8ccff;
+}
+
+.intro-label {
+    margin-top: 10px;
+    font-size: 13px;
+    text-transform: uppercase;
+    color: #ffcc00;
+}
+
+.intro {
+    font-size: 20px;
+}
+
+.prompts {
+    padding-left: 22px;
+}
+
+.prompts li {
+    margin: 8px 0;
+}
+
+.empty,
+.problem {
+    color: #c8ccff;
+}
+
+.problem {
+    color: #ffb3b3;
+}

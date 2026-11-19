@@ -1051,3 +1051,16 @@ def test_start_plays_the_selected_tiebreaker(
     game.players = game.players[:1]
     widget.check_start()
     assert not widget.tournament_start_button.isEnabled()
+
+
+def test_tournament_mode_points_the_host_page_at_the_tournament(
+    tournament_welcome: tuple, temp_dir: object
+) -> None:
+    """Entering tournament mode shows its players on /host; leaving clears it."""
+    widget, game, _parent = tournament_welcome
+    game.buzzer_controller = SimpleNamespace(host_tournament=None)
+    folder = temp_dir / "Fun"
+    assert widget.enter_tournament_mode(folder)
+    assert game.buzzer_controller.host_tournament == folder
+    widget.tournament_panel.leave_button.click()
+    assert game.buzzer_controller.host_tournament is None

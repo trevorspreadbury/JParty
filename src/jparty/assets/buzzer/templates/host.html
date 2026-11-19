@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>JParty! Host</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <link rel="stylesheet" href="{{ static_url('host.css') }}">
+    </head>
+    <body>
+        <header>
+            <h1>{% if page.tournament %}{{ page.tournament }}{% else %}JParty! Host{% end %}</h1>
+            <a class="refresh" href="/host">Refresh</a>
+        </header>
+        {% if page.problem %}
+            <p class="problem">{{ page.problem }}</p>
+        {% elif not page.tournament %}
+            <p class="empty">No tournament is being played. Open one with Play Games in the Tournament window, then refresh.</p>
+        {% elif not page.players %}
+            <p class="empty">This tournament has no players yet.</p>
+        {% else %}
+            <input id="filter" class="filter" type="search" placeholder="Find a player" autocomplete="off">
+            {% set stage = [player for player in page.players if player.on_stage] %}
+            {% set others = [player for player in page.players if not player.on_stage] %}
+            {% for heading, group in (("Playing now", stage), ("Players" if not stage else "Everyone else", others)) %}
+                {% if group %}
+                    <section class="group">
+                    <h2>{{ heading }}</h2>
+                    {% for player in group %}
+                        <details class="player" data-name="{{ player.name.lower() }}"{% if player.on_stage %} open{% end %}>
+                            <summary>
+                                <span class="name">{{ player.name }}</span>
+                                {% if player.status %}<span class="status">{{ player.status }}</span>{% end %}
+                            </summary>
+                            <div class="intro-label">Introduce them as</div>
+                            <div class="intro">{{ player.introduction }}</div>
+                            {% if player.prompts %}
+                                <ol class="prompts">
+                                    {% for prompt in player.prompts %}
+                                        <li>{{ prompt }}</li>
+                                    {% end %}
+                                </ol>
+                            {% else %}
+                                <p class="empty">No sign-up answers.</p>
+                            {% end %}
+                        </details>
+                    {% end %}
+                    </section>
+                {% end %}
+            {% end %}
+        {% end %}
+        <script>
+            // Show only players whose name contains what's typed.
+            var filter = document.getElementById("filter");
+            if (filter) {
+                filter.addEventListener("input", function () {
+                    var text = filter.value.trim().toLowerCase();
+                    document.querySelectorAll(".group").forEach(function (group) {
+                        var shown = 0;
+                        group.querySelectorAll(".player").forEach(function (player) {
+                            var match = player.dataset.name.indexOf(text) !== -1;
+                            player.style.display = match ? "" : "none";
+                            shown += match ? 1 : 0;
+                        });
+                        // Hide a heading whose players are all filtered out.
+                        group.style.display = shown ? "" : "none";
+                    });
+                });
+            }
+        </script>
+    </body>
+</html>

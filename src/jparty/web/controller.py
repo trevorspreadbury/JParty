@@ -13,6 +13,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from threading import Thread
 from typing import TYPE_CHECKING, TypedDict
 
@@ -20,8 +21,10 @@ import tornado.escape
 import tornado.ioloop
 
 from jparty.app.config import PORT
+from jparty.app.paths import TOURNAMENTS_DIR
 from jparty.domain.input import index_to_key
 from jparty.domain.models import Player
+from jparty.domain.tournament_host import HostPage, host_page
 from jparty.web.app import Application
 
 if TYPE_CHECKING:
@@ -99,6 +102,7 @@ class BuzzerController:
     resume_mode_active: bool
     late_answer_players: dict[Player, BuzzerSocketHandler]
     late_answer_deadline: float
+    host_tournament: Path | None
 
     def __init__(self, game: Game) -> None:
         """Initialize the buzzer controller and its Tornado application.
@@ -132,6 +136,10 @@ class BuzzerController:
         # resubmits its box on ``TOOLATE``); see ``toolate`` and ``answer``.
         self.late_answer_players = {}
         self.late_answer_deadline = 0.0
+        # The tournament the welcome screen is playing, for the /host page.
+        # Set from the UI thread; the page only reads it.
+        self.host_tournament = None
+        self.tournaments_dir = TOURNAMENTS_DIR
 
     def start(self, threaded: bool = True, tries: int = 0) -> None:
         """Start the Tornado server, retrying with higher ports if needed.
@@ -950,3 +958,26 @@ class BuzzerController:
                 logging.error(
                     f"Error broadcasting to lectern {player_number}", exc_info=True
                 )
+
+    def host_page(self) -> HostPage:
+        """Return what the host's ``/host`` page shows.
+
+        The tournament is the one the welcome screen is playing, or else the
+        one the game in progress belongs to (for example a resumed
+        tournament game). Its players on stage come first.
+
+        Returns:
+            The page, read fresh from the tournament folder.
+        """
+        game = self.game
+        folder = self.host_tournament
+        ref = getattr(game, "tournament_game", None)
+        if folder is None and ref is not None:
+            folder = Path(self.tournaments_dir) / ref.tournament
+        on_stage = []
+        if ref is not None:
+            for player in list(getattr(game, "players", [])):
+                tournament_player = getattr(player, "tournament_player", None)
+                if tournament_player is not None:
+                    on_stage.append(tournament_player[0])
+        return host_page(folder, on_stage)

@@ -596,6 +596,25 @@ roster; remove them on the `Players` tab if they aren't needed.
 Dropping a player out changes the roster and boards, so first save or
 discard any unsaved changes in the Tournament window.
 
+### Host phone page
+
+While you play a tournament, open `http://<address>/host` on your phone,
+where `<address>` is the address shown on the JParty welcome screen (for
+example `http://192.168.1.20:8080/host`). It lists the tournament's players.
+Tap a player to see how to introduce them (the same line the host screen
+shows) and their sign-up answers, and where they stand in the tournament.
+
+- The players in the game being played are at the top, under `Playing
+  now`, already open.
+- Type in `Find a player` to narrow the list.
+- Tap `Refresh` (or reload the page) to catch up after a game ends or the
+  roster changes; the page doesn't update by itself.
+- It shows the tournament chosen with `Play Games`, or the tournament of a
+  saved tournament game you resumed. Outside a tournament it says so.
+
+Anyone on the same network can open the page, like the buzzer page, so keep
+sign-up answers to things players are happy for others to see.
+
 ### Saved files
 
 Each tournament is saved in `tournaments/<name>/` in the JParty data folder,
