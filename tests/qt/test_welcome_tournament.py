@@ -21,6 +21,7 @@ from jparty.ui.widgets.tournament_play import (
     COLUMN_RESULT,
     COLUMN_SCORE,
     NO_PHONE_TEXT,
+    PLAYED_COLOR,
     SIGNATURE_LINES,
     SIGNED_NAME_TEXT,
     TournamentPlayPanel,
@@ -40,15 +41,25 @@ SF2 = "Semifinals: SF 2"
 FINAL = "Final: Final"
 
 
-def write_tournament(root: object, results: list[GameResult] | None = None) -> object:
-    """Save a nine-player tournament with boards for SF 1 and SF 2."""
+def write_tournament(
+    root: object, results: list[GameResult] | None = None, **boards: object
+) -> object:
+    """Save a nine-player tournament with boards for SF 1 and SF 2.
+
+    ``boards`` adds more, by game key with spaces and colons as underscores
+    (``Final_Final="9999"``).
+    """
     slots = [PlayerSlot(f"P{index}", player_id=f"p{index}") for index in range(9)]
     slots[0] = PlayerSlot(
         "Ziggy", SignUp("t", "Jane Smith", "teacher", "Chicago"), player_id="p0"
     )
+    extra = {
+        name.replace("__", ": ").replace("_", " "): board(str(game_id))
+        for name, game_id in boards.items()
+    }
     settings = TournamentSettings(
         "Fun",
-        boards={SF1: board("1111"), SF2: board("2222")},
+        boards={SF1: board("1111"), SF2: board("2222"), **extra},
     )
     folder = save_tournament(root, settings, slots)
     if results:
@@ -92,7 +103,17 @@ def test_panel_lists_games_and_greys_out_played_ones(
     panel.games_list.setCurrentRow(0)
     assert panel.selected_key() is None
     players = list_texts(panel.players_list)
-    assert players[:4] == ["Ziggy", "P1 (played)", "P2 (played)", "P3 (played)"]
+    assert players[:4] == [
+        "Ziggy",
+        "P1 (played the Semifinals)",
+        "P2 (played the Semifinals)",
+        "P3 (played the Semifinals)",
+    ]
+    greyed = [
+        panel.players_list.item(row).foreground().color() == PLAYED_COLOR
+        for row in range(4)
+    ]
+    assert greyed == [False, True, True, True]
 
 
 def test_podiums_offer_only_eligible_players(qtbot: object, temp_dir: object) -> None:
@@ -859,3 +880,172 @@ def test_reopening_the_tournament_window_locks_newly_played_games(
     )
     window.show()
     assert games.table.item(1, 2).text().endswith(PLAYED_SUFFIX)
+
+
+def all_semifinal_results() -> list[GameResult]:
+    """Return results for all three Semifinals, won by P1, P4, and P7."""
+    return sf1_results() + [
+        GameResult(SF2, "p4", "P4", 900, 700, "Fun-2222", "win", "s2"),
+        GameResult(SF2, "p5", "P5", 100, 100, "Fun-2222", "loss", "s2"),
+        GameResult(SF2, "p6", "P6", 0, 0, "Fun-2222", "loss", "s2"),
+        GameResult("Semifinals: SF 3", "p7", "P7", 900, 700, "Fun-3", "win", "s3"),
+        GameResult("Semifinals: SF 3", "p8", "P8", 100, 100, "Fun-3", "loss", "s3"),
+        GameResult("Semifinals: SF 3", "p0", "Ziggy", 0, 0, "Fun-3", "loss", "s3"),
+    ]
+
+
+def combo_ids(combo: object) -> list[str]:
+    """Return a podium picker's player ids, without the "Choose" entry."""
+    return [combo.itemData(index) for index in range(1, combo.count())]
+
+
+def test_final_offers_only_the_semifinal_winners(
+    qtbot: object, temp_dir: object
+) -> None:
+    """Once the Semifinals are decided, only their winners can sit the Final."""
+    folder = write_tournament(temp_dir, all_semifinal_results(), Final__Final=9999)
+    panel = make_panel(qtbot, folder)
+    panel.select_game(FINAL)
+    assert combo_ids(panel.podium_combos[0]) == ["p1", "p4", "p7"]
+    players = list_texts(panel.players_list)
+    assert "P1 (won, in the Final)" in players
+    assert "P5 (out)" in players
+
+
+def test_later_round_says_why_no_one_can_play_it_yet(
+    qtbot: object, temp_dir: object
+) -> None:
+    """With Semifinals left to play, the Final offers no one and says why."""
+    folder = write_tournament(temp_dir, sf1_results(), Final__Final=9999)
+    panel = make_panel(qtbot, folder)
+    panel.select_game(FINAL)
+    assert combo_ids(panel.podium_combos[0]) == []
+    assert panel.problem(3) == (
+        "The Semifinals aren't finished: 2 games left (SF 2, SF 3)."
+    )
+
+
+def test_results_that_no_longer_add_up_are_flagged(
+    qtbot: object, temp_dir: object
+) -> None:
+    """A Final played by someone who didn't win a Semifinal shows a warning."""
+    results = all_semifinal_results() + [
+        GameResult(FINAL, "p1", "P1", 1, 1, "Fun-9", "win", "f"),
+        GameResult(FINAL, "p4", "P4", 0, 0, "Fun-9", "loss", "f"),
+        GameResult(FINAL, "p5", "P5", 0, 0, "Fun-9", "loss", "f"),
+    ]
+    panel = make_panel(qtbot, write_tournament(temp_dir, results))
+    assert not panel.conflicts_label.isHidden()
+    assert "Final: P5 played, but they didn't advance into the Final." in (
+        panel.conflicts_label.text()
+    )
+
+    panel = make_panel(
+        qtbot, write_tournament(temp_dir / "ok", all_semifinal_results())
+    )
+    assert panel.conflicts_label.isHidden()
+
+
+# Tiebreakers
+
+QF = "Quarterfinals"
+
+
+def write_tied_tournament(root: object) -> object:
+    """Save a 12-player tournament whose Quarterfinals end with a tie.
+
+    The four Quarterfinals are won by ``w1``..``w4``. Of the eight others,
+    ``e`` and ``f`` are tied at 400 for the last of five wildcard spots.
+    """
+    ids = ["w1", "w2", "w3", "w4", *"abcdefgh"]
+    slots = [PlayerSlot(player_id.upper(), player_id=player_id) for player_id in ids]
+    settings = TournamentSettings("Tied", boards={SF1: board("1111")})
+    folder = save_tournament(root, settings, slots)
+    losers = {"a": 800, "b": 700, "c": 600, "d": 500, "e": 400, "f": 400, "g": 200}
+    losers["h"] = 100
+    names = list(losers)
+    results = []
+    for game in range(4):
+        key = f"{QF}: QF {game + 1}"
+        winner = f"w{game + 1}"
+        results.append(GameResult(key, winner, winner.upper(), 5000, 0, "g", "win"))
+        for player_id in names[2 * game : 2 * game + 2]:
+            results.append(
+                GameResult(
+                    key, player_id, player_id.upper(), losers[player_id], 0, "g", "loss"
+                )
+            )
+    save_results(folder, results)
+    return folder
+
+
+def test_open_tie_is_listed_first_with_its_players(
+    qtbot: object, temp_dir: object
+) -> None:
+    """The tie comes first in Games; picking it shows who plays, in order."""
+    panel = make_panel(qtbot, write_tied_tournament(temp_dir))
+    assert list_texts(panel.games_list)[0] == (
+        "Tiebreaker: E, F for the last wildcard spot in the Quarterfinals"
+    )
+    panel.games_list.setCurrentRow(0)
+    assert panel.selected_key() is None
+    assert panel.selected_tie().players == ("e", "f")
+    assert [combo.currentText() for combo in panel.podium_combos] == ["E", "F", "-"]
+    assert not any(combo.isEnabled() for combo in panel.podium_combos)
+    assert panel.problem(1) == (
+        "Wait for 2 phones to join (1 so far), in this order: E, F."
+    )
+    assert panel.problem(2) is None
+    session = panel.tiebreaker_session()
+    assert session.players == (("e", "E"), ("f", "F"))
+    assert session.tournament == "Tied"
+
+    # The Semifinals wait for the tie, and say so.
+    panel.select_game(SF1)
+    assert panel.problem(3).startswith("E, F are tied at $400")
+
+
+def test_saved_tiebreaker_settles_the_tie(qtbot: object, temp_dir: object) -> None:
+    """Once the tiebreaker is saved, the tie is gone and its winner advances."""
+    from jparty.domain.tournament_advancement import Tiebreak
+    from jparty.domain.tournament_store import record_tiebreak
+
+    folder = write_tied_tournament(temp_dir)
+    record_tiebreak(folder, Tiebreak(QF, frozenset("ef"), "f", "F"))
+    panel = make_panel(qtbot, folder)
+    assert not list_texts(panel.games_list)[0].startswith("Tiebreaker")
+    players = list_texts(panel.players_list)
+    assert "F (wildcard, in the Semifinals)" in players
+    assert "E (out)" in players
+    panel.select_game(SF1)
+    assert "f" in combo_ids(panel.podium_combos[0])
+    assert "e" not in combo_ids(panel.podium_combos[0])
+
+
+def test_start_plays_the_selected_tiebreaker(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> None:
+    """With one phone per tied player, Start begins the tiebreaker session."""
+    game = TournamentGame(phones=2)
+    started = []
+    game.start_tiebreaker_session = started.append
+    parent = IntroParent()
+    qtbot.addWidget(parent)
+    widget = Welcome(game, parent)
+    widget.loader = ImmediateLoader()
+    assert widget.enter_tournament_mode(write_tied_tournament(temp_dir))
+    widget.tournament_panel.games_list.setCurrentRow(0)
+    assert widget.tournament_start_button.isEnabled()
+    assert widget.summary_label.text().startswith("E, F are tied at $400")
+    assert game.data is None
+
+    game.set_reveal_answers_after_triple_stumper(False)
+    widget.tournament_start_button.click()
+    (session,) = started
+    assert session.tie.players == ("e", "f")
+    assert parent.intro is None
+    assert game.reveal_answers_after_triple_stumper_enabled()
+
+    game.players = game.players[:1]
+    widget.check_start()
+    assert not widget.tournament_start_button.isEnabled()
