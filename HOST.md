@@ -478,7 +478,8 @@ way; leaving the tournament puts your choice back.
 When the game ends, after Final Jeopardy or a tiebreaker, its results are
 saved to the tournament's `results.csv`. A tie for first has to be settled
 by a tiebreaker before the results are saved. Back on the welcome screen, the
-game and its players are greyed out. A tournament game you close part way
+game is greyed out, and `Players` shows where each of its players stands (see
+[Advancement](#advancement)). A tournament game you close part way
 through and resume with `Load Saved` still saves its results when it ends.
 
 `Fix Results...` opens the saved results. You can change scores, Coryat
@@ -528,8 +529,10 @@ If several players are tied for more than one spot, each tiebreaker settles
 one spot; play the next one for the players still tied.
 
 If a fixed result means someone who already played a later game no longer
-advanced into it, a red warning above `Games` lists them. Fix that game's
-results too, or delete them and play it again.
+advanced into it, or a chase game was played by someone who shouldn't have
+chased, a red warning above `Games` lists them. Fix that game's results too,
+or delete them and play it again. A chase game whose chaser already chased
+in the other chase game waits until the results are sorted out.
 
 ### Saved files
 

@@ -487,7 +487,9 @@ def test_chase_game_offers_new_players_and_the_chaser() -> None:
     assert eligibility.chasers == ("f",)
     assert seating_problem(eligibility, ["n1", "n2", "f"]) is None
     assert "can't play" in seating_problem(eligibility, ["n1", "n2", "e"])
-    assert "the chaser" in seating_problem(eligibility, ["n1", "n2", "n3"])
+    assert "the round's chaser, marked (chaser)" in seating_problem(
+        eligibility, ["n1", "n2", "n3"]
+    )
 
 
 def test_chase_game_waits_for_the_regular_games() -> None:
@@ -606,3 +608,146 @@ def test_fixed_result_that_changes_a_played_game_is_reported() -> None:
     assert advancement_conflicts(plan, standings, fixed, {"e": "Eve"}) == [
         "SF 1: Eve played, but they didn't advance into the Semifinals."
     ]
+
+
+# Review fixes (#129)
+
+
+def quarterfinals(losers: dict[str, int]) -> list[GameResult]:
+    """Return Quarterfinals won by ``w1``, ``w2``, ...: two of ``losers`` in each."""
+    names = list(losers)
+    results = []
+    for game in range(len(names) // 2):
+        results += play(
+            f"{QF}: QF {game + 1}",
+            {
+                f"w{game + 1}": 5000,
+                **{p: losers[p] for p in names[2 * game : 2 * game + 2]},
+            },
+            f"w{game + 1}",
+        )
+    return results
+
+
+def swap_winner(results: list[GameResult], key: str, winner: str) -> list[GameResult]:
+    """Return ``results`` with ``winner`` made the only winner of ``key``."""
+    return [
+        GameResult(
+            **{**vars(row), "result": "win" if row.player_id == winner else "loss"}
+        )
+        if row.game_key == key
+        else row
+        for row in results
+    ]
+
+
+def test_tie_between_the_chaser_and_the_next_player_out() -> None:
+    """14 players: e and f level on the first two places out need a tiebreaker."""
+    plan = plan_tournament(TournamentOptions(14))
+    layout = plan.rounds[0].layout
+    assert (layout.regular_games, layout.chase_games, layout.wildcards) == (4, 1, 4)
+    losers = {
+        "a": 800,
+        "b": 700,
+        "c": 600,
+        "d": 500,
+        "e": 400,
+        "f": 400,
+        "g": 200,
+        "h": 100,
+    }
+    (tie,) = round_standing(plan, 0, quarterfinals(losers)).ties
+    assert (tie.reason, set(tie.players), tie.spots) == (TIE_CHASER, {"e", "f"}, 1)
+
+
+def test_three_way_tie_across_two_cutoffs_settles_one_spot_at_a_time() -> None:
+    """d, e, f on the last wildcard and the chaser seat: one spot per tiebreaker."""
+    plan = plan_tournament(TournamentOptions(14))
+    losers = {
+        "a": 800,
+        "b": 700,
+        "c": 600,
+        "d": 500,
+        "e": 500,
+        "f": 500,
+        "g": 200,
+        "h": 100,
+    }
+    (tie,) = round_standing(plan, 0, quarterfinals(losers)).ties
+    assert (set(tie.players), tie.spots) == ({"d", "e", "f"}, 1)
+
+
+def test_tie_just_outside_the_wildcards_needs_no_tiebreaker() -> None:
+    """Two players level right after the last wildcard spot are both out."""
+    plan = plan_tournament(TournamentOptions(12))
+    standing = round_standing(plan, 0, twelve_player_quarterfinals(g=300))
+    assert standing.decided
+    assert standing.wildcards == ("a", "b", "c", "d", "e")
+
+
+def test_chaser_who_is_fixed_into_a_regular_win_is_counted_once() -> None:
+    """A fix that makes the chaser win QF 3 doesn't put them in the Semifinals twice."""
+    plan = plan_tournament(TournamentOptions(11))
+    results = eleven_player_regulars() + play(
+        f"{QF}: Chase 1", {"n1": 10, "n2": 20, "f": 9000}, "f"
+    )
+    fixed = swap_winner(results, f"{QF}: QF 3", "f")
+    standings = tournament_standings(plan, fixed)
+    advancers = standings[0].advancers
+    assert len(set(advancers)) == len(advancers)
+    assert advancers.count("f") == 1
+    # f won QF 3, so their chase win opens no extra spot: five wildcards.
+    assert standings[0].wildcards == ("w3", "a", "b", "c", "d")
+    assert advancement_conflicts(plan, standings, fixed, {"f": "Fay", "e": "Eve"}) == [
+        "Chase 1: Fay chased, but the chaser should be Eve."
+    ]
+
+
+def test_chaser_who_already_chased_is_not_offered_the_other_chase_game() -> None:
+    """After a fix swaps the first two out, Chase 1 waits instead of reusing e."""
+    plan = plan_tournament(TournamentOptions(13))
+    results = thirteen_player_regulars() + play(
+        f"{QF}: Chase 2", {"n3": 10, "n4": 20, "e": 1}, "n3"
+    )
+    # f's 100 was really 250, so f is now the first player out and e the second.
+    fixed = [
+        GameResult(**{**vars(row), "score": 250}) if row.player_id == "f" else row
+        for row in results
+    ]
+    standings = tournament_standings(plan, fixed)
+    standing = standings[0]
+    assert standing.planned_chasers == {f"{QF}: Chase 1": "e", f"{QF}: Chase 2": "f"}
+    assert f"{QF}: Chase 1" not in standing.chasers
+    assert standing.chaser_clashes == {f"{QF}: Chase 1": ("e", f"{QF}: Chase 2")}
+    slots = roster("w1", "w2", "w3", *"abcdef", "n1", "n2", "n3", "n4")
+    eligibility = eligible_players(plan, f"{QF}: Chase 1", slots, fixed)
+    assert eligibility.chasers == ()
+    assert eligibility.waiting == (
+        "E should chase in this game, but already chased in Chase 2. "
+        "Fix the results first."
+    )
+    assert advancement_conflicts(plan, standings, fixed, {"e": "Eve", "f": "Fay"}) == [
+        "Chase 2: Eve chased, but the chaser should be Fay."
+    ]
+
+
+def test_undecided_round_before_flags_only_players_who_never_played_it() -> None:
+    """A tie in the Quarterfinals doesn't flag the Semifinal's real advancers."""
+    plan = plan_tournament(TournamentOptions(12))
+    results = twelve_player_quarterfinals(f=400) + play(
+        f"{SF}: SF 1", {"w1": 1, "a": 2, "z": 3}, "z"
+    )
+    standings = tournament_standings(plan, results)
+    assert standings[0].ties
+    assert advancement_conflicts(plan, standings, results, {"z": "Zed"}) == [
+        "SF 1: Zed played, but they didn't advance into the Semifinals."
+    ]
+
+
+def test_bye_status() -> None:
+    """Players with a bye show where they skip to."""
+    plan = plan_tournament(TournamentOptions(18, True, 5))
+    results = second_round_prelims([6000, 1000, 5000, 4000, 3000, 2000])
+    statuses = player_statuses(plan, tournament_standings(plan, results))
+    assert statuses["w1"] == ("bye to the Semifinals", False)
+    assert statuses["w2"] == ("won, in the Second Round", False)

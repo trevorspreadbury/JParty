@@ -100,6 +100,14 @@ class RoundStanding:
         eliminated: Ids of players who played the round and don't move on.
         chasers: The chaser for each chase game whose chaser is known, by
             game key. For a played game, the chaser who played it.
+        planned_chasers: Who should chase in each chase game, by game key,
+            worked out from the regular games alone. It differs from
+            :attr:`chasers` for a played game when a fixed result changed
+            who should have chased.
+        chaser_clashes: Unplayed chase games whose planned chaser already
+            chased in another chase game, as ``(chaser id, other game
+            key)`` by game key. A fixed result can cause this; the game
+            can't be seated until it's sorted out.
         ties: Ties that must be broken before the round can be decided.
         scores: Each player's score for ranking: their score in their first
             game this round (a chaser's chase score doesn't count).
@@ -113,6 +121,8 @@ class RoundStanding:
     advancers: tuple[str, ...] = ()
     eliminated: tuple[str, ...] = ()
     chasers: dict[str, str] = field(default_factory=dict)
+    planned_chasers: dict[str, str] = field(default_factory=dict)
+    chaser_clashes: dict[str, tuple[str, str]] = field(default_factory=dict)
     ties: tuple[TieForSpot, ...] = ()
     scores: dict[str, int] = field(default_factory=dict)
 
@@ -266,28 +276,45 @@ def round_standing(
         if not chaser_ties and len(order) >= wildcard_spots + len(chase_keys):
             for index, key in enumerate(chase_keys):
                 planned[key] = order[wildcard_spots + len(chase_keys) - 1 - index]
+    # A chase game's chaser is whoever in it already played a regular
+    # game this round; the other two are new players. Only a chaser who
+    # lost their regular game can open a wildcard spot. (One who won it,
+    # after a fixed result, is already a winner and is counted once.)
     regular_losers = set(pool)
+    regular_players = regular_losers | set(winners)
+    chased_in: dict[str, str] = {}
     for key in chase_keys:
         rows = by_game.get(key)
         if rows is None:
-            if key in planned:
-                chasers[key] = planned[key]
             continue
-        chaser_rows = [row for row in rows if row.player_id in regular_losers]
+        chaser_rows = [row for row in rows if row.player_id in regular_players]
         if chaser_rows:
-            chasers[key] = chaser_rows[0].player_id
-            if chaser_rows[0].won:
+            chaser = chaser_rows[0]
+            chasers[key] = chaser.player_id
+            chased_in[chaser.player_id] = key
+            if chaser.won and chaser.player_id in regular_losers:
                 wildcard_spots += 1
         for row in rows:
-            if row.player_id in regular_losers:
+            if row.player_id in regular_players:
                 continue
             (winners if row.won else pool).append(row.player_id)
+    clashes: dict[str, tuple[str, str]] = {}
+    for key in chase_keys:
+        chaser = planned.get(key)
+        if key in by_game or chaser is None:
+            continue
+        if chaser in chased_in:
+            clashes[key] = (chaser, chased_in[chaser])
+        else:
+            chasers[key] = chaser
     if games_left:
         return RoundStanding(
             name,
             games_left=games_left,
             winners=tuple(winners),
             chasers=chasers,
+            planned_chasers=planned,
+            chaser_clashes=clashes,
             ties=tuple(ties),
             scores=scores,
         )
@@ -307,6 +334,7 @@ def round_standing(
             name,
             winners=tuple(winners),
             chasers=chasers,
+            planned_chasers=planned,
             ties=tuple(ties),
             scores=scores,
         )
@@ -319,6 +347,7 @@ def round_standing(
         advancers=tuple(advancers),
         eliminated=tuple(p for p in first_seen if p not in advancers),
         chasers=chasers,
+        planned_chasers=planned,
         scores=scores,
     )
 
@@ -447,7 +476,7 @@ def _waiting_text(standing: RoundStanding, names: dict[str, str] | None) -> str:
     """Return why a round's advancers aren't known yet, or ``""``."""
     if standing.games_left:
         count = len(standing.games_left)
-        games = ", ".join(key.split(": ", 1)[-1] for key in standing.games_left)
+        games = ", ".join(_game_name(key) for key in standing.games_left)
         return (
             f"The {standing.name} aren't finished: {count} game"
             f"{'' if count == 1 else 's'} left ({games})."
@@ -622,6 +651,14 @@ def eligible_players(
     )
     if not game.chase:
         return Eligibility(open_seats)
+    if key in standing.chaser_clashes:
+        chaser, other = standing.chaser_clashes[key]
+        return Eligibility(
+            open_seats,
+            chase=True,
+            waiting=f"{names.get(chaser) or chaser} should chase in this game, but "
+            f"already chased in {_game_name(other)}. Fix the results first.",
+        )
     chaser = standing.chasers.get(key)
     if chaser is None:
         waiting = (
@@ -668,8 +705,8 @@ def seating_problem(
         ]
         if len(chasers) != 1:
             return (
-                "A chase game has two new players and the chaser, the first "
-                "player out of this round's wildcards."
+                "A chase game has two new players and the round's chaser, "
+                "marked (chaser)."
             )
     return None
 
@@ -699,7 +736,7 @@ def player_statuses(
             statuses[player_id] = (f"played the {standing.name}", True)
         for key, chaser in standing.chasers.items():
             if key in standing.games_left:
-                statuses[chaser] = (f"chaser in {key.split(': ', 1)[-1]}", False)
+                statuses[chaser] = (f"chaser in {_game_name(key)}", False)
         if not standing.decided:
             continue
         for player_id in standing.eliminated:
@@ -717,16 +754,29 @@ def player_statuses(
     return statuses
 
 
+def _game_name(key: str) -> str:
+    """Return a game key's game name, such as ``"Chase 1"``."""
+    return key.split(": ", 1)[-1]
+
+
 def advancement_conflicts(
     plan: TournamentPlan,
     standings: Sequence[RoundStanding],
     results: Sequence[GameResult],
     names: dict[str, str] | None = None,
 ) -> list[str]:
-    """Return played games whose players no longer advanced into them.
+    """Return played games that no longer match who advanced.
 
-    Fixing a result can change who advanced after a later game was already
-    played. That game then needs fixing, or deleting and replaying.
+    Fixing a result can change who advanced, or who should have chased,
+    after a later game was already played. That game then needs fixing, or
+    deleting and replaying.
+
+    - A player in a later round who didn't advance into it. While the round
+      before is still undecided (a game left, or a tie), only players who
+      didn't play it at all are flagged, since everyone else might still
+      advance.
+    - A played chase game whose chaser isn't the one the regular games
+      give.
 
     Args:
         plan: The tournament's bracket.
@@ -735,29 +785,49 @@ def advancement_conflicts(
         names: Display names by player id.
 
     Returns:
-        One message per player in such a game.
+        One message per problem.
     """
     names = names or {}
     by_game = results_by_game(results)
+
+    def name(player_id: str, row: GameResult | None = None) -> str:
+        """Return a player's display name."""
+        return names.get(player_id) or (row.player if row else "") or player_id
+
     problems = []
     for index, bracket_round in enumerate(plan.rounds):
-        entrants = round_entrants(plan, standings, index)
-        if entrants.players is None:
-            continue
+        standing = standings[index]
+        entrants = round_entrants(plan, standings, index, names)
+        if entrants.waiting:
+            feeders = [index - 1]
+            skipped_from = index - 2
+            if skipped_from >= 0 and plan.rounds[skipped_from].byes:
+                feeders.append(skipped_from)
+            allowed = {p for feeder in feeders for p in standings[feeder].scores}
+        else:
+            allowed = None if entrants.players is None else set(entrants.players)
         for game in bracket_round.games:
             key = game_key(bracket_round, game)
             rows = by_game.get(key, [])
-            chaser = standings[index].chasers.get(key) if game.chase else None
-            for row in rows:
-                if row.player_id == chaser or row.player_id in entrants.players:
-                    continue
-                if entrants.waiting:
-                    reason = entrants.waiting
-                else:
-                    reason = f"they didn't advance into the {bracket_round.name}."
+            if not rows:
+                continue
+            chaser = standing.chasers.get(key) if game.chase else None
+            if allowed is not None:
+                for row in rows:
+                    if row.player_id != chaser and row.player_id not in allowed:
+                        problems.append(
+                            f"{_game_name(key)}: {name(row.player_id, row)} played, "
+                            f"but they didn't advance into the {bracket_round.name}."
+                        )
+            planned = standing.planned_chasers.get(key) if game.chase else None
+            if planned is not None and chaser != planned:
+                played = (
+                    f"{name(chaser)} chased"
+                    if chaser
+                    else "No one from the regular games chased"
+                )
                 problems.append(
-                    f"{key.split(': ', 1)[-1]}: "
-                    f"{names.get(row.player_id) or row.player or row.player_id} "
-                    f"played, but {reason[0].lower()}{reason[1:]}"
+                    f"{_game_name(key)}: {played}, but the chaser should be "
+                    f"{name(planned)}."
                 )
     return problems

@@ -53,6 +53,9 @@ def session_game(game: object, folders: object, monkeypatch: object) -> object: 
         game, "close_game", lambda: (closed.append(True), real_close())[1]
     )
     game.closed = closed
+    # A game id left over from an earlier game, so saving a game folder
+    # would work if the session tried to; it mustn't.
+    game.set_session_game_id("4453")
     _seat_phones(game, ["Eve's phone", "Fay's phone"])
     return game
 
@@ -80,6 +83,7 @@ def test_tiebreaker_session_saves_the_winner(
     assert load_tiebreaks(folders)[0].winner_name == "Fay"
     # No saved game: the session can't show up under Load Saved.
     assert game._game_state_dir is None
+    assert not (folders.parent.parent / "game_states").exists()
     assert game.keystroke_manager._events["CLOSE_GAME"].active
     assert not game.keystroke_manager._events["GENERATE_GRAPHS"].active
 
