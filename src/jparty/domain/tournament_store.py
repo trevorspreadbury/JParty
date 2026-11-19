@@ -7,7 +7,7 @@ outside git:
   the sign-ups the host chose to ignore, the bracket format, each game's
   board, boards not assigned to a game, and the logo's file name.
 - ``players.csv``: one row per player slot, in roster order, with the slot's
-  Actual Name and its linked sign-up answers.
+  Actual Name, its linked sign-up answers, and a stable player id.
 - ``logo.<ext>``: the tournament logo, if the host chose one. It lives here,
   not in git.
 
@@ -27,7 +27,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from jparty.domain.roster import ANECDOTE_COLUMNS, PlayerSlot, SignUp
+from jparty.domain.roster import ANECDOTE_COLUMNS, PlayerSlot, SignUp, new_player_id
 from jparty.domain.tournament_setup import BracketSettings, TournamentBoard
 from jparty.services.game_cache import write_text_atomic
 
@@ -44,6 +44,7 @@ PLAYERS_COLUMNS = (
     "occupation",
     "hometown",
     *(f"anecdote_{number}" for number in range(1, len(ANECDOTE_COLUMNS) + 1)),
+    "player_id",
 )
 
 _FORBIDDEN_NAME_CHARACTERS = set('<>:"/\\|?*')
@@ -295,19 +296,17 @@ def players_csv_text(slots: Sequence[PlayerSlot]) -> str:
     for slot in slots:
         sign_up = slot.sign_up
         if sign_up is None:
-            writer.writerow([slot.actual_name] + [""] * (len(PLAYERS_COLUMNS) - 1))
-            continue
-        anecdotes = list(sign_up.anecdotes) + [""] * len(ANECDOTE_COLUMNS)
-        writer.writerow(
-            [
-                slot.actual_name,
+            sign_up_cells = [""] * (len(PLAYERS_COLUMNS) - 2)
+        else:
+            anecdotes = list(sign_up.anecdotes) + [""] * len(ANECDOTE_COLUMNS)
+            sign_up_cells = [
                 sign_up.timestamp,
                 sign_up.full_name,
                 sign_up.occupation,
                 sign_up.hometown,
                 *anecdotes[: len(ANECDOTE_COLUMNS)],
             ]
-        )
+        writer.writerow([slot.actual_name, *sign_up_cells, slot.player_id])
     return buffer.getvalue()
 
 
@@ -315,7 +314,9 @@ def parse_players_csv(text: str) -> list[PlayerSlot]:
     """Read a roster from ``players.csv`` contents.
 
     A row with a timestamp is linked to a sign-up. Missing columns read as
-    blank, so a hand-made file with only ``actual_name`` works.
+    blank, so a hand-made file with only ``actual_name`` works. A row with no
+    ``player_id`` (or one already used above it, as in a copied row) gets a
+    new id, which is saved on the next save.
 
     Args:
         text: CSV text.
@@ -332,6 +333,7 @@ def parse_players_csv(text: str) -> list[PlayerSlot]:
     if "actual_name" not in reader.fieldnames:
         raise TournamentFileError(f"{PLAYERS_FILE} has no actual_name column.")
     slots = []
+    seen_ids: set[str] = set()
     for row in reader:
 
         def value(column: str, row: dict = row) -> str:
@@ -351,5 +353,15 @@ def parse_players_csv(text: str) -> list[PlayerSlot]:
                     for number in range(1, len(ANECDOTE_COLUMNS) + 1)
                 ),
             )
-        slots.append(PlayerSlot(actual_name=value("actual_name"), sign_up=sign_up))
+        player_id = value("player_id")
+        if not player_id or player_id in seen_ids:
+            player_id = new_player_id()
+        seen_ids.add(player_id)
+        slots.append(
+            PlayerSlot(
+                actual_name=value("actual_name"),
+                sign_up=sign_up,
+                player_id=player_id,
+            )
+        )
     return slots

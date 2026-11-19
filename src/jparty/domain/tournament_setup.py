@@ -13,9 +13,9 @@ tournament steps share one set of rules.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from jparty.domain.tournament import (
     BracketGame,
@@ -96,10 +96,14 @@ class TournamentBoard:
         label: Short description shown to the host.
         board_selections: ``board_selections`` entries, as saved in a game's
             ``general.json``. Each names its source game id and round.
+        cant_play: Player ids of players who must not play this board, for
+            example because they have seen it. They stay with the board when
+            it is swapped, unassigned, or edited.
     """
 
     label: str
     board_selections: tuple[dict, ...] = field(default_factory=tuple)
+    cant_play: tuple[str, ...] = ()
 
     @property
     def source_game_ids(self) -> tuple[str, ...]:
@@ -127,6 +131,7 @@ class TournamentBoard:
         return {
             "label": self.label,
             "board_selections": deepcopy(list(self.board_selections)),
+            "cant_play": list(self.cant_play),
         }
 
     @classmethod
@@ -147,7 +152,14 @@ class TournamentBoard:
         selections = [dict(item) for item in selections if isinstance(item, Mapping)]
         if not selections:
             return None
-        return cls(str(payload.get("label") or ""), tuple(selections))
+        cant_play = payload.get("cant_play")
+        if not isinstance(cant_play, list):
+            cant_play = []
+        return cls(
+            str(payload.get("label") or ""),
+            tuple(selections),
+            tuple(dict.fromkeys(str(player_id) for player_id in cant_play)),
+        )
 
 
 def board_from_selections(
@@ -326,6 +338,71 @@ def swap_boards(
     if first_board is not None:
         new_boards[second] = first_board
     return new_boards
+
+
+def with_cant_play(
+    board: TournamentBoard, player_ids: Sequence[str]
+) -> TournamentBoard:
+    """Return ``board`` with ``player_ids`` as the players who can't play it.
+
+    Args:
+        board: A tournament board.
+        player_ids: Player ids, in the order to keep; repeats are dropped.
+
+    Returns:
+        The updated board.
+    """
+    return replace(board, cant_play=tuple(dict.fromkeys(player_ids)))
+
+
+def edited_board(
+    previous: TournamentBoard | None, edited: TournamentBoard
+) -> TournamentBoard:
+    """Return an edited board that keeps who can't play the previous one.
+
+    Editing a board's rounds doesn't change who has seen or written it, so
+    the exclusions carry over.
+
+    Args:
+        previous: The board before editing, or ``None`` for a new board.
+        edited: The board as the host set it up.
+
+    Returns:
+        ``edited`` with the previous board's exclusions.
+    """
+    if previous is None:
+        return edited
+    return with_cant_play(edited, previous.cant_play)
+
+
+def forget_removed_players(
+    boards: Mapping[str, TournamentBoard],
+    unassigned: Sequence[TournamentBoard],
+    player_ids: Iterable[str],
+) -> tuple[dict[str, TournamentBoard], list[TournamentBoard]]:
+    """Drop exclusions for players no longer on the roster.
+
+    Args:
+        boards: Boards by game key.
+        unassigned: Boards not assigned to any game.
+        player_ids: Ids of the players on the roster.
+
+    Returns:
+        The boards and pool, with only current players in ``cant_play``.
+    """
+    current = set(player_ids)
+
+    def keep_current(board: TournamentBoard) -> TournamentBoard:
+        """Return ``board`` without exclusions for removed players."""
+        kept = [player_id for player_id in board.cant_play if player_id in current]
+        return (
+            board if len(kept) == len(board.cant_play) else with_cant_play(board, kept)
+        )
+
+    return (
+        {key: keep_current(board) for key, board in boards.items()},
+        [keep_current(board) for board in unassigned],
+    )
 
 
 def shared_board_warnings(

@@ -16,11 +16,14 @@ from jparty.ui.widgets import tournament_editor
 from jparty.ui.widgets.tournament_editor import TAB_BRACKET, TAB_GAMES
 from jparty.ui.widgets.tournament_games import (
     COLUMN_BOARD,
+    COLUMN_CANT_PLAY,
     COLUMN_GAME,
     COLUMN_MEDIA,
+    NEW_POOL_BOARD_TARGET,
     NO_BOARD_TEXT,
     GamesEditor,
 )
+from jparty.ui.widgets.tournament_roster import COLUMN_ACTUAL_NAME
 from tests.qt.test_tournament_roster import FakeFetcher, make_editor
 
 pytestmark = pytest.mark.qt
@@ -75,6 +78,10 @@ def test_games_list_every_bracket_game(qtbot: object) -> None:
     assert cell(games, 3, COLUMN_GAME) == "Final: Final"
     assert cell(games, 0, COLUMN_BOARD) == NO_BOARD_TEXT
     assert "0 of 4 games have a board" in games.summary_label.text()
+    # With no game selected, Set Board adds a board to the pool.
+    assert games.set_board_button.isEnabled()
+    assert not games.cant_play_button.isEnabled()
+    select_rows(games.table, 0, 1)
     assert not games.set_board_button.isEnabled()
 
 
@@ -106,7 +113,7 @@ def test_set_board_and_media_column(qtbot: object) -> None:
     games.games_changed.connect(lambda: changes.append(1))
     select_rows(games.table, 0)
     games.set_board_button.click()
-    games.set_board_for_row(1)
+    games.on_cell_double_clicked(1, COLUMN_BOARD)
     assert picker.calls == [
         ("Semifinals: SF 1", None),
         ("Semifinals: SF 2", None),
@@ -119,7 +126,7 @@ def test_set_board_and_media_column(qtbot: object) -> None:
     assert changes == [1, 1]
 
     # A cancelled pick changes nothing.
-    games.set_board_for_row(1)
+    games.on_cell_double_clicked(1, COLUMN_BOARD)
     assert picker.calls[-1] == ("Semifinals: SF 2", board("7000"))
     assert games.boards["Semifinals: SF 2"] == board("7000")
     assert changes == [1, 1]
@@ -193,10 +200,10 @@ def test_editor_saves_bracket_and_boards(qtbot: object, temp_dir: object) -> Non
     editor.bracket.second_round_checkbox.setChecked(True)
     editor.bracket.byes_spinbox.setValue(3)
     assert editor.tabs.tabText(TAB_BRACKET) == "Bracket"
-    assert editor.tabs.tabText(TAB_GAMES) == "Games (0/20 boards)"
+    assert editor.tabs.tabText(TAB_GAMES) == "Games (0/20 boards, 0 unassigned)"
 
-    editor.games.set_board_for_row(19)
-    assert editor.tabs.tabText(TAB_GAMES) == "Games (1/20 boards)"
+    editor.games.on_cell_double_clicked(19, COLUMN_BOARD)
+    assert editor.tabs.tabText(TAB_GAMES) == "Games (1/20 boards, 0 unassigned)"
     for row in range(30):
         editor.roster.table.item(row, 1).setText(f"Player {row}")
     editor.buttons.button(editor.buttons.StandardButton.Save).click()
@@ -271,3 +278,135 @@ def test_logo_preview_and_save(
     editor.remove_logo_button.click()
     editor.buttons.button(editor.buttons.StandardButton.Save).click()
     assert not (folder / "logo.png").exists()
+
+
+class FakeChooser:
+    """Stand in for the Can't Play checklist."""
+
+    def __init__(self, *answers: list[str] | None) -> None:
+        """Return ``answers`` from successive asks; ``None`` is a cancel."""
+        self.answers = list(answers)
+        self.calls = []
+
+    def __call__(
+        self, title: str, players: list, checked: tuple, _parent: object
+    ) -> list[str] | None:
+        """Record what the checklist would show, and return the next answer."""
+        self.calls.append((title, list(players), tuple(checked)))
+        return self.answers.pop(0)
+
+
+PLAYERS = [("ann-id", "Ann"), ("bob-id", "Bob"), ("cy-id", "Cy")]
+
+
+def test_set_board_with_no_game_selected_adds_to_the_pool(qtbot: object) -> None:
+    """A board set up with no game selected goes to Unassigned."""
+    picker = FakePicker(board("7000"), None)
+    games = make_games(qtbot, pick_board=picker, missing_media=lambda _board: [])
+    games.set_board_button.click()
+    assert picker.calls == [(NEW_POOL_BOARD_TARGET, None)]
+    assert games.boards == {}
+    assert games.unassigned == [board("7000")]
+    assert games.pool_label.text() == "Unassigned boards (1):"
+    games.set_board_button.click()
+    assert games.unassigned == [board("7000")]
+
+
+def test_cant_play_follows_its_board(qtbot: object) -> None:
+    """Exclusions show by name and move with the board."""
+    chooser = FakeChooser(["bob-id", "ann-id"], None)
+    picker = FakePicker(board("8124"))
+    games = make_games(
+        qtbot,
+        pick_board=picker,
+        choose_cant_play=chooser,
+        missing_media=lambda _board: [],
+    )
+    games.set_players(PLAYERS)
+    games.set_boards({"Semifinals: SF 1": board("1")}, [])
+    select_rows(games.table, 0)
+    games.cant_play_button.click()
+    assert chooser.calls == [("Can't Play: Semifinals: SF 1", PLAYERS, ())]
+    assert cell(games, 0, COLUMN_CANT_PLAY) == "Bob, Ann"
+
+    # Cancel keeps them.
+    games.on_cell_double_clicked(0, COLUMN_CANT_PLAY)
+    assert chooser.calls[-1][2] == ("bob-id", "ann-id")
+    assert cell(games, 0, COLUMN_CANT_PLAY) == "Bob, Ann"
+
+    # Editing the board keeps who can't play it.
+    games.on_cell_double_clicked(0, COLUMN_BOARD)
+    assert games.boards["Semifinals: SF 1"].source_game_ids == ("8124",)
+    assert games.boards["Semifinals: SF 1"].cant_play == ("bob-id", "ann-id")
+
+    # Swapping and unassigning carry them along.
+    select_rows(games.table, 0, 1)
+    games.swap_button.click()
+    assert cell(games, 1, COLUMN_CANT_PLAY) == "Bob, Ann"
+    assert cell(games, 0, COLUMN_CANT_PLAY) == ""
+    select_rows(games.table, 1)
+    games.unassign_button.click()
+    assert games.pool_list.item(0).text() == "8124 (Jeopardy!) (can't play: Bob, Ann)"
+
+    # Names follow the roster.
+    games.set_players([("ann-id", "Annie"), ("bob-id", "Bob")])
+    assert games.pool_list.item(0).text() == "8124 (Jeopardy!) (can't play: Bob, Annie)"
+
+
+def test_cant_play_needs_a_board(qtbot: object) -> None:
+    """A game without a board has no one to exclude."""
+    chooser = FakeChooser()
+    picker = FakePicker(None)
+    games = make_games(
+        qtbot, pick_board=picker, choose_cant_play=chooser, missing_media=lambda _b: []
+    )
+    select_rows(games.table, 0)
+    assert not games.cant_play_button.isEnabled()
+    # Double-clicking an empty Can't Play cell sets the board instead.
+    games.on_cell_double_clicked(0, COLUMN_CANT_PLAY)
+    assert chooser.calls == []
+    assert picker.calls == [("Semifinals: SF 1", None)]
+
+
+def test_cant_play_is_saved_and_forgets_removed_players(
+    qtbot: object, temp_dir: object
+) -> None:
+    """Exclusions survive save and load, and drop players who left the roster."""
+    slots = [PlayerSlot(f"P{index}") for index in range(9)]
+    keep, gone = slots[0].player_id, slots[8].player_id
+    save_tournament(
+        temp_dir,
+        TournamentSettings(
+            "Fun",
+            boards={
+                "Final: Final": TournamentBoard(
+                    "b", board("1").board_selections, (keep, gone)
+                )
+            },
+            unassigned_boards=[
+                TournamentBoard("u", board("2").board_selections, (gone,))
+            ],
+        ),
+        slots,
+    )
+    loaded, loaded_slots = load_tournament(temp_dir / "Fun")
+    assert [slot.player_id for slot in loaded_slots] == [
+        slot.player_id for slot in slots
+    ]
+    editor = make_editor(
+        qtbot, temp_dir, FakeFetcher(), settings=loaded, slots=loaded_slots
+    )
+    assert cell(editor.games, 3, COLUMN_CANT_PLAY) == "P0, P8"
+    assert editor.tabs.tabText(TAB_GAMES) == "Games (1/4 boards, 1 unassigned)"
+
+    # Renaming a player keeps their exclusions.
+    editor.roster.table.item(0, COLUMN_ACTUAL_NAME).setText("Zed")
+    assert cell(editor.games, 3, COLUMN_CANT_PLAY) == "Zed, P8"
+
+    editor.roster.table.selectRow(8)
+    editor.roster.remove_button.click()
+    assert cell(editor.games, 3, COLUMN_CANT_PLAY) == "Zed"
+    editor.buttons.button(editor.buttons.StandardButton.Save).click()
+    saved, _slots = load_tournament(temp_dir / "Fun")
+    assert saved.boards["Final: Final"].cant_play == (keep,)
+    assert saved.unassigned_boards[0].cant_play == ()

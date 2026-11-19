@@ -56,7 +56,7 @@ class BoardPickerDialog(QDialog):
             ``None``.
         """
         super().__init__(parent)
-        self.setWindowTitle(f"Board for {game_key}")
+        self.setWindowTitle(f"Set Board: {game_key}")
         self.resize(1150, 820)
         self.board: TournamentBoard | None = None
 

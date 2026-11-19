@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from jparty.domain.roster import PlayerSlot, roster_name_problem
-from jparty.domain.tournament_setup import TournamentBoard
+from jparty.domain.tournament_setup import TournamentBoard, forget_removed_players
 from jparty.domain.tournament_store import (
     LOGO_SUFFIXES,
     TournamentFileError,
@@ -167,6 +167,7 @@ class TournamentEditor(QWidget):
 
         self.bracket.set_player_count(len(self.roster.slots))
         self.bracket.set_bracket_settings(self.settings.bracket)
+        self.games.set_players(self._roster_players())
         self.games.set_boards(self.settings.boards, self.settings.unassigned_boards)
         self.games.set_plan(self.bracket.plan)
         self.roster.roster_changed.connect(self._on_roster_changed)
@@ -206,8 +207,15 @@ class TournamentEditor(QWidget):
         self.settings.name = name
         self.settings.sheet_url = self.roster.sheet_link()
         self.settings.bracket = self.bracket.bracket_settings()
-        self.settings.boards = dict(self.games.boards)
-        self.settings.unassigned_boards = list(self.games.unassigned)
+        # Players removed from the roster no longer need to sit boards out.
+        boards, unassigned = forget_removed_players(
+            self.games.boards,
+            self.games.unassigned,
+            (slot.player_id for slot in self.roster.slots),
+        )
+        self.games.set_boards(boards, unassigned)
+        self.settings.boards = boards
+        self.settings.unassigned_boards = unassigned
         self.settings.logo_file = self._logo_file
         try:
             self.saved_folder = save_tournament(
@@ -309,8 +317,17 @@ class TournamentEditor(QWidget):
             )
         self.remove_logo_button.setEnabled(path is not None)
 
+    def _roster_players(self) -> list[tuple[str, str]]:
+        """Return ``(player_id, name)`` for each named player, in roster order."""
+        return [
+            (slot.player_id, slot.actual_name.strip())
+            for slot in self.roster.slots
+            if slot.actual_name.strip()
+        ]
+
     def _on_roster_changed(self) -> None:
-        """Re-plan the bracket for the roster's player count."""
+        """Re-plan the bracket for the roster's size and refresh player names."""
+        self.games.set_players(self._roster_players())
         self.bracket.set_player_count(len(self.roster.slots))
 
     def _on_plan_changed(self) -> None:
@@ -324,12 +341,15 @@ class TournamentEditor(QWidget):
         valid = plan is not None and plan.valid
         self.tabs.setTabText(TAB_PLAYERS, f"Players ({len(self.roster.slots)})")
         self.tabs.setTabText(TAB_BRACKET, "Bracket" if valid else "Bracket (!)")
+        unassigned = f"{len(self.games.unassigned)} unassigned"
         if valid:
-            total = plan.total_games
             assigned = len(self.games.boards)
-            self.tabs.setTabText(TAB_GAMES, f"Games ({assigned}/{total} boards)")
+            self.tabs.setTabText(
+                TAB_GAMES,
+                f"Games ({assigned}/{plan.total_games} boards, {unassigned})",
+            )
         else:
-            self.tabs.setTabText(TAB_GAMES, "Games")
+            self.tabs.setTabText(TAB_GAMES, f"Games ({unassigned})")
 
     def _state(self) -> tuple:
         """Return what Save would write, to spot unsaved changes."""

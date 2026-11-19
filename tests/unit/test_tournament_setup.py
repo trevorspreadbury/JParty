@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from jparty.domain.roster import PlayerSlot
+from jparty.domain.roster import PlayerSlot, SignUp, link_sign_up, unlink_sign_up
 from jparty.domain.tournament import TournamentOptions, plan_tournament
 from jparty.domain.tournament_setup import (
     BracketSettings,
@@ -12,16 +12,22 @@ from jparty.domain.tournament_setup import (
     assign_board,
     assign_from_pool,
     board_from_selections,
+    edited_board,
+    forget_removed_players,
     plan_games,
     reconcile_boards,
     shared_board_warnings,
     swap_boards,
     unassign_board,
+    with_cant_play,
 )
 from jparty.domain.tournament_store import (
+    PLAYERS_FILE,
     TournamentFileError,
     TournamentSettings,
     load_tournament,
+    parse_players_csv,
+    players_csv_text,
     save_tournament,
 )
 
@@ -233,3 +239,64 @@ def test_bad_or_missing_logos(temp_dir: object) -> None:
     save_tournament(temp_dir, TournamentSettings("Fun"), [], logo_source=png)
     (temp_dir / "Fun" / "logo.png").unlink()
     assert load_tournament(temp_dir / "Fun")[0].logo_file == ""
+
+
+def test_player_ids_survive_renames_links_and_unlinks() -> None:
+    """Every roster change keeps a player's id; ids don't affect equality."""
+    slot = PlayerSlot("Jane")
+    linked = link_sign_up(slot, SignUp("t1", "jane doe"))
+    assert linked.player_id == slot.player_id
+    assert unlink_sign_up(linked).player_id == slot.player_id
+    assert PlayerSlot("Jane") == slot
+    assert PlayerSlot().player_id != PlayerSlot().player_id
+
+
+def test_players_csv_keeps_ids_and_fills_missing_ones() -> None:
+    """Saved ids read back; old files and copied rows get new ones."""
+    slots = [PlayerSlot("Ann"), PlayerSlot("Bob", SignUp("t1", "Bob"))]
+    reread = parse_players_csv(players_csv_text(slots))
+    assert [slot.player_id for slot in reread] == [slot.player_id for slot in slots]
+
+    old = parse_players_csv("actual_name\nAnn\nBob\n")
+    assert all(slot.player_id for slot in old)
+    assert old[0].player_id != old[1].player_id
+
+    copied = parse_players_csv("actual_name,player_id\nAnn,abc\nAnnie,abc\n")
+    assert copied[0].player_id == "abc"
+    assert copied[1].player_id != "abc"
+
+
+def test_cant_play_round_trips_and_ignores_junk() -> None:
+    """Exclusions save with the board; repeats and bad values are cleaned up."""
+    saved = TournamentBoard("b", board("1", 0).board_selections, ("a", "b"))
+    assert TournamentBoard.from_json(saved.to_json()) == saved
+    payload = saved.to_json()
+    payload["cant_play"] = ["a", "a", 3]
+    assert TournamentBoard.from_json(payload).cant_play == ("a", "3")
+    payload["cant_play"] = "a"
+    assert TournamentBoard.from_json(payload).cant_play == ()
+
+
+def test_cant_play_helpers() -> None:
+    """Set, carry over on edit, and forget removed players."""
+    first = with_cant_play(board("1", 0), ["b", "a", "b"])
+    assert first.cant_play == ("b", "a")
+    edited = edited_board(first, board("2", 0))
+    assert edited.source_game_ids == ("2",)
+    assert edited.cant_play == ("b", "a")
+    assert edited_board(None, board("2", 0)).cant_play == ()
+
+    boards, pool = forget_removed_players(
+        {"Final": first}, [with_cant_play(board("3", 0), ["a"])], ["a"]
+    )
+    assert boards["Final"].cant_play == ("a",)
+    assert pool[0].cant_play == ("a",)
+    _boards, pool = forget_removed_players({}, pool, [])
+    assert pool[0].cant_play == ()
+
+
+def test_players_file_has_player_ids(temp_dir: object) -> None:
+    """players.csv gains a player_id column."""
+    save_tournament(temp_dir, TournamentSettings("Fun"), [PlayerSlot("Ann")])
+    header = (temp_dir / "Fun" / PLAYERS_FILE).read_text("utf-8").splitlines()[0]
+    assert header.endswith(",player_id")

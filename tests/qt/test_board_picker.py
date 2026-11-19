@@ -57,7 +57,7 @@ def make_picker(qtbot: object, **kwargs: object) -> BoardPickerDialog:
 def test_picker_starts_empty_and_waits_for_every_slot(qtbot: object) -> None:
     """Use This Board stays off, and accept does nothing, until slots are full."""
     dialog = make_picker(qtbot)
-    assert dialog.windowTitle() == "Board for Final: Final"
+    assert dialog.windowTitle() == "Set Board: Final: Final"
     assert len(dialog.editor.rows) == 3
     assert dialog.summary_label.text() == INCOMPLETE_TEXT
     assert not dialog.use_button.isEnabled()

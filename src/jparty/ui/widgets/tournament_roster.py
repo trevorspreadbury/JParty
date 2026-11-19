@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from html import escape
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -223,7 +224,7 @@ class RosterEditor(QWidget):
         row = item.row()
         if 0 <= row < len(self.slots):
             slot = self.slots[row]
-            self.slots[row] = PlayerSlot(item.text().strip(), slot.sign_up)
+            self.slots[row] = replace(slot, actual_name=item.text().strip())
             self._sync_player_spinbox()
             self.roster_changed.emit()
 

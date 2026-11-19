@@ -243,11 +243,15 @@ still save, and JParty reminds you that the bracket won't work yet.
 ### Games tab
 
 The `Games` tab lists every game in the bracket in playing order. Each row
-shows where the game's players come from, its board, and whether the board
-has question media. The tab title counts the games that have a board.
+shows where the game's players come from, its board, who can't play that
+board, and whether the board has question media. The tab title counts the
+games that have a board and the boards waiting in `Unassigned boards`, for
+example `Games (3/10 boards, 2 unassigned)`.
 
 To give a game a board, double-click the game, or select it and click
-`Set Board...`. This opens the same board slots as the welcome screen's
+`Set Board...`. With no game selected, `Set Board...` makes a new board for
+`Unassigned boards`, so you can set boards up before deciding which game gets
+each one. Either way it opens the same board slots as the welcome screen's
 `Advanced Options`:
 
 1. Fill each board slot: type a game id (or click `Random`), pick its round,
@@ -264,6 +268,13 @@ matching round.
 Opening a game that already has a board shows that board, so you can edit it.
 The edited board replaces the old one. `Cancel` leaves the game as it was.
 Setting up a tournament board doesn't change the game on the welcome screen.
+
+To keep players off a board (for example, players who have seen that
+episode or wrote its clues), select the game and click `Can't Play...`, or
+double-click its `Can't Play` cell, then tick those players. The list stays
+with the board: if you swap, unassign, or edit the board, the same players
+still can't play it. Renaming a player keeps their place on the list, and
+removing a player takes them off it when you save.
 
 Other buttons:
 
@@ -289,9 +300,12 @@ players would see the same clues twice.
 Each tournament is saved in `tournaments/<name>/` in the JParty data folder,
 outside git:
 
-- `players.csv` holds the players and their sign-up answers.
+- `players.csv` holds the players, their sign-up answers, and an id for each
+  player that other settings refer to. If you edit it by hand, leave the
+  `player_id` column as it is.
 - `tournament.json` holds the sheet link, the ignored responses, the bracket
-  options, each game's board, the unassigned boards, and the logo's file name.
+  options, each game's board and who can't play it, the unassigned boards,
+  and the logo's file name.
   The app writes it; you don't need to edit it by hand.
 - `logo.png` (or `.jpg`, and so on) is the logo, if you chose one.
 

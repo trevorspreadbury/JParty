@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import difflib
 import re
+import uuid
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 COLUMN_TIMESTAMP = "Timestamp"
 COLUMN_FULL_NAME = "Full Name"
@@ -54,6 +55,11 @@ class SignUp:
     anecdotes: tuple[str, ...] = ("", "", "")
 
 
+def new_player_id() -> str:
+    """Return a new id for a player slot."""
+    return uuid.uuid4().hex[:12]
+
+
 @dataclass(frozen=True)
 class PlayerSlot:
     """One player's place in the tournament.
@@ -61,10 +67,15 @@ class PlayerSlot:
     Attributes:
         actual_name: The name the game shows for this player.
         sign_up: The linked sign-up row, or ``None`` if none is linked yet.
+        player_id: Stable id that other tournament settings (such as who
+            can't play a board) refer to, so renaming a player or linking a
+            sign-up keeps those settings. It is not part of equality: two
+            slots with the same name and sign-up are the same to the host.
     """
 
     actual_name: str = ""
     sign_up: SignUp | None = None
+    player_id: str = field(default_factory=new_player_id, compare=False)
 
     @property
     def blank(self) -> bool:
@@ -388,7 +399,7 @@ def link_sign_up(slot: PlayerSlot, sign_up: SignUp) -> PlayerSlot:
         title-cased Full Name.
     """
     name = slot.actual_name.strip() or title_case_name(sign_up.full_name)
-    return PlayerSlot(actual_name=name, sign_up=sign_up)
+    return replace(slot, actual_name=name, sign_up=sign_up)
 
 
 def roster_name_problem(slots: Sequence[PlayerSlot]) -> str | None:
@@ -434,9 +445,9 @@ def unlink_sign_up(slot: PlayerSlot) -> PlayerSlot:
         slot: Slot to unlink.
 
     Returns:
-        The unlinked slot.
+        The unlinked slot, with the same player id.
     """
-    return PlayerSlot(actual_name=slot.actual_name)
+    return replace(slot, sign_up=None)
 
 
 def _name_key(name: str) -> str:
