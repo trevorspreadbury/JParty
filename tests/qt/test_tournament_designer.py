@@ -3,14 +3,16 @@
 import pytest
 from PyQt6.QtWidgets import QLabel
 
-from jparty.ui.widgets.tournament import TournamentDesigner
+from jparty.domain.tournament_setup import BracketSettings
+from jparty.ui.widgets.tournament import BracketDesigner
+from jparty.ui.widgets.tournament_window import TournamentWindow
 from jparty.ui.widgets.welcome import Welcome
 from tests.qt.test_welcome_widget import StubGame
 
 pytestmark = pytest.mark.qt
 
 
-def game_cards(dialog: TournamentDesigner) -> list[QLabel]:
+def game_cards(dialog: BracketDesigner) -> list[QLabel]:
     """Return every game card in the bracket view."""
     return [
         label
@@ -21,7 +23,7 @@ def game_cards(dialog: TournamentDesigner) -> list[QLabel]:
 
 def test_designer_shows_default_bracket(qtbot: object) -> None:
     """The designer opens on a playable bracket with its totals."""
-    dialog = TournamentDesigner()
+    dialog = BracketDesigner()
     qtbot.addWidget(dialog)
     assert dialog.plan.valid
     assert "Total games: 9" in dialog.summary_label.text()
@@ -31,7 +33,7 @@ def test_designer_shows_default_bracket(qtbot: object) -> None:
 
 def test_changing_players_redraws_bracket(qtbot: object) -> None:
     """Odd field sizes add chase games to the bracket."""
-    dialog = TournamentDesigner()
+    dialog = BracketDesigner()
     qtbot.addWidget(dialog)
     dialog.player_spinbox.setValue(17)
     cards = game_cards(dialog)
@@ -42,7 +44,7 @@ def test_changing_players_redraws_bracket(qtbot: object) -> None:
 
 def test_invalid_options_explain_the_problem(qtbot: object) -> None:
     """Options that cannot work show why and clear the bracket."""
-    dialog = TournamentDesigner()
+    dialog = BracketDesigner()
     qtbot.addWidget(dialog)
     dialog.player_spinbox.setValue(30)
     assert not dialog.plan.valid
@@ -53,7 +55,7 @@ def test_invalid_options_explain_the_problem(qtbot: object) -> None:
 
 def test_second_round_controls(qtbot: object) -> None:
     """Byes reset the second-round field to fill the remaining spots."""
-    dialog = TournamentDesigner()
+    dialog = BracketDesigner()
     qtbot.addWidget(dialog)
     dialog.player_spinbox.setValue(30)
     dialog.second_round_checkbox.setChecked(True)
@@ -68,7 +70,7 @@ def test_second_round_controls(qtbot: object) -> None:
 
 def test_second_round_unchecks_for_small_fields(qtbot: object) -> None:
     """Dropping to nine or fewer players turns the second round off."""
-    dialog = TournamentDesigner()
+    dialog = BracketDesigner()
     qtbot.addWidget(dialog)
     dialog.player_spinbox.setValue(30)
     dialog.second_round_checkbox.setChecked(True)
@@ -78,14 +80,32 @@ def test_second_round_unchecks_for_small_fields(qtbot: object) -> None:
     assert dialog.plan.valid
 
 
-def test_welcome_tournament_button_opens_one_designer(qtbot: object) -> None:
-    """The welcome screen opens the designer and reuses it."""
+def test_locked_player_count_follows_the_roster(qtbot: object) -> None:
+    """In a tournament, the roster sets the count and saved options apply."""
+    designer = BracketDesigner(roster_sets_players=True)
+    qtbot.addWidget(designer)
+    plans = []
+    designer.plan_changed.connect(lambda: plans.append(designer.plan))
+    assert designer.player_spinbox.isReadOnly()
+    designer.set_player_count(30)
+    designer.set_bracket_settings(
+        BracketSettings(use_second_round=True, semifinal_byes=3)
+    )
+    assert designer.second_round_players_spinbox.value() == 18
+    assert designer.plan.valid
+    assert designer.plan.total_games == 20
+    assert designer.bracket_settings() == BracketSettings(True, 3, 18)
+    assert plans[-1] is designer.plan
+
+
+def test_welcome_tournament_button_opens_one_window(qtbot: object) -> None:
+    """The welcome screen opens the Tournament window and reuses it."""
     widget = Welcome(StubGame())
     qtbot.addWidget(widget)
     widget.tournament_button.click()
-    designer = widget.tournament_designer
-    assert isinstance(designer, TournamentDesigner)
-    assert designer.isVisible()
+    window = widget.tournament_window
+    assert isinstance(window, TournamentWindow)
+    assert window.isVisible()
     widget.tournament_button.click()
-    assert widget.tournament_designer is designer
-    designer.close()
+    assert widget.tournament_window is window
+    window.close()

@@ -1,8 +1,8 @@
-"""Qt tests for the tournament roster dialogs."""
+"""Qt tests for the tournament roster (Players tab) and its save flow."""
 
 import pytest
 import requests
-from PyQt6.QtWidgets import QDialog, QInputDialog, QMessageBox
+from PyQt6.QtWidgets import QDialog, QMessageBox
 
 from jparty.domain.roster import (
     MATCH_ADD_PLAYER,
@@ -17,14 +17,9 @@ from jparty.domain.tournament_store import (
     save_tournament,
 )
 from jparty.services.game_sources import SheetAccessError
-from jparty.ui.widgets import welcome
-from jparty.ui.widgets.tournament_roster import (
-    COLUMN_ACTUAL_NAME,
-    SignUpMatchDialog,
-    TournamentRosterDialog,
-)
-from jparty.ui.widgets.welcome import Welcome
-from tests.qt.test_welcome_widget import StubGame
+from jparty.ui.widgets.tournament_editor import TournamentEditor
+from jparty.ui.widgets.tournament_roster import COLUMN_ACTUAL_NAME, SignUpMatchDialog
+from jparty.ui.widgets.tournament_window import TournamentWindow
 
 pytestmark = pytest.mark.qt
 
@@ -56,23 +51,37 @@ def run_inline(target: object) -> None:
     target()
 
 
-def make_dialog(
+def no_missing_media(_board: object) -> list[str]:
+    """Pretend every board has question media."""
+    return []
+
+
+def make_editor(
     qtbot: object, root: object, fetcher: FakeFetcher, **kwargs: object
-) -> TournamentRosterDialog:
-    """Return a roster dialog that fetches from ``fetcher``."""
-    dialog = TournamentRosterDialog(
-        root, fetcher=fetcher, run_async=run_inline, **kwargs
+) -> TournamentEditor:
+    """Return a tournament editor whose roster fetches from ``fetcher``."""
+    editor = TournamentEditor(
+        root,
+        fetcher=fetcher,
+        run_async=run_inline,
+        missing_media=no_missing_media,
+        **kwargs,
     )
-    qtbot.addWidget(dialog)
-    return dialog
+    qtbot.addWidget(editor)
+    return editor
 
 
-def actual_names(dialog: TournamentRosterDialog) -> list[str]:
+def actual_names(editor: TournamentEditor) -> list[str]:
     """Return the Actual Name column as shown."""
+    table = editor.roster.table
     return [
-        dialog.table.item(row, COLUMN_ACTUAL_NAME).text()
-        for row in range(dialog.table.rowCount())
+        table.item(row, COLUMN_ACTUAL_NAME).text() for row in range(table.rowCount())
     ]
+
+
+def click_save(editor: TournamentEditor) -> None:
+    """Click the editor's Save button."""
+    editor.buttons.button(editor.buttons.StandardButton.Save).click()
 
 
 def test_create_from_sheet_fills_slots_and_saves(
@@ -86,37 +95,40 @@ def test_create_from_sheet_fills_slots_and_saves(
             ["t2", "BOB", "", "", ""],
         ]
     )
-    dialog = make_dialog(qtbot, temp_dir, fetcher)
-    dialog.name_edit.setText("Family Fun")
-    dialog.sheet_edit.setText(SHEET_LINK)
-    dialog.player_spinbox.setValue(5)
-    dialog.refresh_button.click()
+    editor = make_editor(qtbot, temp_dir, fetcher)
+    editor.name_edit.setText("Family Fun")
+    editor.roster.sheet_edit.setText(SHEET_LINK)
+    editor.roster.player_spinbox.setValue(5)
+    editor.roster.refresh_button.click()
 
     assert fetcher.links == [SHEET_LINK]
-    assert actual_names(dialog) == ["Jane Doe", "Bob", "", "", ""]
-    assert "Found 2 sign-ups" in dialog.status_label.text()
+    assert actual_names(editor) == ["Jane Doe", "Bob", "", "", ""]
+    assert "Found 2 sign-ups" in editor.roster.status_label.text()
 
-    dialog.buttons.button(dialog.buttons.StandardButton.Save).click()
+    click_save(editor)
     settings, slots = load_tournament(temp_dir / "Family Fun")
     assert settings.sheet_url == SHEET_LINK
     assert len(slots) == 5
     assert slots[0].sign_up.occupation == "Pilot"
-    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert editor.saved_folder == temp_dir / "Family Fun"
+    assert not editor.creating
+    assert editor.name_edit.isReadOnly()
+    assert not editor.has_unsaved_changes()
 
 
 def test_typed_names_are_kept_and_count_cannot_drop_below_them(
     qtbot: object, temp_dir: object
 ) -> None:
     """Typed names are saved, and filled slots can't be removed."""
-    dialog = make_dialog(qtbot, temp_dir, FakeFetcher())
-    dialog.player_spinbox.setValue(4)
-    dialog.table.item(2, COLUMN_ACTUAL_NAME).setText("Carol")
-    assert dialog.slots[2].actual_name == "Carol"
-    assert dialog.player_spinbox.minimum() == 3
-    dialog.player_spinbox.setValue(10)
-    assert len(dialog.slots) == 10
-    dialog.player_spinbox.setValue(3)
-    assert actual_names(dialog) == ["", "", "Carol"]
+    editor = make_editor(qtbot, temp_dir, FakeFetcher())
+    editor.roster.player_spinbox.setValue(4)
+    editor.roster.table.item(2, COLUMN_ACTUAL_NAME).setText("Carol")
+    assert editor.roster.slots[2].actual_name == "Carol"
+    assert editor.roster.player_spinbox.minimum() == 3
+    editor.roster.player_spinbox.setValue(10)
+    assert len(editor.roster.slots) == 10
+    editor.roster.player_spinbox.setValue(3)
+    assert actual_names(editor) == ["", "", "Carol"]
 
 
 def test_refresh_after_typing_names_asks_to_match(
@@ -125,7 +137,7 @@ def test_refresh_after_typing_names_asks_to_match(
     """New sign-ups are matched to typed names through the match dialog."""
     fetcher = FakeFetcher([HEADER, ["t1", "Jane Q Doe", "", "", ""], ["t2", "lol"]])
     slots = [PlayerSlot("Jane Doe"), PlayerSlot("Bob"), PlayerSlot("Carol")]
-    dialog = make_dialog(
+    editor = make_editor(
         qtbot,
         temp_dir,
         fetcher,
@@ -141,16 +153,16 @@ def test_refresh_after_typing_names_asks_to_match(
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(SignUpMatchDialog, "exec", accept_with_last_ignored)
-    dialog.refresh_button.click()
+    editor.roster.refresh_button.click()
 
     assert shown == [[0, None]]
-    assert dialog.slots[0].sign_up.timestamp == "t1"
-    assert actual_names(dialog) == ["Jane Doe", "Bob", "Carol"]
-    assert dialog.settings.ignored_sign_ups == ["t2"]
+    assert editor.roster.slots[0].sign_up.timestamp == "t1"
+    assert actual_names(editor) == ["Jane Doe", "Bob", "Carol"]
+    assert editor.roster.settings.ignored_sign_ups == ["t2"]
 
     # The ignored response isn't asked about again.
     shown.clear()
-    dialog.refresh_button.click()
+    editor.roster.refresh_button.click()
     assert shown == []
 
 
@@ -159,7 +171,7 @@ def test_cancelled_match_leaves_sign_ups_for_next_time(
 ) -> None:
     """Cancelling the match dialog places nothing and says so."""
     fetcher = FakeFetcher([HEADER, ["t1", "Jane"]])
-    dialog = make_dialog(
+    editor = make_editor(
         qtbot,
         temp_dir,
         fetcher,
@@ -169,21 +181,21 @@ def test_cancelled_match_leaves_sign_ups_for_next_time(
     monkeypatch.setattr(
         SignUpMatchDialog, "exec", lambda _self: QDialog.DialogCode.Rejected
     )
-    dialog.refresh_button.click()
-    assert dialog.slots[0].sign_up is None
-    assert "1 not placed yet" in dialog.status_label.text()
+    editor.roster.refresh_button.click()
+    assert editor.roster.slots[0].sign_up is None
+    assert "1 not placed yet" in editor.roster.status_label.text()
 
 
 def test_sheet_errors_are_shown(qtbot: object, temp_dir: object) -> None:
     """Fetch problems are shown, and the button works again afterwards."""
     fetcher = FakeFetcher(error=SheetAccessError("Share the sheet"))
-    dialog = make_dialog(qtbot, temp_dir, fetcher)
-    dialog.refresh_button.click()
-    assert "Paste the link" in dialog.status_label.text()
-    dialog.sheet_edit.setText(SHEET_LINK)
-    dialog.refresh_button.click()
-    assert dialog.status_label.text() == "Share the sheet"
-    assert dialog.refresh_button.isEnabled()
+    editor = make_editor(qtbot, temp_dir, fetcher)
+    editor.roster.refresh_button.click()
+    assert "Paste the link" in editor.roster.status_label.text()
+    editor.roster.sheet_edit.setText(SHEET_LINK)
+    editor.roster.refresh_button.click()
+    assert editor.roster.status_label.text() == "Share the sheet"
+    assert editor.roster.refresh_button.isEnabled()
 
 
 def test_save_rejects_duplicate_and_existing_names(
@@ -191,18 +203,18 @@ def test_save_rejects_duplicate_and_existing_names(
 ) -> None:
     """Players need different names, and a new tournament a new folder."""
     save_tournament(temp_dir, TournamentSettings("Taken"), [])
-    dialog = make_dialog(qtbot, temp_dir, FakeFetcher())
-    save = dialog.buttons.button(dialog.buttons.StandardButton.Save)
+    editor = make_editor(qtbot, temp_dir, FakeFetcher())
+    save = editor.buttons.button(editor.buttons.StandardButton.Save)
     save.click()
-    assert "Enter a tournament name" in dialog.status_label.text()
-    dialog.name_edit.setText("Taken")
+    assert "Enter a tournament name" in editor.status_label.text()
+    editor.name_edit.setText("Taken")
     save.click()
-    assert "already exists" in dialog.status_label.text()
-    dialog.name_edit.setText("New")
-    dialog.table.item(0, COLUMN_ACTUAL_NAME).setText("Ann")
-    dialog.table.item(1, COLUMN_ACTUAL_NAME).setText("ann")
+    assert "already exists" in editor.status_label.text()
+    editor.name_edit.setText("New")
+    editor.roster.table.item(0, COLUMN_ACTUAL_NAME).setText("Ann")
+    editor.roster.table.item(1, COLUMN_ACTUAL_NAME).setText("ann")
     save.click()
-    assert "both named" in dialog.status_label.text()
+    assert "both named" in editor.status_label.text()
     assert not (temp_dir / "New").exists()
 
 
@@ -229,39 +241,13 @@ def test_match_dialog_steps_through_and_blocks_reused_slots(qtbot: object) -> No
     assert [choice for _, choice in dialog.choices()] == [0, MATCH_ADD_PLAYER]
 
 
-def test_welcome_create_and_load_tournament(
-    qtbot: object, temp_dir: object, monkeypatch: object
-) -> None:
-    """The welcome buttons open the roster for a new or saved tournament."""
-    monkeypatch.setattr(welcome, "TOURNAMENTS_DIR", temp_dir)
-    widget = Welcome(StubGame())
-    qtbot.addWidget(widget)
-
-    widget.create_tournament_button.click()
-    created = widget.tournament_roster_dialog
-    assert isinstance(created, TournamentRosterDialog)
-    assert created.creating
-    created.close()
-
-    save_tournament(temp_dir, TournamentSettings("Fun"), [PlayerSlot("Jane")])
-    monkeypatch.setattr(
-        QInputDialog, "getItem", lambda *_args: ("Fun", True), raising=True
-    )
-    widget.load_tournament_button.click()
-    loaded = widget.tournament_roster_dialog
-    assert not loaded.creating
-    assert loaded.name_edit.isReadOnly()
-    assert loaded.slots[0].actual_name == "Jane"
-    loaded.close()
-
-
 def test_resubmitted_sign_up_is_relinked_to_its_player(
     qtbot: object, temp_dir: object, monkeypatch: object
 ) -> None:
     """A row replacing one that left the sheet is offered for the old slot."""
     old = SignUp("old", "Jane Doe", "Pilot")
     fetcher = FakeFetcher([HEADER, ["new", "Jane Doe", "Chef", "", ""]])
-    dialog = make_dialog(
+    editor = make_editor(
         qtbot,
         temp_dir,
         fetcher,
@@ -277,42 +263,42 @@ def test_resubmitted_sign_up_is_relinked_to_its_player(
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(SignUpMatchDialog, "exec", accept_suggestions)
-    dialog.refresh_button.click()
+    editor.roster.refresh_button.click()
 
     assert shown[0][0] == [0]
     assert "no longer in the sheet" in shown[0][1]
-    assert actual_names(dialog) == ["Jane Doe", "", ""]
-    assert dialog.slots[0].sign_up.timestamp == "new"
-    assert dialog.slots[0].sign_up.occupation == "Chef"
+    assert actual_names(editor) == ["Jane Doe", "", ""]
+    assert editor.roster.slots[0].sign_up.timestamp == "new"
+    assert editor.roster.slots[0].sign_up.occupation == "Chef"
 
 
 def test_stale_sheet_result_is_dropped(qtbot: object, temp_dir: object) -> None:
     """Only the newest fetch's result is applied."""
     pending = []
     fetcher = FakeFetcher([HEADER, ["t1", "Ann"]])
-    dialog = TournamentRosterDialog(temp_dir, fetcher=fetcher, run_async=pending.append)
-    qtbot.addWidget(dialog)
-    dialog.sheet_edit.setText(SHEET_LINK)
-    dialog.refresh_sheet()
-    dialog.refresh_sheet()
+    editor = TournamentEditor(temp_dir, fetcher=fetcher, run_async=pending.append)
+    qtbot.addWidget(editor)
+    editor.roster.sheet_edit.setText(SHEET_LINK)
+    editor.roster.refresh_sheet()
+    editor.roster.refresh_sheet()
 
     pending[0]()
-    assert dialog.slots[0].blank
-    assert not dialog.refresh_button.isEnabled()
+    assert editor.roster.slots[0].blank
+    assert not editor.roster.refresh_button.isEnabled()
 
     pending[1]()
-    assert dialog.slots[0].actual_name == "Ann"
-    assert dialog.refresh_button.isEnabled()
+    assert editor.roster.slots[0].actual_name == "Ann"
+    assert editor.roster.refresh_button.isEnabled()
 
 
 def test_network_errors_are_shown(qtbot: object, temp_dir: object) -> None:
     """A failed request says so, and Refresh works again afterwards."""
     fetcher = FakeFetcher(error=requests.ConnectionError("offline"))
-    dialog = make_dialog(qtbot, temp_dir, fetcher)
-    dialog.sheet_edit.setText(SHEET_LINK)
-    dialog.refresh_button.click()
-    assert "Couldn't reach the sign-up sheet" in dialog.status_label.text()
-    assert dialog.refresh_button.isEnabled()
+    editor = make_editor(qtbot, temp_dir, fetcher)
+    editor.roster.sheet_edit.setText(SHEET_LINK)
+    editor.roster.refresh_button.click()
+    assert "Couldn't reach the sign-up sheet" in editor.roster.status_label.text()
+    assert editor.roster.refresh_button.isEnabled()
 
 
 def test_unlink_remove_and_restore_ignored(qtbot: object, temp_dir: object) -> None:
@@ -322,139 +308,168 @@ def test_unlink_remove_and_restore_ignored(qtbot: object, temp_dir: object) -> N
         PlayerSlot("Bob"),
         PlayerSlot("Cy"),
     ]
-    dialog = make_dialog(
+    editor = make_editor(
         qtbot,
         temp_dir,
         FakeFetcher(),
         settings=TournamentSettings("Fun", SHEET_LINK, ["t9"]),
         slots=slots,
     )
-    assert not dialog.unlink_button.isEnabled()
-    assert not dialog.remove_button.isEnabled()
+    assert not editor.roster.unlink_button.isEnabled()
+    assert not editor.roster.remove_button.isEnabled()
 
-    dialog.table.selectRow(0)
-    assert dialog.unlink_button.isEnabled()
-    dialog.unlink_button.click()
-    assert dialog.slots[0] == PlayerSlot("Jane")
-    assert not dialog.unlink_button.isEnabled()
+    editor.roster.table.selectRow(0)
+    assert editor.roster.unlink_button.isEnabled()
+    editor.roster.unlink_button.click()
+    assert editor.roster.slots[0] == PlayerSlot("Jane")
+    assert not editor.roster.unlink_button.isEnabled()
 
-    dialog.table.selectRow(1)
-    dialog.remove_button.click()
-    assert actual_names(dialog) == ["Jane", "Cy", ""]
+    editor.roster.table.selectRow(1)
+    editor.roster.remove_button.click()
+    assert actual_names(editor) == ["Jane", "Cy", ""]
 
-    assert dialog.restore_ignored_button.text() == "Restore Ignored (1)"
-    dialog.restore_ignored_button.click()
-    assert dialog.settings.ignored_sign_ups == []
-    assert not dialog.restore_ignored_button.isEnabled()
+    assert editor.roster.restore_ignored_button.text() == "Restore Ignored (1)"
+    editor.roster.restore_ignored_button.click()
+    assert editor.roster.settings.ignored_sign_ups == []
+    assert not editor.roster.restore_ignored_button.isEnabled()
 
 
 def test_save_rejects_a_linked_player_without_a_name(
     qtbot: object, temp_dir: object
 ) -> None:
     """Clearing a linked player's name blocks Save."""
-    dialog = make_dialog(
+    editor = make_editor(
         qtbot,
         temp_dir,
         FakeFetcher(),
         settings=TournamentSettings("Fun"),
         slots=[PlayerSlot("Jane", SignUp("t1", "Jane")), PlayerSlot(), PlayerSlot()],
     )
-    dialog.table.item(0, COLUMN_ACTUAL_NAME).setText("")
-    dialog.buttons.button(dialog.buttons.StandardButton.Save).click()
-    assert "no Actual Name" in dialog.status_label.text()
+    editor.roster.table.item(0, COLUMN_ACTUAL_NAME).setText("")
+    click_save(editor)
+    assert "no Actual Name" in editor.status_label.text()
     assert not (temp_dir / "Fun").exists()
+
+
+def make_window(qtbot: object, root: object, **kwargs: object) -> TournamentWindow:
+    """Return a Tournament window that saves under ``root``."""
+    window = TournamentWindow(
+        root,
+        fetcher=FakeFetcher(),
+        run_async=run_inline,
+        missing_media=no_missing_media,
+        **kwargs,
+    )
+    qtbot.addWidget(window)
+    return window
+
+
+def test_window_creates_and_loads_tournaments(qtbot: object, temp_dir: object) -> None:
+    """The home page creates a new tournament or loads a saved one."""
+    window = make_window(qtbot, temp_dir)
+    assert "No saved tournaments" in window.home_status.text()
+    assert not window.load_button.isEnabled()
+
+    window.create_button.click()
+    created = window.editor
+    assert created.creating
+    assert window.stack.currentWidget() is created
+    created.buttons.button(created.buttons.StandardButton.Close).click()
+    assert window.editor is None
+    assert window.stack.currentWidget() is window.home_page
+
+    save_tournament(temp_dir, TournamentSettings("Fun"), [PlayerSlot("Jane")])
+    window.refresh_saved_list()
+    assert window.saved_list.currentItem().text() == "Fun"
+    window.load_button.click()
+    loaded = window.editor
+    assert not loaded.creating
+    assert loaded.name_edit.isReadOnly()
+    assert loaded.roster.slots[0].actual_name == "Jane"
+    assert window.windowTitle() == "Tournament: Fun"
+
+
+def test_window_bracket_designer_page(qtbot: object, temp_dir: object) -> None:
+    """The bracket designer opens from the home page and goes back."""
+    window = make_window(qtbot, temp_dir)
+    window.designer_button.click()
+    assert window.stack.currentWidget() is window.designer_page
+    assert not window.designer.player_spinbox.isReadOnly()
+    window.show_home()
+    assert window.stack.currentWidget() is window.home_page
+
+
+def test_window_shows_load_problems(qtbot: object, temp_dir: object) -> None:
+    """A broken tournament file is reported and opens nothing."""
+    save_tournament(temp_dir, TournamentSettings("Fun"), [PlayerSlot("Jane")])
+    (temp_dir / "Fun" / "tournament.json").write_text("not json", encoding="utf-8")
+    window = make_window(qtbot, temp_dir)
+    window.load_button.click()
+    assert "Couldn't load Fun" in window.home_status.text()
+    assert window.editor is None
 
 
 def test_closing_asks_before_discarding_changes(
     qtbot: object, temp_dir: object, monkeypatch: object
 ) -> None:
-    """Unsaved changes need a Discard; an unchanged roster closes quietly."""
+    """Unsaved changes need a Discard; an unchanged tournament stays open."""
     answers = []
     monkeypatch.setattr(QMessageBox, "question", lambda *_args: answers.pop(0))
-    dialog = make_dialog(qtbot, temp_dir, FakeFetcher())
-    dialog.show()
-    dialog.reject()
-    assert not dialog.isVisible()
+    window = make_window(qtbot, temp_dir)
+    window.show()
+    window.create_button.click()
+    editor = window.editor
+    window.reject()
+    assert not window.isVisible()
+    assert window.editor is editor
 
-    dialog.show()
-    dialog.table.item(0, COLUMN_ACTUAL_NAME).setText("Ann")
+    window.show()
+    editor.roster.table.item(0, COLUMN_ACTUAL_NAME).setText("Ann")
     answers.append(QMessageBox.StandardButton.Cancel)
-    dialog.reject()
-    assert dialog.isVisible()
+    window.reject()
+    assert window.isVisible()
+    assert window.editor is editor
     answers.append(QMessageBox.StandardButton.Discard)
-    dialog.reject()
-    assert not dialog.isVisible()
+    window.reject()
+    assert not window.isVisible()
+    assert window.editor is None
     assert answers == []
+
+
+def test_opening_another_tournament_keeps_unsaved_changes(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> None:
+    """Going back home doesn't silently discard an open tournament."""
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *_args: QMessageBox.StandardButton.Cancel
+    )
+    window = make_window(qtbot, temp_dir)
+    window.create_button.click()
+    first = window.editor
+    first.roster.table.item(0, COLUMN_ACTUAL_NAME).setText("Ann")
+    assert not window.show_home()
+    assert window.editor is first
+    assert window.stack.currentWidget() is first
 
 
 def test_fetch_finishing_after_close_is_dropped(
     qtbot: object, temp_dir: object, monkeypatch: object
 ) -> None:
-    """A result that arrives after the roster closes doesn't open a dialog."""
+    """A result that arrives after the tournament closes doesn't open a dialog."""
     pending = []
     fetcher = FakeFetcher([HEADER, ["t1", "Ann"]])
-    dialog = TournamentRosterDialog(
+    editor = TournamentEditor(
         temp_dir,
         settings=TournamentSettings("Fun", SHEET_LINK),
         slots=[PlayerSlot("Ann"), PlayerSlot(), PlayerSlot()],
         fetcher=fetcher,
         run_async=pending.append,
     )
-    qtbot.addWidget(dialog)
+    qtbot.addWidget(editor)
     opened = []
     monkeypatch.setattr(SignUpMatchDialog, "exec", lambda self: opened.append(self))
-    dialog.show()
-    dialog.refresh_button.click()
-    dialog.reject()
+    editor.roster.refresh_button.click()
+    assert editor.confirm_discard()
     pending[0]()
     assert opened == []
-    assert dialog.slots[0].sign_up is None
-
-
-def test_welcome_load_tournament_problems(
-    qtbot: object, temp_dir: object, monkeypatch: object
-) -> None:
-    """No tournaments, a cancelled pick, and a broken file open no roster."""
-    monkeypatch.setattr(welcome, "TOURNAMENTS_DIR", temp_dir)
-    notices = []
-    monkeypatch.setattr(QMessageBox, "information", lambda *a: notices.append(a))
-    monkeypatch.setattr(QMessageBox, "warning", lambda *a: notices.append(a))
-    widget = Welcome(StubGame())
-    qtbot.addWidget(widget)
-
-    widget.load_tournament_button.click()
-    assert "no saved tournaments" in notices.pop()[2]
-
-    save_tournament(temp_dir, TournamentSettings("Fun"), [PlayerSlot("Jane")])
-    picks = [("Fun", False), ("Fun", True)]
-    monkeypatch.setattr(QInputDialog, "getItem", lambda *_args: picks.pop(0))
-    widget.load_tournament_button.click()
-    assert notices == []
-
-    (temp_dir / "Fun" / "tournament.json").write_text("not json", encoding="utf-8")
-    widget.load_tournament_button.click()
-    assert notices.pop()[1] == "Couldn't load tournament"
-    assert widget.tournament_roster_dialog is None
-
-
-def test_welcome_keeps_a_roster_with_unsaved_changes(
-    qtbot: object, temp_dir: object, monkeypatch: object
-) -> None:
-    """Opening another tournament doesn't silently discard an open roster."""
-    monkeypatch.setattr(welcome, "TOURNAMENTS_DIR", temp_dir)
-    monkeypatch.setattr(
-        QMessageBox, "question", lambda *_args: QMessageBox.StandardButton.Cancel
-    )
-    widget = Welcome(StubGame())
-    qtbot.addWidget(widget)
-    widget.create_tournament_button.click()
-    first = widget.tournament_roster_dialog
-    first.table.item(0, COLUMN_ACTUAL_NAME).setText("Ann")
-
-    widget.create_tournament_button.click()
-    assert widget.tournament_roster_dialog is first
-    assert first.isVisible()
-    monkeypatch.setattr(
-        QMessageBox, "question", lambda *_args: QMessageBox.StandardButton.Discard
-    )
-    first.close()
+    assert editor.roster.slots[0].sign_up is None

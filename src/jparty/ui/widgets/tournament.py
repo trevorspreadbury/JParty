@@ -1,17 +1,17 @@
-"""Tournament bracket designer dialog.
+"""Tournament bracket designer.
 
-The host picks a player count and optional second round, and the dialog shows
-the resulting bracket, total games, and how many players get more than one
-game. Bracket rules live in :mod:`jparty.domain.tournament`.
+The host picks a player count and optional second round, and the designer
+shows the resulting bracket, total games, and how many players get more than
+one game. It is used on its own from the Tournament window and as a
+tournament's Bracket tab, where the roster sets the player count. Bracket
+rules live in :mod:`jparty.domain.tournament`.
 """
 
 from html import escape
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QDialog,
-    QDialogButtonBox,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -35,6 +35,7 @@ from jparty.domain.tournament import (
     describe_plan,
     plan_tournament,
 )
+from jparty.domain.tournament_setup import BracketSettings
 
 DEFAULT_TOURNAMENT_PLAYERS = 15
 LAYOUT_SPACING = 8
@@ -50,26 +51,40 @@ CHASE_CARD_STYLE = (
 PROBLEM_STYLE = "QLabel { color: #b00020; }"
 
 
-class TournamentDesigner(QDialog):
-    """Dialog for trying tournament bracket shapes before running one."""
+class BracketDesigner(QWidget):
+    """Controls and a live view for trying tournament bracket shapes.
 
-    def __init__(self, parent: object = None) -> None:
+    Attributes:
+        plan: The bracket for the current options.
+    """
+
+    plan_changed = pyqtSignal()
+
+    def __init__(
+        self, parent: QWidget | None = None, roster_sets_players: bool = False
+    ) -> None:
         """Build the option controls, summary, and bracket view.
 
         Args:
             parent: Optional parent widget.
+            roster_sets_players: Lock the player count, which then follows
+                :meth:`set_player_count`, for a tournament's Bracket tab.
 
         Returns:
             ``None``.
         """
         super().__init__(parent)
-        self.setWindowTitle("Tournament Designer")
-        self.resize(1100, 700)
         self.plan: TournamentPlan | None = None
 
         self.player_spinbox = QSpinBox(self)
         self.player_spinbox.setRange(MIN_TOURNAMENT_PLAYERS, MAX_TOURNAMENT_PLAYERS)
         self.player_spinbox.setValue(DEFAULT_TOURNAMENT_PLAYERS)
+        if roster_sets_players:
+            self.player_spinbox.setReadOnly(True)
+            self.player_spinbox.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+            self.player_spinbox.setToolTip(
+                "Change the player count on the Players tab."
+            )
         self.second_round_checkbox = QCheckBox(
             "Add a second round before the Semifinals", self
         )
@@ -114,17 +129,12 @@ class TournamentDesigner(QDialog):
         self.bracket_scroll.setWidgetResizable(True)
         self.bracket_scroll.setWidget(self.bracket_widget)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
-        buttons.rejected.connect(self.reject)
-
         layout = QVBoxLayout(self)
         layout.setSpacing(LAYOUT_SPACING)
-        layout.setContentsMargins(
-            LAYOUT_SPACING * 2, LAYOUT_SPACING * 2, LAYOUT_SPACING * 2, LAYOUT_SPACING
-        )
+        # The app style sets layout margins to zero, so set them here.
+        layout.setContentsMargins(*(LAYOUT_SPACING,) * 4)
         layout.addLayout(controls_layout)
         layout.addWidget(self.bracket_scroll, 1)
-        layout.addWidget(buttons)
 
         self.player_spinbox.valueChanged.connect(self.refresh)
         self.second_round_checkbox.toggled.connect(self.refresh)
@@ -134,12 +144,58 @@ class TournamentDesigner(QDialog):
 
     def options(self) -> TournamentOptions:
         """Return the tournament options currently chosen in the controls."""
-        return TournamentOptions(
-            player_count=self.player_spinbox.value(),
+        return self.bracket_settings().options(self.player_spinbox.value())
+
+    def bracket_settings(self) -> BracketSettings:
+        """Return the chosen options apart from the player count."""
+        return BracketSettings(
             use_second_round=self.second_round_checkbox.isChecked(),
             semifinal_byes=self.byes_spinbox.value(),
             second_round_players=self.second_round_players_spinbox.value(),
         )
+
+    def set_player_count(self, count: int) -> None:
+        """Show the bracket for ``count`` players.
+
+        Args:
+            count: Players on the roster. A count outside the planner's range
+                is shown as is, and the summary says why it can't work.
+
+        Returns:
+            ``None``.
+        """
+        self.player_spinbox.setRange(
+            min(MIN_TOURNAMENT_PLAYERS, count), max(MAX_TOURNAMENT_PLAYERS, count)
+        )
+        self.player_spinbox.setValue(count)
+
+    def set_bracket_settings(self, settings: BracketSettings) -> None:
+        """Show saved options, then redraw once.
+
+        Args:
+            settings: Options to show. A ``None`` second-round field uses
+                the default for the bye count.
+
+        Returns:
+            ``None``.
+        """
+        controls = (
+            self.second_round_checkbox,
+            self.byes_spinbox,
+            self.second_round_players_spinbox,
+        )
+        for control in controls:
+            control.blockSignals(True)
+        self.second_round_checkbox.setChecked(settings.use_second_round)
+        self.byes_spinbox.setValue(settings.semifinal_byes)
+        self.second_round_players_spinbox.setValue(
+            settings.second_round_players
+            if settings.second_round_players is not None
+            else default_second_round_players(settings.semifinal_byes)
+        )
+        for control in controls:
+            control.blockSignals(False)
+        self.refresh()
 
     def on_byes_changed(self, byes: int) -> None:
         """Reset the second-round field to fill the remaining Semifinal spots.
@@ -174,6 +230,7 @@ class TournamentDesigner(QDialog):
         self.plan = plan_tournament(self.options())
         self._update_summary(self.plan)
         self._rebuild_bracket(self.plan)
+        self.plan_changed.emit()
 
     def _update_summary(self, plan: TournamentPlan) -> None:
         """Show the plan's totals, or why the options do not work."""
