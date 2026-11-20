@@ -57,6 +57,8 @@ TIE_CHASER = "chaser"
 TIE_BYE = "bye"
 TIE_PLAY_IN = "play-in"
 TIE_REPLACEMENT = "replacement"
+# A knocked-out player's status in player_statuses.
+STATUS_OUT = "out"
 
 
 @dataclass(frozen=True)
@@ -1032,7 +1034,7 @@ def player_statuses(
         if not standing.decided:
             continue
         for player_id in standing.eliminated:
-            statuses[player_id] = ("out", True)
+            statuses[player_id] = (STATUS_OUT, True)
         if not later:
             for player_id in standing.winners:
                 statuses[player_id] = ("champion", False)

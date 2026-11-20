@@ -383,6 +383,8 @@ class Welcome(StartWidget):
         self._tournament_board_key = None
         # Key of the tournament game whose save is ready to resume, or None.
         self._tournament_resume_key = None
+        # Key of the tournament game whose save is being read, or None.
+        self._tournament_resume_loading = None
         # Whether a tournament game or tiebreaker has started and not come
         # back to this screen yet.
         self._tournament_game_running = False
@@ -686,6 +688,7 @@ QCheckBox {{
 
     def _clear_tournament_board(self) -> None:
         """Forget any tournament board or save pushed into the game."""
+        self._tournament_resume_loading = None
         if self._tournament_resume_key is not None:
             self._tournament_resume_key = None
             self.game.clear_resume_state()
@@ -710,9 +713,11 @@ QCheckBox {{
         if not self.tournament_mode:
             return
         key = self.tournament_panel.selected_key()
-        if self._tournament_resume_key is not None:
-            if key == self._tournament_resume_key:
-                # Picking players doesn't change a resumed game.
+        resuming = self._tournament_resume_key or self._tournament_resume_loading
+        if resuming is not None:
+            if key == resuming:
+                # Picking players doesn't change a resumed game, or one
+                # whose save is still being read.
                 self.check_start()
                 return
             self._tournament_request.cancel()
@@ -811,6 +816,7 @@ QCheckBox {{
             return
         key = save.game_key
         self._clear_tournament_board()
+        self._tournament_resume_loading = key
         self._tournament_summary_text = "Loading the saved game..."
         request_id = self._tournament_request.begin()
         self.check_start()
@@ -846,6 +852,7 @@ QCheckBox {{
             request_id
         ):
             return
+        self._tournament_resume_loading = None
         if self.tournament_panel.selected_key() != key:
             return
         resume_state = None
@@ -893,11 +900,19 @@ QCheckBox {{
         """Enable Start once the chosen game, board, and phones are ready."""
         names = self._tournament_phone_names()
         self.tournament_panel.set_phones(names)
-        if (
-            self._tournament_resume_key is not None
-            and self._tournament_resume_key == self.tournament_panel.selected_key()
+        selected = self.tournament_panel.selected_key()
+        if self._tournament_resume_key is not None and (
+            self._tournament_resume_key == selected
         ):
             self._check_tournament_resume()
+            return
+        if self._tournament_resume_loading is not None and (
+            self._tournament_resume_loading == selected
+        ):
+            self._tournament_ready = False
+            self.tournament_start_button.setEnabled(False)
+            self.tournament_panel.show_status("Loading the saved game...", True)
+            self.summary_label.setText(self._tournament_summary_text)
             return
         problem = self.tournament_panel.problem(len(names))
         if self.tournament_panel.selected_tie() is not None:
@@ -925,8 +940,12 @@ QCheckBox {{
         self.summary_label.setText(self._tournament_summary_text)
 
     def _check_tournament_resume(self) -> None:
-        """Enable Resume! once every saved player has been claimed."""
-        problem = self.tournament_panel.load_error
+        """Enable Resume! once every saved player has been claimed.
+
+        The save is checked again first: a player who dropped out since it
+        was prepared would otherwise have results logged for them.
+        """
+        problem = self.tournament_panel.resume_problem()
         if problem is None:
             claimed, total = self.game.resume_claim_status()
             if not self.game.startable():

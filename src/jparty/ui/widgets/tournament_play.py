@@ -117,6 +117,10 @@ NO_PHONE_TEXT = "no phone yet"
 SIGNED_NAME_TEXT = "signed name"
 CHOOSE_PLAYER_TEXT = "Choose a player"
 IN_PROGRESS_TEXT = "in progress"
+RESUME_TOOLTIP = (
+    "Pick up the selected game where it stopped. The players' phones claim"
+    " their saved players."
+)
 # A podium's signature is this many lines of text tall.
 SIGNATURE_LINES = 3
 
@@ -321,10 +325,7 @@ class TournamentPlayPanel(QWidget):
         podiums.setColumnStretch(1, 2)
         podiums.setColumnStretch(3, 1)
         self.resume_button = QPushButton("Resume Saved Game", self)
-        self.resume_button.setToolTip(
-            "Pick up the selected game where it stopped. The players' phones"
-            " claim their saved players."
-        )
+        self.resume_button.setToolTip(RESUME_TOOLTIP)
         self.resume_button.clicked.connect(self.resume_selected)
         podiums.addWidget(
             self.resume_button,
@@ -398,6 +399,46 @@ class TournamentPlayPanel(QWidget):
         key = self.selected_key()
         return self.saves.get(key) if key is not None else None
 
+    def resume_problem(self) -> str | None:
+        """Return why the selected game's save can't be resumed, or ``None``.
+
+        A save can't be resumed once one of its players has dropped out or
+        can no longer play the game, since its results would be logged for
+        them. Starting the game again with new players still works.
+
+        Returns:
+            A message for the host, or ``None``.
+        """
+        save = self.selected_save()
+        if save is None:
+            return "This game has no saved game to resume."
+        if self.load_error:
+            return self.load_error
+        names = self._names()
+        players = [
+            (player_id, names.get(player_id) or name)
+            for player_id, name in zip(save.player_ids, save.players, strict=False)
+        ]
+        if len(players) != len(save.players) or not all(p for p, _ in players):
+            return "This save doesn't say which tournament players it has."
+        dropped = dropped_ids(self.dropouts)
+        gone = [name for player_id, name in players if player_id in dropped]
+        if gone:
+            return (
+                f"{', '.join(gone)} dropped out, so this game can't be resumed. "
+                "Start it again with new players, or undo the drop."
+            )
+        if self._eligibility.waiting:
+            return self._eligibility.waiting
+        allowed = set(self._eligibility.player_ids)
+        barred = [name for player_id, name in players if player_id not in allowed]
+        if barred:
+            return (
+                f"{', '.join(barred)} can no longer play {save.game_key}, so this "
+                "game can't be resumed. Start it again with new players."
+            )
+        return None
+
     def resume_selected(self) -> None:
         """Ask the welcome screen to resume the selected game's save.
 
@@ -405,7 +446,7 @@ class TournamentPlayPanel(QWidget):
             ``None``.
         """
         save = self.selected_save()
-        if save is not None:
+        if save is not None and self.resume_problem() is None:
             logging.info(
                 "Resuming tournament game %s from %s", save.game_key, save.path
             )
@@ -914,9 +955,15 @@ class TournamentPlayPanel(QWidget):
 
     def _on_podium_changed(self, *_args: object) -> None:
         """Report a change in the chosen game or players."""
-        self.resume_button.setEnabled(self.selected_save() is not None)
+        save = self.selected_save()
+        resume_problem = self.resume_problem() if save is not None else None
+        self.resume_button.setEnabled(save is not None and resume_problem is None)
+        self.resume_button.setToolTip(resume_problem or RESUME_TOOLTIP)
         problem = self.problem(len(self._phone_names))
-        self.show_status(problem or "Ready to start.", problem is not None)
+        message = problem or "Ready to start."
+        if resume_problem:
+            message += f"\nCan't resume: {resume_problem}"
+        self.show_status(message, problem is not None)
         self.selection_changed.emit()
 
     def show_status(self, message: str, problem: bool = False) -> None:

@@ -25,7 +25,11 @@ def write_save(
     state = {
         "game_id": game_id,
         "players": [
-            {"name": f"Phone {index}", "tournament_player_name": name}
+            {
+                "name": f"Phone {index}",
+                "tournament_player_id": f"id-{name}",
+                "tournament_player_name": name,
+            }
             for index, name in enumerate(players)
         ],
         "last_updated": updated,
@@ -52,6 +56,7 @@ def test_finds_the_newest_save_of_each_game(temp_dir: Path) -> None:
     assert set(saves) == {SF1, SF2}
     assert saves[SF1].path == newest
     assert saves[SF1].players == ("Ann", "Bob", "Cat")
+    assert saves[SF1].player_ids == ("id-Ann", "id-Bob", "id-Cat")
     assert saves[SF2].path == sf2
 
 

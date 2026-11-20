@@ -451,7 +451,9 @@ Before game day:
 - `Preview All Media...` loads every board the same way, then shows each
   board's question media with its category, value, and correct response, so
   you can check the images before anyone sees them. Boards with no question
-  media, or that couldn't load, say so.
+  media, or that couldn't load, say so. If you close the Tournament window
+  or click `Play Games` while the boards load, the preview doesn't open by
+  itself; click `Preview All Media...` again when you're back.
 
 ### Rankings tab
 
@@ -511,9 +513,12 @@ started with. To pick it up where it stopped, select it and click `Resume
 Saved Game`: `Start!` becomes `Resume!`, and each player's phone claims their
 saved player as it would after `Load Saved`. `Resume!` turns on once every
 saved player is claimed, and skips the introduction. Selecting another game
-drops the resume. A resumed game still saves its results when it ends. You
-can also start an in-progress game again from the beginning by picking its
-players and clicking `Start!` as usual.
+drops the resume. If one of the saved players has dropped out, or can no
+longer play that game, `Resume Saved Game` stays off and the status line says
+why, since the game's results would be logged for them; start the game again
+with new players, or undo the drop. A resumed game still saves its results
+when it ends. You can also start an in-progress game again from the
+beginning by picking its players and clicking `Start!` as usual.
 
 `Rankings...` shows the same rankings as the Tournament window's
 [Rankings tab](#rankings-tab). `Edit Tournament...` opens this tournament in

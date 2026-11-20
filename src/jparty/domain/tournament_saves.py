@@ -21,7 +21,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from jparty.domain.tournament_play import TournamentGameRef
+from jparty.domain.tournament_play import (
+    SAVED_PLAYER_ID,
+    SAVED_PLAYER_NAME,
+    TournamentGameRef,
+)
 
 GENERAL_FILE = "general.json"
 # A saved game's folder name: its game id, then when it started.
@@ -37,12 +41,15 @@ class TournamentSave:
         path: The saved game's folder.
         last_updated: When the save last changed, in seconds since the epoch.
         players: The saved players' names, in podium order.
+        player_ids: The saved players' tournament player ids, in podium
+            order; ``""`` for a player saved without one.
     """
 
     game_key: str
     path: Path
     last_updated: float
     players: tuple[str, ...] = ()
+    player_ids: tuple[str, ...] = ()
 
 
 def _read_save(folder: Path) -> dict | None:
@@ -56,15 +63,16 @@ def _read_save(folder: Path) -> dict | None:
     return state if isinstance(state, dict) else None
 
 
-def _player_names(state: Mapping) -> tuple[str, ...]:
-    """Return the saved players' names, tournament names first."""
-    names = []
+def _saved_players(state: Mapping) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return the saved players' names (tournament names first) and ids."""
+    names, ids = [], []
     for player in state.get("players") or []:
         if not isinstance(player, Mapping):
             continue
-        name = player.get("tournament_player_name") or player.get("name") or ""
+        name = player.get(SAVED_PLAYER_NAME) or player.get("name") or ""
         names.append(str(name))
-    return tuple(names)
+        ids.append(str(player.get(SAVED_PLAYER_ID) or ""))
+    return tuple(names), tuple(ids)
 
 
 def find_tournament_saves(
@@ -105,14 +113,14 @@ def find_tournament_saves(
             continue
         if ref.game_key not in wanted[game_id]:
             continue
-        players = _player_names(state)
+        players, player_ids = _saved_players(state)
         if not players:
             continue
         try:
             last_updated = float(state.get("last_updated") or 0)
         except (TypeError, ValueError):
             last_updated = 0.0
-        save = TournamentSave(ref.game_key, folder, last_updated, players)
+        save = TournamentSave(ref.game_key, folder, last_updated, players, player_ids)
         current = saves.get(ref.game_key)
         if current is None or (save.last_updated, save.path.name) > (
             current.last_updated,

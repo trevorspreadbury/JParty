@@ -12,6 +12,7 @@ import pytest
 from PyQt6.QtGui import QImage
 
 from jparty.domain.models import Board, GameData, Question
+from jparty.domain.tournament_dropouts import DROP_REPLACE, Dropout
 from jparty.domain.tournament_play import GameResult, TournamentGameRef
 from jparty.domain.tournament_store import load_tournament, save_tournament
 from jparty.services.board_prep import PreparedBoard
@@ -36,6 +37,7 @@ from tests.qt.test_welcome_tournament import (
     sf1_results,
     write_tournament,
 )
+from tests.qt.test_welcome_widget import DeferredLoader
 
 pytestmark = pytest.mark.qt
 
@@ -111,8 +113,33 @@ def test_preview_all_media_opens_the_preview(qtbot: object) -> None:
         preview_media=lambda boards, _parent: previews.append(boards),
     )
     games.set_boards({SF1: board("1111")}, [])
+    games.show()
     games.preview_button.click()
     assert [[b.key for b in boards] for boards in previews] == [[SF1]]
+
+
+def test_preview_waits_while_the_window_is_hidden(qtbot: object) -> None:
+    """Boards that finish loading after the window hid don't open a preview."""
+    previews = []
+    pending = []
+    games = make_games(
+        qtbot,
+        missing_media=lambda _board: [],
+        run_async=pending.append,
+        prepare=FakePrepare(),
+        preview_media=lambda boards, _parent: previews.append(boards),
+    )
+    games.set_boards({SF1: board("1111")}, [])
+    games.show()
+    games.preview_button.click()
+    # The host closes the Tournament window or clicks Play Games.
+    games.hide()
+    pending.pop()()
+    assert previews == []
+    assert "Click Preview All Media... to see the media." in (
+        games.prepare_label.text()
+    )
+    assert games.preview_button.isEnabled()
 
 
 def test_no_boards_to_download(qtbot: object) -> None:
@@ -450,3 +477,117 @@ def test_results_after_resume_are_still_logged_as_played(
     panel.reload()
     assert panel.saves == {}
     assert list_texts(panel.games_list)[1] == f"{SF2}: played, won by Ziggy"
+
+
+def test_resume_is_refused_once_a_saved_player_drops_out(
+    qtbot: object, temp_dir: Path
+) -> None:
+    """A save whose player dropped out stays in progress but can't resume."""
+    states = temp_dir / "states"
+    write_save(states, "2222", SF2)
+    panel = make_panel(qtbot, write_tournament(temp_dir / "t", sf1_results()))
+    panel.states_dir = states
+    panel.reload()
+    panel.select_game(SF2)
+    assert panel.resume_problem() is None
+    assert panel.resume_button.isEnabled()
+
+    panel.dropouts = [Dropout("p4", "Semifinals", DROP_REPLACE, other_id="p9")]
+    panel.select_game("Semifinals: SF 3")
+    panel.select_game(SF2)
+    assert panel.resume_problem().startswith("P4 dropped out")
+    assert not panel.resume_button.isEnabled()
+    assert "Can't resume: P4 dropped out" in panel.status_label.text()
+    requested = []
+    panel.resume_requested.connect(requested.append)
+    panel.resume_selected()
+    assert requested == []
+
+
+def test_resume_is_refused_for_a_player_who_cant_play_the_game(
+    qtbot: object, temp_dir: Path
+) -> None:
+    """A saved player who played this round already can't be resumed into it."""
+    states = temp_dir / "states"
+    save = write_save(states, "2222", SF2)
+    state = json.loads((save / "general.json").read_text(encoding="utf-8"))
+    state["players"][1]["tournament_player_id"] = "p1"
+    state["players"][1]["tournament_player_name"] = "P1"
+    (save / "general.json").write_text(json.dumps(state), encoding="utf-8")
+    panel = make_panel(qtbot, write_tournament(temp_dir / "t", sf1_results()))
+    panel.states_dir = states
+    panel.reload()
+    panel.select_game(SF2)
+    assert panel.resume_problem() == (
+        f"P1 can no longer play {SF2}, so this game can't be resumed. "
+        "Start it again with new players."
+    )
+    assert not panel.resume_button.isEnabled()
+
+
+def test_a_dropout_after_the_resume_is_ready_turns_resume_off(
+    tournament_welcome: tuple, temp_dir: Path
+) -> None:
+    """Resume! is checked again, so a later dropout stops it."""
+    widget, game, _parent = tournament_welcome
+    ResumeGame.install(game, TournamentGameRef("Fun", SF2))
+    panel = widget.tournament_panel
+    panel.states_dir = temp_dir / "states"
+    write_save(panel.states_dir, "2222", SF2)
+    panel.reload()
+    panel.select_game(SF2)
+    panel.resume_button.click()
+    game.resume_claimed = 2
+    widget.check_start()
+    assert widget.tournament_start_button.isEnabled()
+    panel.dropouts = [Dropout("p0", "Semifinals", DROP_REPLACE, other_id="p9")]
+    widget.check_start()
+    assert not widget.tournament_start_button.isEnabled()
+    assert panel.status_label.text().startswith("Ziggy dropped out")
+    widget.on_start_clicked()
+    assert game.start_game_calls == 0
+
+
+def test_picking_a_podium_while_the_save_loads_keeps_the_resume(
+    tournament_welcome: tuple, temp_dir: Path
+) -> None:
+    """A podium pick during the read doesn't start loading the board instead."""
+    widget, game, _parent = tournament_welcome
+    ResumeGame.install(game, TournamentGameRef("Fun", SF2))
+    panel = widget.tournament_panel
+    panel.states_dir = temp_dir / "states"
+    write_save(panel.states_dir, "2222", SF2)
+    panel.reload()
+    panel.select_game(SF2)
+    loader = DeferredLoader()
+    widget.loader = loader
+    panel.resume_button.click()
+    assert panel.status_label.text() == "Loading the saved game..."
+    assert not widget.tournament_start_button.isEnabled()
+    panel.choose(0, "p0")
+    assert len(loader.pending) == 1
+    assert widget.built == [["2222"]]
+    loader.pending.pop()()
+    assert game.applied
+    assert widget.tournament_start_button.text() == "Resume!"
+
+
+def test_choosing_another_game_while_the_save_loads_drops_it(
+    tournament_welcome: tuple, temp_dir: Path
+) -> None:
+    """A different game during the read loads that board; the read is ignored."""
+    widget, game, _parent = tournament_welcome
+    ResumeGame.install(game, TournamentGameRef("Fun", SF2))
+    panel = widget.tournament_panel
+    panel.states_dir = temp_dir / "states"
+    write_save(panel.states_dir, "2222", SF2)
+    panel.reload()
+    panel.select_game(SF2)
+    loader = DeferredLoader()
+    widget.loader = loader
+    panel.resume_button.click()
+    read = loader.pending.pop()
+    panel.games_list.setCurrentRow(-1)
+    read()
+    assert game.applied == []
+    assert widget.tournament_start_button.text() == "Start!"

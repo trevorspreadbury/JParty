@@ -744,8 +744,18 @@ class GamesEditor(QWidget):
         self._show_prepare_status(
             "\n".join([message, *problems]), problem=bool(problems)
         )
-        if preview:
-            self.preview_media(prepared, self)
+        if not preview:
+            return
+        if not self.window().isVisible():
+            # The host closed the Tournament window or went to Play Games
+            # while the boards loaded. Opening the preview now could cover a
+            # game, so leave it for when they come back.
+            self._show_prepare_status(
+                f"{message} Click Preview All Media... to see the media.",
+                problem=bool(problems),
+            )
+            return
+        self.preview_media(prepared, self)
 
     def _set_preparing(self, preparing: bool) -> None:
         """Turn the download and preview buttons off while boards load."""

@@ -4,9 +4,32 @@ from dataclasses import replace
 
 from jparty.domain.roster import PlayerSlot
 from jparty.domain.tournament import TournamentOptions, plan_tournament
-from jparty.domain.tournament_dropouts import DROP_REDUCE, Dropout
+from jparty.domain.tournament_advancement import Tiebreak
+from jparty.domain.tournament_dropouts import (
+    DROP_PLAY_IN,
+    DROP_REDUCE,
+    DROP_SLIDE,
+    Dropout,
+)
 from jparty.domain.tournament_rankings import NOT_PLAYED_TEXT, tournament_rankings
-from tests.unit.test_tournament_advancement import SF, play
+from tests.unit.test_tournament_advancement import (
+    QF,
+    SF,
+    play,
+    twelve_player_quarterfinals,
+)
+from tests.unit.test_tournament_dropouts import (
+    BYES,
+    FIRST_R2,
+    R2,
+    TWELVE,
+    TWENTY_SEVEN,
+    apply_drop,
+    data_for,
+    option,
+    round_entrants,
+    twenty_seven_prelims,
+)
 
 FINAL = "Final: Final"
 
@@ -105,3 +128,80 @@ def test_an_invalid_plan_ranks_nobody() -> None:
     rankings = tournament_rankings(None, nine_players(), semifinals())
     assert {row.rank for row in rankings} == {None}
     assert rankings[0].games == 1
+
+
+def rank_data(data: object) -> list:
+    """Return the rankings of a dropout test's ``TournamentData``."""
+    return tournament_rankings(
+        data.plan, data.slots, data.results, data.tiebreaks, data.dropouts
+    )
+
+
+def test_byes_rank_above_second_round_players() -> None:
+    """A bye reaches the Semifinals, above everyone still in the Second Round."""
+    data = data_for(TWENTY_SEVEN, twenty_seven_prelims(), BYES)
+    rankings = rank_data(data)
+    assert [row.name for row in rankings[:5]] == ["W1", "W2", "W3", "W4", "W5"]
+    assert {row.reached for row in rankings[:5]} == {"Semifinals"}
+    assert rankings[5].reached == R2
+    assert rankings[5].status == f"won, in the {R2}"
+
+
+def test_a_play_in_winner_ranks_with_the_semifinalists() -> None:
+    """Play-in players aren't out, and the play-in winner reaches the Semifinals."""
+    data = data_for(TWENTY_SEVEN, twenty_seven_prelims() + FIRST_R2, BYES)
+    after = apply_drop(data, option(data, "w1", DROP_PLAY_IN))
+    seated = {row.player_id: row for row in rank_data(after)}
+    assert not seated["l5-2"].out
+    assert seated["l5-2"].status == f"play-in, in the {R2}"
+
+    entrants = round_entrants(after.plan, after.standings(), 1).players
+    rest = [p for p in entrants if p not in {"w6", "l9-2", "l9-1"}]
+    results = list(after.results)
+    for number in range(2, 5):
+        trio = rest[3 * (number - 2) : 3 * (number - 1)]
+        results += play(f"{R2}: R2 {number}", dict.fromkeys(trio, 1), trio[0])
+    results += play(f"{R2}: Play-in 1", {"l5-2": 1, "l5-1": 2, "l4-2": 3}, "l4-2")
+    rankings = rank_data(replace(after, results=tuple(results)))
+    semifinalists = [row for row in rankings if row.reached == "Semifinals"]
+    assert len(semifinalists) == 9
+    winner = next(row for row in rankings if row.player_id == "l4-2")
+    assert winner in semifinalists
+    assert not winner.out
+    assert all(row.out for row in rankings[len(semifinalists) :] if row.rank)
+
+
+def test_a_winner_who_drops_out_ranks_below_the_next_round() -> None:
+    """A dropped-out winner is out, below every player still in."""
+    data = data_for(TWELVE, twelve_player_quarterfinals())
+    after = apply_drop(data, option(data, "w1", DROP_SLIDE))
+    rankings = rank_data(after)
+    names = [row.player_id for row in rankings]
+    assert names[:9] == ["w2", "w3", "w4", *"abcdef"]
+    dropped = rankings[9]
+    assert (dropped.player_id, dropped.status, dropped.out) == (
+        "w1",
+        "dropped out",
+        True,
+    )
+    assert dropped.reached == QF
+
+
+def test_a_tiebreak_for_the_last_wildcard_separates_the_tied_players() -> None:
+    """Level on score, the tiebreak's winner goes through and ranks higher."""
+    plan = plan_tournament(TournamentOptions(12))
+    results = twelve_player_quarterfinals(f=400)
+    slots = [PlayerSlot(p, player_id=p) for p in TWELVE]
+    tied = {row.player_id: row for row in tournament_rankings(plan, slots, results)}
+    # Undecided: both wait on the tiebreaker, level.
+    assert tied["e"].rank == tied["f"].rank
+    assert not tied["e"].out
+
+    tiebreaks = [Tiebreak(QF, frozenset({"e", "f"}), "f")]
+    rankings = {
+        row.player_id: row
+        for row in tournament_rankings(plan, slots, results, tiebreaks)
+    }
+    assert rankings["f"].reached == SF
+    assert rankings["e"].out
+    assert rankings["f"].rank < rankings["e"].rank

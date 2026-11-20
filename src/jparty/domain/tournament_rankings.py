@@ -24,6 +24,7 @@ from dataclasses import dataclass, replace
 from jparty.domain.roster import PlayerSlot
 from jparty.domain.tournament import TournamentPlan
 from jparty.domain.tournament_advancement import (
+    STATUS_OUT,
     RoundStanding,
     Tiebreak,
     player_statuses,
@@ -125,12 +126,6 @@ def tournament_rankings(
     statuses = player_statuses(plan, standings, dropouts) if valid else {}
     round_names = [bracket_round.name for bracket_round in plan.rounds] if valid else []
     dropped = dropped_ids(dropouts)
-    eliminated = {
-        player_id
-        for standing in standings
-        if standing.decided
-        for player_id in standing.eliminated
-    }
     rows_by_player: dict[str, list[GameResult]] = {}
     for row in results:
         rows_by_player.setdefault(row.player_id, []).append(row)
@@ -143,14 +138,16 @@ def tournament_rankings(
         rows = rows_by_player.get(slot.player_id, [])
         stage, latest = _reach(slot.player_id, standings)
         coryats = [row.coryat for row in rows if row.coryat is not None]
-        out = slot.player_id in eliminated or slot.player_id in dropped
+        status = statuses.get(slot.player_id, (NOT_PLAYED_TEXT, False))[0]
+        # The status is where the player is now, so a player knocked out of
+        # one round who then got a play-in seat isn't out.
+        out = slot.player_id in dropped or status == STATUS_OUT
         if stage > len(round_names):
             reached = "Champion"
         elif stage:
             reached = round_names[stage - 1]
         else:
             reached = ""
-        status = statuses.get(slot.player_id, (NOT_PLAYED_TEXT, False))[0]
         ranking = PlayerRanking(
             rank=None,
             player_id=slot.player_id,
