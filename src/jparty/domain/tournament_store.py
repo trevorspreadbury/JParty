@@ -23,6 +23,9 @@ outside git:
 - ``voided_results.csv``: results of Semifinals voided because their
   winner dropped out, in the same columns as ``results.csv``. They're kept
   for the record and never counted.
+- ``used_prompts.csv``: the sign-up prompts the host has used, ticked on
+  the ``/host`` phone page, so they stay marked for the rest of the
+  tournament.
 
 Format version 1 files (from before the setup screen) load with the default
 bracket and no boards.
@@ -54,6 +57,7 @@ RESULTS_FILE = "results.csv"
 TIEBREAKS_FILE = "tiebreaks.csv"
 DROPOUTS_FILE = "dropouts.csv"
 VOIDED_RESULTS_FILE = "voided_results.csv"
+USED_PROMPTS_FILE = "used_prompts.csv"
 TOURNAMENT_FORMAT_VERSION = 2
 LOGO_STEM = "logo"
 LOGO_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
@@ -95,6 +99,7 @@ DROPOUT_COLUMNS = (
     "other_id",
 )
 DROPOUT_REQUIRED_COLUMNS = ("round", "choice", "player_id")
+USED_PROMPT_COLUMNS = ("player_id", "prompt", "text")
 
 _FORBIDDEN_NAME_CHARACTERS = set('<>:"/\\|?*')
 _RESERVED_WINDOWS_NAMES = {
@@ -905,3 +910,79 @@ def save_tournament_data(
         save_tournament(folder.parent, settings, data.slots)
     except OSError as exc:
         raise TournamentFileError(f"Couldn't save the tournament: {exc}") from exc
+
+
+def used_prompts_csv_text(used: Sequence[tuple[str, int, str]]) -> str:
+    """Return ``used_prompts.csv`` contents.
+
+    Args:
+        used: ``(player_id, prompt number, prompt text)`` for each prompt the
+            host has used, in the order they were marked.
+
+    Returns:
+        CSV text with a header row and one row per used prompt.
+    """
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(USED_PROMPT_COLUMNS)
+    for player_id, number, text in used:
+        writer.writerow([player_id, number, text])
+    return buffer.getvalue()
+
+
+def load_used_prompts(folder: Path) -> list[tuple[str, int, str]]:
+    """Read the prompts the host has marked as used.
+
+    Rows that can't be read are skipped: this file only greys out prompts
+    on the host's phone, so it never stops the tournament.
+
+    Args:
+        folder: The tournament's folder.
+
+    Returns:
+        ``(player_id, prompt number, prompt text)`` for each used prompt.
+
+    Raises:
+        TournamentFileError: If ``used_prompts.csv`` can't be read.
+    """
+    text = _read_csv(Path(folder) / USED_PROMPTS_FILE)
+    if text is None:
+        return []
+    used = []
+    try:
+        for row in csv.DictReader(io.StringIO(text, newline="")):
+            player_id = (row.get("player_id") or "").strip()
+            number = (row.get("prompt") or "").strip()
+            if player_id and number.isdigit():
+                used.append((player_id, int(number), (row.get("text") or "").strip()))
+    except csv.Error as exc:
+        raise TournamentFileError(f"Couldn't read {USED_PROMPTS_FILE}: {exc}") from exc
+    return used
+
+
+def set_prompt_used(
+    folder: Path, player_id: str, number: int, text: str, used: bool
+) -> None:
+    """Mark one of a player's prompts as used, or not used, and save it.
+
+    Args:
+        folder: The tournament's folder.
+        player_id: The player.
+        number: The prompt's number, from 1 (Anecdote #1).
+        text: The prompt's text, so the saved file reads well.
+        used: Whether it's used.
+
+    Raises:
+        TournamentFileError: If ``used_prompts.csv`` can't be read or written.
+    """
+    rows = [
+        row
+        for row in load_used_prompts(folder)
+        if (row[0], row[1]) != (player_id, number)
+    ]
+    if used:
+        rows.append((player_id, number, text))
+    try:
+        write_text_atomic(Path(folder) / USED_PROMPTS_FILE, used_prompts_csv_text(rows))
+    except OSError as exc:
+        raise TournamentFileError(f"Couldn't save {USED_PROMPTS_FILE}: {exc}") from exc

@@ -547,6 +547,7 @@ QCheckBox {{
             QMessageBox.warning(self, "Couldn't open tournament", str(exc))
             return False
         logging.info("Playing tournament %s", folder)
+        self._set_host_tournament(Path(folder))
         self.debounce_timer.stop()
         self._summary_request.cancel()
         self._loading_summary = False
@@ -559,6 +560,12 @@ QCheckBox {{
         self._clear_tournament_board()
         self.on_tournament_selection_changed()
         return True
+
+    def _set_host_tournament(self, folder: Path | None) -> None:
+        """Show ``folder``'s players on the phone ``/host`` page, or none."""
+        controller = getattr(self.game, "buzzer_controller", None)
+        if controller is not None:
+            controller.host_tournament = folder
 
     def _tournament_change_problem(self) -> str | None:
         """Return why a dropout can't be saved now, or ``None``.
@@ -596,6 +603,7 @@ QCheckBox {{
             ``None``.
         """
         logging.info("Leaving tournament mode")
+        self._set_host_tournament(None)
         self.tournament_mode = False
         self._tournament_request.cancel()
         self._clear_tournament_board()
@@ -1994,14 +2002,27 @@ QScrollBar::sub-page:vertical {
 
 
 class QRWidget(StartWidget):
-    """Audience-side startup screen that shows the buzzer join QR code."""
+    """A QR code for a page on the buzzer server, with its address.
 
-    def __init__(self, host: object, parent: object = None) -> None:
-        """Initialize the QR join screen.
+    The audience screen's lobby shows the buzzer page's code. The host's
+    screen also shows the ``/host`` page's code once in a tournament game.
+    """
+
+    def __init__(
+        self,
+        host: object,
+        parent: object = None,
+        path: str = "",
+        hint: str = "Scan for Buzzer:",
+    ) -> None:
+        """Initialize the QR screen.
 
         Args:
             host: Hostname or address players should visit to join.
             parent: Optional parent widget.
+            path: The page on the server, such as ``"/host"``; ``""`` for
+                the buzzer page.
+            hint: Text above the code.
 
         Returns:
             ``None``.
@@ -2010,12 +2031,12 @@ class QRWidget(StartWidget):
         self.font = QFont()
         self.font.setPointSize(30)
         main_layout = QVBoxLayout()
-        self.hint_label = DynamicLabel("Scan for Buzzer:", self.start_fontsize, self)
+        self.hint_label = DynamicLabel(hint, self.start_fontsize, self)
         self.hint_label.setFont(self.font)
         self.hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.qrlabel = QLabel(self)
         self.qrlabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.url = "http://" + host
+        self.url = "http://" + host + path
         self.url_label = DynamicLabel(self.url, self.start_fontsize, self)
         self.url_label.setFont(self.font)
         self.url_label.setAlignment(Qt.AlignmentFlag.AlignCenter)

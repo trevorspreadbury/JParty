@@ -60,6 +60,8 @@ from jparty.domain.state import (
 )
 from jparty.domain.tournament_advancement import TiebreakerSession
 from jparty.domain.tournament_play import (
+    SAVED_PLAYER_ID,
+    SAVED_PLAYER_NAME,
     PlayerOutcome,
     TournamentGameRef,
     already_recorded,
@@ -333,6 +335,10 @@ class Game(QObject):
         # A tournament tiebreaker played outside any game, or None; see
         # start_tiebreaker_session. Its tied player id by phone.
         self.tiebreaker_session = None
+        # Whether the /host QR code was shown this game, and whether it's
+        # on the host's screen now; see _show_host_code.
+        self.host_code_done = False
+        self.host_code_shown = False
         self._session_player_ids = {}
         # Replaced in tests so loading runs without a thread or network.
         self.load_tiebreaker_clues = load_tiebreaker_clues
@@ -379,6 +385,8 @@ class Game(QObject):
         self._session_game_id = ""
         self.tournament_game = None
         self.tiebreaker_session = None
+        self.host_code_done = False
+        self.host_code_shown = False
         self._session_player_ids = {}
         if self.buzzer_controller:
             self.buzzer_controller.clear_saved_player_reclaim()
@@ -504,6 +512,33 @@ class Game(QObject):
             player.tournament_player = (
                 tuple(choices[index]) if index < len(choices) else None
             )
+
+    def _restore_tournament_players(self, raw_history: list[dict]) -> None:
+        """Give resumed players back their tournament player ids.
+
+        A resumed game's players are new objects from the phones, so they
+        don't carry the ids :meth:`set_tournament_game` gave them. The saved
+        roster has them, under the seat each player had when the game
+        started; seat changes in the history move them to the current seat.
+
+        Args:
+            raw_history: The saved game's history, in file order.
+
+        Returns:
+            ``None``.
+        """
+        if self.tournament_game is None:
+            return
+        by_seat = {}
+        for saved in current_saved_players(self._starting_roster or [], raw_history):
+            player_id = saved.get(SAVED_PLAYER_ID)
+            if player_id:
+                by_seat[saved.get("player_number")] = (
+                    str(player_id),
+                    str(saved.get(SAVED_PLAYER_NAME) or ""),
+                )
+        for player in self.players:
+            player.tournament_player = by_seat.get(player.player_number)
 
     def record_tournament_results(self) -> None:
         """Log a finished tournament game's results to its results.csv.
@@ -1030,6 +1065,7 @@ class Game(QObject):
         )
         self._mark_completed_questions(question_history)
         self._restore_player_scores(raw_history)
+        self._restore_tournament_players(raw_history)
         # Tiebreaker clues use question numbers too, so continue after them.
         numbered_entries = question_history + [
             entry for entry in raw_history if is_tiebreaker_clue(entry)
@@ -1766,10 +1802,19 @@ class Game(QObject):
     def next_round(self) -> None:
         """Advance from the current round to the next round in the game.
 
+        In a tournament game, the first Space after the first board shows the
+        host the ``/host`` page's QR code instead; the next Space moves on.
+
         Returns:
             ``None``.
         """
         logging.info("next round")
+        if self.host_code_shown:
+            self.host_code_shown = False
+            self.host_display.hide_host_code()
+        elif self._show_host_code():
+            self.keystroke_manager.activate("NEXT_ROUND")
+            return
         playable_round_indices = self._playable_round_indices()
         i = self.data.rounds.index(self.current_round)
         logging.info(f"ROUND {i}")
@@ -1791,6 +1836,35 @@ class Game(QObject):
         else:
             self.dc.board_widget.load_round(self.current_round)
         self._refresh_score_edit_controls()
+
+    def _show_host_code(self) -> bool:
+        """Show the ``/host`` QR code after a tournament game's first board.
+
+        It's shown once per game, only when another round follows.
+
+        Returns:
+            Whether the code is now showing.
+        """
+        if (
+            self.tournament_game is None
+            or self.host_code_done
+            or self.buzzer_controller is None
+            or not hasattr(self.host_display, "load_host_code")
+        ):
+            return False
+        playable = self._playable_round_indices()
+        index = self.data.rounds.index(self.current_round)
+        if not playable or index != playable[0] or not self.has_later_round():
+            return False
+        try:
+            host = self.buzzer_controller.host()
+        except OSError:
+            logging.warning("No network address for the host page", exc_info=True)
+            return False
+        self.host_code_done = True
+        self.host_code_shown = True
+        self.host_display.load_host_code(host)
+        return True
 
     def start_final(self) -> None:
         """Begin the Final Jeopardy wagering phase.
@@ -2112,6 +2186,8 @@ class Game(QObject):
         self.tiebreaker_winner = None
         self.tournament_game = None
         self.tiebreaker_session = None
+        self.host_code_done = False
+        self.host_code_shown = False
         self._session_player_ids = {}
         self.previous_answerers = set()
         self.dc.restart()

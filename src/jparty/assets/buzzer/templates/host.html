@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>JParty! Host</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <link rel="stylesheet" href="{{ static_url('host.css') }}">
+    </head>
+    <body>
+        <header>
+            <h1>{% if page.tournament %}{{ page.tournament }}{% else %}JParty! Host{% end %}</h1>
+            <a class="refresh" href="/host">Refresh</a>
+        </header>
+        {% if page.problem %}
+            <p class="problem">{{ page.problem }}</p>
+        {% elif not page.tournament %}
+            <p class="empty">No tournament is being played. Open one with Play Games in the Tournament window, then refresh.</p>
+        {% elif not page.players %}
+            <p class="empty">This tournament has no players yet.</p>
+        {% else %}
+            <p class="where">{% if page.in_game %}This game's players, last podium first{% else %}No game in progress: every player{% end %}</p>
+            {% for index, player in enumerate(page.players) %}
+                <section class="player" data-player="{{ player.player_id }}" hidden>
+                    <div class="count">{% if player.seat %}Podium {{ player.seat }} &middot; {% end %}{{ index + 1 }} of {{ len(page.players) }}</div>
+                    <h2 class="name">{{ player.name }}</h2>
+                    <div class="label">Introduce them as</div>
+                    <div class="intro">{{ player.introduction }}</div>
+                    {% if player.prompts %}
+                        <div class="label">Anecdotes (tick one once you've used it)</div>
+                        <ul class="prompts">
+                            {% for prompt in player.prompts %}
+                                <li>
+                                    <label{% if prompt.used %} class="used"{% end %}>
+                                        <input type="checkbox" data-prompt="{{ prompt.number }}"{% if prompt.used %} checked{% end %}>
+                                        <span>{{ prompt.text }}</span>
+                                    </label>
+                                </li>
+                            {% end %}
+                        </ul>
+                    {% else %}
+                        <p class="empty">No sign-up answers.</p>
+                    {% end %}
+                </section>
+            {% end %}
+            <p class="problem" id="save-problem" hidden></p>
+            <nav class="pager">
+                <button type="button" id="previous">&larr; Previous</button>
+                <button type="button" id="next">Next &rarr;</button>
+            </nav>
+        {% end %}
+        <script>
+            (function () {
+                var cards = Array.prototype.slice.call(document.querySelectorAll(".player"));
+                if (!cards.length) {
+                    return;
+                }
+                var problem = document.getElementById("save-problem");
+                var previous = document.getElementById("previous");
+                var next = document.getElementById("next");
+                // Come back to the same player after Refresh.
+                var key = "jparty-host-player";
+                var shown = cards.findIndex(function (card) {
+                    return card.dataset.player === sessionStorage.getItem(key);
+                });
+                function show(index) {
+                    shown = Math.max(0, Math.min(cards.length - 1, index));
+                    cards.forEach(function (card, i) {
+                        card.hidden = i !== shown;
+                    });
+                    previous.disabled = shown === 0;
+                    next.disabled = shown === cards.length - 1;
+                    sessionStorage.setItem(key, cards[shown].dataset.player);
+                    window.scrollTo(0, 0);
+                }
+                previous.addEventListener("click", function () { show(shown - 1); });
+                next.addEventListener("click", function () { show(shown + 1); });
+                show(shown < 0 ? 0 : shown);
+
+                // A tick is saved straight away, for the rest of the tournament.
+                document.querySelectorAll(".prompts input").forEach(function (box) {
+                    box.addEventListener("change", function () {
+                        var card = box.closest(".player");
+                        var label = box.closest("label");
+                        var used = box.checked;
+                        label.classList.toggle("used", used);
+                        problem.hidden = true;
+                        fetch("/host/prompt", {
+                            method: "POST",
+                            headers: {"Content-Type": "application/json"},
+                            body: JSON.stringify({
+                                player_id: card.dataset.player,
+                                prompt: Number(box.dataset.prompt),
+                                used: used
+                            })
+                        }).then(function (response) {
+                            return response.json().then(function (reply) {
+                                if (!response.ok) {
+                                    throw new Error(reply.error || "Couldn't save.");
+                                }
+                            });
+                        }).catch(function (error) {
+                            box.checked = !used;
+                            label.classList.toggle("used", !used);
+                            problem.textContent = "Couldn't save that tick: " + error.message;
+                            problem.hidden = false;
+                        });
+                    });
+                });
+            })();
+        </script>
+    </body>
+</html>

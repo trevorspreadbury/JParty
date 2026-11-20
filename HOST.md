@@ -596,6 +596,35 @@ roster; remove them on the `Players` tab if they aren't needed.
 Dropping a player out changes the roster and boards, so first save or
 discard any unsaved changes in the Tournament window.
 
+### Host phone page
+
+While you play a tournament, open `http://<address>/host` on your phone,
+where `<address>` is the address shown on the JParty welcome screen (for
+example `http://192.168.1.20:8080/host`). It shows one player at a time:
+their name, how to introduce them (the same line the host screen shows),
+and their sign-up anecdotes.
+
+- During a game, it steps through that game's players in reverse seat
+  order: the last podium first. With no game in progress, it steps through
+  every player. Use `Previous` and `Next` to move between them.
+- Tick the box next to an anecdote once you've used it. It's saved straight
+  away and stays ticked (and crossed out) for the rest of the tournament, so
+  you can pick a fresh one next time. Untick it to use it again.
+- Tap `Refresh` (or reload the page) after a game starts or ends; the page
+  doesn't update by itself. It stays on the player you were looking at.
+- It shows the tournament chosen with `Play Games`, or the tournament of a
+  saved tournament game you resumed. Outside a tournament it says so.
+
+You don't need to type the address: in a tournament game, when you finish
+the first board and press `Space`, your host screen shows a QR code for the
+page instead of the next board (the audience screen doesn't change). Scan it
+with your phone, then press `Space` again for the next board. It's shown
+once per game.
+
+Anyone on the same network can open the page and tick anecdotes, like the
+buzzer page, so keep
+sign-up answers to things players are happy for others to see.
+
 ### Saved files
 
 Each tournament is saved in `tournaments/<name>/` in the JParty data folder,
@@ -630,6 +659,8 @@ outside git:
   player). Use `Undo Drop...` rather than editing it.
 - `voided_results.csv` keeps the results of voided Semifinals, in the same
   columns as `results.csv`. They don't count toward anything.
+- `used_prompts.csv` lists the anecdotes you've ticked on the host phone
+  page: `player_id`, `prompt` (the anecdote's number), and `text`.
 
 To reuse a tournament's setup, copy its folder and give the copy a new name;
 the copy saves into its own folder. Tournaments saved by an older JParty
