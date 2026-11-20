@@ -422,6 +422,7 @@ def test_each_tiebreaker_clue_is_saved_to_history(
         "rebound",
     ]
     assert missed["buzz_phases"][0]["buzz_attempts"][0]["question_index"] is None
+    assert len(missed["responses_open_times"]) == len(missed["buzz_phases"])
 
     assert won["question_number"] == 63
     assert won["winner"] == 1

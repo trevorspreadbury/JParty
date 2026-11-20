@@ -47,6 +47,49 @@ def test_question_history_logging_writes_buzz_phases_and_attempts(
     assert entry["buzz_phases"][0]["buzz_attempts"][0]["player_index"] == 0
 
 
+def test_question_history_logs_each_time_buzzing_unlocks(
+    game_with_players: object, time_controller: object
+) -> None:
+    """Each unlock (main window, then each rebound) is logged in order (#136)."""
+    game = game_with_players
+    question = game.current_round.get_question(0, 0)
+    game.load_question(question)
+    time_controller.advance(2.0)
+    first_unlock = time_controller.time()
+    game.open_responses()
+    time_controller.advance(0.5)
+    game.buzz(0)
+    time_controller.advance(1.0)
+    second_unlock = time_controller.time()
+    game.incorrect_answer()
+    time_controller.advance(0.5)
+    game.buzz(1)
+    time_controller.advance(1.0)
+    game.correct_answer()
+    history_file = game._game_state_dir / "question_history.jsonl"
+    entry = json.loads(history_file.read_text().splitlines()[0])
+    assert entry["responses_open_times"] == [first_unlock, second_unlock]
+
+
+def test_question_history_logs_no_unlock_for_daily_double(
+    game_with_players: object, monkeypatch: object
+) -> None:
+    """A Daily Double never opens buzzing, so it logs no unlock times."""
+    game = game_with_players
+    question = game.current_round.get_question(0, 0)
+    question.dd = True
+    monkeypatch.setattr(
+        "jparty.domain.game_engine.QInputDialog.getInt",
+        lambda *args, **kwargs: (600, True),
+    )
+    game.load_question(question)
+    game.get_dd_wager(game.players[0])
+    game.correct_answer()
+    history_file = game._game_state_dir / "question_history.jsonl"
+    entry = json.loads(history_file.read_text().splitlines()[0])
+    assert entry["responses_open_times"] == []
+
+
 def test_final_jeopardy_logging_writes_question_history_entry(
     game_with_players: object,
 ) -> None:
@@ -80,6 +123,7 @@ def test_final_jeopardy_logging_writes_question_history_entry(
     history_file = game._game_state_dir / "question_history.jsonl"
     entry = json.loads(history_file.read_text().splitlines()[-1])
     assert entry["round_index"] == 2
+    assert entry["responses_open_times"] == []
     assert entry["answer_attempts"]
     assert [attempt["player_index"] for attempt in entry["answer_attempts"]] == [
         2,

@@ -134,6 +134,10 @@ class ScoreRecorder:
             if self.game.active_question
             else False,
             "buzz_phases": buzz_phases,
+            # Every time buzzing unlocked on this clue: the main window
+            # first, then one per rebound. Empty for Daily Doubles, Final
+            # Jeopardy, and clues that never opened for buzzing.
+            "responses_open_times": self.game._open_responses_times.copy(),
             "answer_attempts": self.game._answer_attempts.copy(),
             "completed_at": time.time(),
         }
@@ -850,6 +854,7 @@ class TiebreakerFlow:
                 "answer": clue.answer,
                 "contenders": [player.player_number for player in self.contenders],
                 "buzz_phases": classify_buzz_phases(self.game),
+                "responses_open_times": self.game._open_responses_times.copy(),
                 "answer_attempts": self.game._answer_attempts.copy(),
                 "winner": winner.player_number if winner is not None else None,
                 "completed_at": time.time(),
