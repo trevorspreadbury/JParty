@@ -366,7 +366,24 @@ a tied player answers it correctly or nobody does:
   "text": "This river flows through Baghdad",
   "answer": "the Tigris",
   "contenders": [0, 1],
-  "buzz_phases": [],
+  "buzz_phases": [
+    {
+      "phase_type": "main",
+      "start_time": 1700001098.0,
+      "end_time": 1700001101.0,
+      "buzz_attempts": [
+        {"player_index": 1, "question_index": null, "timestamp": 1700001100.0, "is_early": false, "is_success": true, "is_rebound": false, "in_timeout": false}
+      ]
+    },
+    {
+      "phase_type": "rebound",
+      "start_time": 1700001101.0,
+      "end_time": 1700001105.0,
+      "buzz_attempts": [
+        {"player_index": 0, "question_index": null, "timestamp": 1700001104.0, "is_early": false, "is_success": true, "is_rebound": false, "in_timeout": false}
+      ]
+    }
+  ],
   "responses_open_times": [1700001099.0, 1700001102.0],
   "answer_attempts": [
     {"player_index": 1, "answer_correct": false, "timestamp": 1700001101.0},

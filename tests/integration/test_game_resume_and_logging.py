@@ -71,6 +71,26 @@ def test_question_history_logs_each_time_buzzing_unlocks(
     assert entry["responses_open_times"] == [first_unlock, second_unlock]
 
 
+def test_question_history_logs_one_unlock_when_nobody_buzzes(
+    game_with_players: object, time_controller: object
+) -> None:
+    """A clue that opens and times out with no buzz logs one unlock time."""
+    game = game_with_players
+    question = game.current_round.get_question(0, 0)
+    game.load_question(question)
+    time_controller.advance(2.0)
+    unlock = time_controller.time()
+    game.open_responses()
+    time_controller.advance(5.0)
+    game.timer.fire()
+    game.back_to_board()
+    history_file = game._game_state_dir / "question_history.jsonl"
+    entry = json.loads(history_file.read_text().splitlines()[0])
+    assert entry["responses_open_times"] == [unlock]
+    assert entry["buzz_phases"] == []
+    assert entry["answer_attempts"] == []
+
+
 def test_question_history_logs_no_unlock_for_daily_double(
     game_with_players: object, monkeypatch: object
 ) -> None:
