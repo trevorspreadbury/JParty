@@ -1820,8 +1820,8 @@ def test_a_started_tournament_game_save_is_found(
 ) -> None:
     """A started tournament game's save is found for that tournament game."""
     from jparty.domain import game_engine
-    from jparty.domain.tournament_play import TournamentGameRef
-    from jparty.domain.tournament_saves import find_tournament_saves
+    from jparty.domain.tournament.play import TournamentGameRef
+    from jparty.domain.tournament.saves import find_tournament_saves
     from jparty.services import archive_client
 
     monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)

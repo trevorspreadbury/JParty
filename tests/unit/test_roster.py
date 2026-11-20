@@ -2,7 +2,7 @@
 
 import pytest
 
-from jparty.domain.roster import (
+from jparty.domain.tournament.roster import (
     MATCH_ADD_PLAYER,
     MATCH_IGNORE,
     PlayerSlot,
@@ -19,7 +19,7 @@ from jparty.domain.roster import (
     unlink_sign_up,
     update_linked_sign_ups,
 )
-from jparty.domain.tournament_store import (
+from jparty.domain.tournament.store import (
     TournamentFileError,
     TournamentSettings,
     list_tournaments,

@@ -12,14 +12,14 @@ outside git:
 - ``logo.<ext>``: the tournament logo, if the host chose one. It lives here,
   not in git.
 - ``results.csv``: one row per player per played game (see
-  :class:`jparty.domain.tournament_play.GameResult`). Games write it when
+  :class:`jparty.domain.tournament.play.GameResult`). Games write it when
   they end, and the host can fix it afterwards. It is separate from
   ``tournament.json``, so saving the setup never touches results.
 - ``tiebreaks.csv``: one row per tiebreaker played to settle a tie for a
   wildcard, chaser, or bye (see
-  :class:`jparty.domain.tournament_advancement.Tiebreak`).
+  :class:`jparty.domain.tournament.advancement.Tiebreak`).
 - ``dropouts.csv``: one row per player who dropped out, and what the host
-  chose to do (see :class:`jparty.domain.tournament_dropouts.Dropout`).
+  chose to do (see :class:`jparty.domain.tournament.dropouts.Dropout`).
 - ``voided_results.csv``: results of Semifinals voided because their
   winner dropped out, in the same columns as ``results.csv``. They're kept
   for the record and never counted.
@@ -43,12 +43,17 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from jparty.domain.roster import ANECDOTE_COLUMNS, PlayerSlot, SignUp, new_player_id
-from jparty.domain.tournament_advancement import Tiebreak
-from jparty.domain.tournament_drop_choices import TournamentData
-from jparty.domain.tournament_dropouts import DROP_CHOICES, Dropout
-from jparty.domain.tournament_play import RESULTS, GameResult, record_results
-from jparty.domain.tournament_setup import BracketSettings, TournamentBoard
+from jparty.domain.tournament.advancement import Tiebreak
+from jparty.domain.tournament.drop_choices import TournamentData
+from jparty.domain.tournament.dropouts import DROP_CHOICES, Dropout
+from jparty.domain.tournament.play import RESULTS, GameResult, record_results
+from jparty.domain.tournament.roster import (
+    ANECDOTE_COLUMNS,
+    PlayerSlot,
+    SignUp,
+    new_player_id,
+)
+from jparty.domain.tournament.setup import BracketSettings, TournamentBoard
 from jparty.services.game_cache import write_text_atomic
 
 TOURNAMENT_FILE = "tournament.json"
@@ -127,7 +132,7 @@ class TournamentSettings:
             so a refresh doesn't ask about them again.
         bracket: Bracket format options; the roster sets the player count.
         boards: Board for each game, keyed by
-            :func:`jparty.domain.tournament_setup.game_key`.
+            :func:`jparty.domain.tournament.setup.game_key`.
         unassigned_boards: Boards not assigned to any game.
         logo_file: File name of the logo in the tournament folder, or ``""``.
         retired_boards: Boards of voided games, each remembering its game

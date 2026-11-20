@@ -113,28 +113,27 @@ Qt tests in `tests/qt/test_welcome_widget.py` and `tests/qt/test_board_picker.py
 
 Tournament PRs target the `tournament` integration branch, not `dev`.
 
-Tournament rules are pure functions over plain data in
-`src/jparty/domain/tournament*.py`. Widgets call them; they don't decide who
-plays, advances, or may resume. Put a new rule in the domain, with a unit
+Tournament rules are pure functions over plain data in the
+`src/jparty/domain/tournament/` package. Widgets call them; they don't decide
+who plays, advances, or may resume. Put a new rule in the domain, with a unit
 test, even if only one widget needs it today.
 
-Domain modules:
+Modules in `domain/tournament/`:
 
 - `roster.py`: player slots and the Google Form sign-ups linked to them
-- `tournament.py`: bracket planning (qualifying rounds, wildcards, chase
+- `bracket.py`: bracket planning (qualifying rounds, wildcards, chase
   games, the optional second round and its byes)
-- `tournament_setup.py`: bracket settings, each game's board, and
-  `game_key`, which builds every game key
-- `tournament_advancement.py`: who advances, chasers, byes, tiebreaker
-  ties, who may sit in a game, and conflicts after a fixed result
-- `tournament_dropouts.py`: dropout records and how they change each round;
-  `tournament_drop_choices.py`: the host's choices for a dropout, and
-  applying or undoing one
-- `tournament_play.py`: result rows and player introductions;
-  `tournament_rankings.py`: rankings; `tournament_saves.py`: finding the
-  saved games of half-played tournament games; `tournament_host.py`: the
-  `/host` phone page's data
-- `tournament_store.py`: reading and writing the tournament folder
+- `setup.py`: bracket settings, each game's board, and `game_key`, which
+  builds every game key
+- `advancement.py`: who advances, chasers, byes, tiebreaker ties, who may
+  sit in a game, and conflicts after a fixed result
+- `dropouts.py`: dropout records and how they change each round;
+  `drop_choices.py`: the host's choices for a dropout, and applying or
+  undoing one
+- `play.py`: result rows and player introductions; `rankings.py`: rankings;
+  `saves.py`: finding the saved games of half-played tournament games;
+  `host.py`: the `/host` phone page's data
+- `store.py`: reading and writing the tournament folder
 
 Elsewhere: `services/board_prep.py` builds and caches every board ahead of
 time; `ui/widgets/tournament_window.py` (with `tournament_editor.py`,

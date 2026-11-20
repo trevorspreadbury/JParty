@@ -2,7 +2,7 @@
 
 import pytest
 
-from jparty.domain.tournament import (
+from jparty.domain.tournament.bracket import (
     SEAT_NEW_PLAYER,
     TournamentOptions,
     describe_plan,

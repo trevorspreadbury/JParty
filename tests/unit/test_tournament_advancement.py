@@ -2,9 +2,7 @@
 
 import pytest
 
-from jparty.domain.roster import PlayerSlot
-from jparty.domain.tournament import TournamentOptions, plan_tournament
-from jparty.domain.tournament_advancement import (
+from jparty.domain.tournament.advancement import (
     TIE_BYE,
     TIE_CHASER,
     TIE_WILDCARD,
@@ -18,8 +16,10 @@ from jparty.domain.tournament_advancement import (
     tie_text,
     tournament_standings,
 )
-from jparty.domain.tournament_play import GameResult
-from jparty.domain.tournament_setup import TournamentBoard
+from jparty.domain.tournament.bracket import TournamentOptions, plan_tournament
+from jparty.domain.tournament.play import GameResult
+from jparty.domain.tournament.roster import PlayerSlot
+from jparty.domain.tournament.setup import TournamentBoard
 
 QF = "Quarterfinals"
 SF = "Semifinals"

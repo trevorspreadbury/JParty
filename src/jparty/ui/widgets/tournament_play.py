@@ -11,12 +11,12 @@ the chosen board and players from it.
 game.
 
 The panel's Drop Player button marks the selected player as dropped out
-(see :mod:`jparty.domain.tournament_dropouts`), and Undo Drop takes a
+(see :mod:`jparty.domain.tournament.dropouts`), and Undo Drop takes a
 dropout back.
 
 A game that stopped part way shows as in progress, and Resume Saved Game
 asks the welcome screen to resume its save (see
-:mod:`jparty.domain.tournament_saves`). Rankings shows every player's
+:mod:`jparty.domain.tournament.saves`). Rankings shows every player's
 place so far, and Edit Tournament opens the tournament in the Tournament
 window.
 """
@@ -52,9 +52,7 @@ from PyQt6.QtWidgets import (
 
 from jparty.app.paths import GAME_STATES_DIR
 from jparty.domain.models import SIGNATURE_NAME_PREFIX
-from jparty.domain.roster import PlayerSlot
-from jparty.domain.tournament import PLAYERS_PER_GAME, TournamentPlan
-from jparty.domain.tournament_advancement import (
+from jparty.domain.tournament.advancement import (
     Eligibility,
     Tiebreak,
     TiebreakerSession,
@@ -68,7 +66,8 @@ from jparty.domain.tournament_advancement import (
     tie_text,
     tournament_standings,
 )
-from jparty.domain.tournament_drop_choices import (
+from jparty.domain.tournament.bracket import PLAYERS_PER_GAME, TournamentPlan
+from jparty.domain.tournament.drop_choices import (
     TournamentData,
     apply_drop,
     drop_situation,
@@ -76,13 +75,13 @@ from jparty.domain.tournament_drop_choices import (
     undo_drop,
     undo_problem,
 )
-from jparty.domain.tournament_dropouts import (
+from jparty.domain.tournament.dropouts import (
     DROP_REPLACE,
     Dropout,
     dropped_ids,
     effective_plan,
 )
-from jparty.domain.tournament_play import (
+from jparty.domain.tournament.play import (
     RESULTS,
     GameResult,
     TournamentGameRef,
@@ -91,14 +90,15 @@ from jparty.domain.tournament_play import (
     results_by_game,
     slots_by_id,
 )
-from jparty.domain.tournament_rankings import PlayerRanking, tournament_rankings
-from jparty.domain.tournament_saves import (
+from jparty.domain.tournament.rankings import PlayerRanking, tournament_rankings
+from jparty.domain.tournament.roster import PlayerSlot
+from jparty.domain.tournament.saves import (
     TournamentSave,
     find_tournament_saves,
     resume_problem,
 )
-from jparty.domain.tournament_setup import TournamentBoard, plan_games
-from jparty.domain.tournament_store import (
+from jparty.domain.tournament.setup import TournamentBoard, plan_games
+from jparty.domain.tournament.store import (
     TournamentFileError,
     TournamentSettings,
     load_dropouts,
@@ -406,7 +406,7 @@ class TournamentPlayPanel(QWidget):
     def resume_problem(self) -> str | None:
         """Return why the selected game's save can't be resumed, or ``None``.
 
-        See :func:`jparty.domain.tournament_saves.resume_problem`. Starting
+        See :func:`jparty.domain.tournament.saves.resume_problem`. Starting
         the game again with new players still works.
 
         Returns:

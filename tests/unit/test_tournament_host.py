@@ -1,13 +1,13 @@
 """Tests for what the host's phone page shows about tournament players."""
 
-from jparty.domain.roster import PlayerSlot, SignUp
-from jparty.domain.tournament_host import (
+from jparty.domain.tournament.host import (
     HostPlayer,
     HostPrompt,
     host_page,
     mark_prompt,
 )
-from jparty.domain.tournament_store import (
+from jparty.domain.tournament.roster import PlayerSlot, SignUp
+from jparty.domain.tournament.store import (
     TournamentSettings,
     load_used_prompts,
     save_tournament,

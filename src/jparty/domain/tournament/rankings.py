@@ -21,17 +21,17 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
-from jparty.domain.roster import PlayerSlot
-from jparty.domain.tournament import TournamentPlan
-from jparty.domain.tournament_advancement import (
+from jparty.domain.tournament.advancement import (
     STATUS_OUT,
     RoundStanding,
     Tiebreak,
     player_statuses,
     tournament_standings,
 )
-from jparty.domain.tournament_dropouts import Dropout, dropped_ids
-from jparty.domain.tournament_play import GameResult
+from jparty.domain.tournament.bracket import TournamentPlan
+from jparty.domain.tournament.dropouts import Dropout, dropped_ids
+from jparty.domain.tournament.play import GameResult
+from jparty.domain.tournament.roster import PlayerSlot
 
 NOT_PLAYED_TEXT = "hasn't played"
 
@@ -108,7 +108,7 @@ def tournament_rankings(
 
     Args:
         plan: The bracket actually played, with any play-in games (see
-            :func:`jparty.domain.tournament_dropouts.effective_plan`), or
+            :func:`jparty.domain.tournament.dropouts.effective_plan`), or
             ``None``. A plan that doesn't work ranks nobody.
         slots: The roster.
         results: Every saved result.

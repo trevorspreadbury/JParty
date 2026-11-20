@@ -4,7 +4,7 @@ The host picks a player count and optional second round, and the designer
 shows the resulting bracket, total games, and how many players get more than
 one game. It is used on its own from the Tournament window and as a
 tournament's Bracket tab, where the roster sets the player count. Bracket
-rules live in :mod:`jparty.domain.tournament`.
+rules live in :mod:`jparty.domain.tournament.bracket`.
 """
 
 from html import escape
@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from jparty.domain.tournament import (
+from jparty.domain.tournament.bracket import (
     MAX_TOURNAMENT_PLAYERS,
     MIN_TOURNAMENT_PLAYERS,
     SEMIFINAL_FIELD_SIZE,
@@ -35,7 +35,7 @@ from jparty.domain.tournament import (
     describe_plan,
     plan_tournament,
 )
-from jparty.domain.tournament_setup import BracketSettings
+from jparty.domain.tournament.setup import BracketSettings
 
 DEFAULT_TOURNAMENT_PLAYERS = 15
 LAYOUT_SPACING = 8

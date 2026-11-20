@@ -25,8 +25,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from jparty.domain.tournament_setup import TournamentBoard
-from jparty.domain.tournament_store import (
+from jparty.domain.tournament.setup import TournamentBoard
+from jparty.domain.tournament.store import (
     TournamentFileError,
     list_tournaments,
     load_tournament,

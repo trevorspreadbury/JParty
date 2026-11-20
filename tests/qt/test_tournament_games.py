@@ -5,10 +5,10 @@ from PyQt6.QtCore import QItemSelectionModel, Qt
 from PyQt6.QtGui import QImage
 from PyQt6.QtWidgets import QDialog
 
-from jparty.domain.roster import PlayerSlot
-from jparty.domain.tournament import TournamentOptions, plan_tournament
-from jparty.domain.tournament_setup import BracketSettings, TournamentBoard
-from jparty.domain.tournament_store import (
+from jparty.domain.tournament.bracket import TournamentOptions, plan_tournament
+from jparty.domain.tournament.roster import PlayerSlot
+from jparty.domain.tournament.setup import BracketSettings, TournamentBoard
+from jparty.domain.tournament.store import (
     TournamentSettings,
     load_tournament,
     save_tournament,

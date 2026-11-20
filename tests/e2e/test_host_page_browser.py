@@ -2,7 +2,7 @@
 
 import pytest
 
-from jparty.domain.tournament_host import HostPage, HostPlayer, HostPrompt
+from jparty.domain.tournament.host import HostPage, HostPlayer, HostPrompt
 from tests.e2e.test_browser_smoke import (  # noqa: F401  (pytest fixtures)
     browser_page,
     live_browser_server,

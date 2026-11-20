@@ -58,9 +58,9 @@ from jparty.domain.state import (
     save_general_state,
     tiebreaker_winner_number,
 )
-from jparty.domain.tournament_advancement import TiebreakerSession
-from jparty.domain.tournament_dropouts import Dropout, dropped_ids
-from jparty.domain.tournament_play import (
+from jparty.domain.tournament.advancement import TiebreakerSession
+from jparty.domain.tournament.dropouts import Dropout, dropped_ids
+from jparty.domain.tournament.play import (
     SAVED_PLAYER_ID,
     SAVED_PLAYER_NAME,
     GameResult,
@@ -69,8 +69,8 @@ from jparty.domain.tournament_play import (
     already_recorded,
     game_results,
 )
-from jparty.domain.tournament_saves import saved_game_problem, tournament_save
-from jparty.domain.tournament_store import (
+from jparty.domain.tournament.saves import saved_game_problem, tournament_save
+from jparty.domain.tournament.store import (
     TournamentFileError,
     load_dropouts,
     load_results,

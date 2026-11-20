@@ -1,7 +1,7 @@
 """Dialogs for marking a tournament player as dropped out, and taking it back.
 
 :class:`DropPlayerDialog` shows where a player stands and the host's
-choices (see :mod:`jparty.domain.tournament_drop_choices`).
+choices (see :mod:`jparty.domain.tournament.drop_choices`).
 :class:`UndoDropDialog` lists the dropouts so one can be taken back.
 """
 
@@ -22,8 +22,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from jparty.domain.tournament_drop_choices import DropOption, DropSituation
-from jparty.domain.tournament_dropouts import DROP_REPLACE, Dropout
+from jparty.domain.tournament.drop_choices import DropOption, DropSituation
+from jparty.domain.tournament.dropouts import DROP_REPLACE, Dropout
 
 LAYOUT_SPACING = 8
 PROBLEM_STYLE = "QLabel { color: #b00020; }"
@@ -41,7 +41,7 @@ class DropPlayerDialog(QDialog):
 
         Args:
             situation: The player's situation, from
-                :func:`jparty.domain.tournament_drop_choices.drop_situation`.
+                :func:`jparty.domain.tournament.drop_choices.drop_situation`.
             parent: Optional parent widget.
 
         Returns:

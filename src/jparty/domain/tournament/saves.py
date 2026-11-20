@@ -4,7 +4,7 @@ Every game saves itself to its own folder in the saved games folder, named
 ``<game id>-<YYYYMMDDTHHMM>`` (with ``-2``, ``-3``, ... for a second start
 in the same minute). A tournament game's ``general.json`` also names its
 tournament and bracket game (see
-:class:`jparty.domain.tournament_play.TournamentGameRef`), so a game that
+:class:`jparty.domain.tournament.play.TournamentGameRef`), so a game that
 stopped part way, for example because the app closed, can be resumed from
 the tournament.
 
@@ -25,15 +25,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from jparty.domain.tournament_advancement import Eligibility, eligible_players
-from jparty.domain.tournament_dropouts import Dropout, dropped_ids
-from jparty.domain.tournament_play import (
+from jparty.domain.tournament.advancement import Eligibility, eligible_players
+from jparty.domain.tournament.dropouts import Dropout, dropped_ids
+from jparty.domain.tournament.play import (
     SAVED_PLAYER_ID,
     SAVED_PLAYER_NAME,
     GameResult,
     TournamentGameRef,
 )
-from jparty.domain.tournament_store import TournamentFileError, load_tournament_data
+from jparty.domain.tournament.store import TournamentFileError, load_tournament_data
 
 GENERAL_FILE = "general.json"
 # A saved game's folder name: its game id, then when it started.

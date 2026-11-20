@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from jparty.domain.tournament_setup import TournamentBoard, board_from_selections
+from jparty.domain.tournament.setup import TournamentBoard, board_from_selections
 from jparty.ui.widgets.advanced_boards import AdvancedBoardEditor
 
 LAYOUT_SPACING = 8

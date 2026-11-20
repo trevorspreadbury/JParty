@@ -24,7 +24,7 @@ from jparty.app.config import PORT
 from jparty.app.paths import TOURNAMENTS_DIR
 from jparty.domain.input import index_to_key
 from jparty.domain.models import Player
-from jparty.domain.tournament_host import HostPage, host_page, mark_prompt
+from jparty.domain.tournament.host import HostPage, host_page, mark_prompt
 from jparty.web.app import Application
 
 if TYPE_CHECKING:

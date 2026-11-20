@@ -1,7 +1,7 @@
 """What the host can choose when a tournament player drops out.
 
 :func:`drop_situation` works out where a player stands and which of the
-rules in :mod:`jparty.domain.tournament_dropouts` apply to them, as
+rules in :mod:`jparty.domain.tournament.dropouts` apply to them, as
 :class:`DropOption` choices for the host. :func:`apply_drop` and
 :func:`undo_drop` return the tournament's data with a dropout added or
 taken back, as a :class:`TournamentData` for the store to save.
@@ -14,9 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from jparty.domain.roster import PlayerSlot
-from jparty.domain.tournament import ROUND_FINAL, ROUND_SEMIFINALS, TournamentPlan
-from jparty.domain.tournament_advancement import (
+from jparty.domain.tournament.advancement import (
     RoundStanding,
     Tiebreak,
     advancement_conflicts,
@@ -25,7 +23,12 @@ from jparty.domain.tournament_advancement import (
     seating_gaps,
     tournament_standings,
 )
-from jparty.domain.tournament_dropouts import (
+from jparty.domain.tournament.bracket import (
+    ROUND_FINAL,
+    ROUND_SEMIFINALS,
+    TournamentPlan,
+)
+from jparty.domain.tournament.dropouts import (
     DROP_PLAY_IN,
     DROP_PROMOTE,
     DROP_REDUCE,
@@ -39,8 +42,9 @@ from jparty.domain.tournament_dropouts import (
     next_play_in_number,
     play_in_game_key,
 )
-from jparty.domain.tournament_play import GameResult, results_by_game
-from jparty.domain.tournament_setup import (
+from jparty.domain.tournament.play import GameResult, results_by_game
+from jparty.domain.tournament.roster import PlayerSlot
+from jparty.domain.tournament.setup import (
     BracketSettings,
     TournamentBoard,
     game_key,

@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from jparty.domain.roster import PlayerSlot
-from jparty.domain.tournament_dropouts import DROP_SLIDE, Dropout
-from jparty.domain.tournament_play import GameResult
-from jparty.domain.tournament_setup import BracketSettings, TournamentBoard
-from jparty.domain.tournament_store import (
+from jparty.domain.tournament.dropouts import DROP_SLIDE, Dropout
+from jparty.domain.tournament.play import GameResult
+from jparty.domain.tournament.roster import PlayerSlot
+from jparty.domain.tournament.setup import BracketSettings, TournamentBoard
+from jparty.domain.tournament.store import (
     DROPOUTS_FILE,
     PLAYERS_FILE,
     RESULTS_FILE,

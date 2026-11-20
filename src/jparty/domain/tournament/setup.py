@@ -17,7 +17,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 
-from jparty.domain.tournament import (
+from jparty.domain.tournament.bracket import (
     BracketGame,
     BracketRound,
     TournamentOptions,

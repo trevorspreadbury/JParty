@@ -4,9 +4,14 @@ import json
 
 import pytest
 
-from jparty.domain.roster import PlayerSlot, SignUp, link_sign_up, unlink_sign_up
-from jparty.domain.tournament import TournamentOptions, plan_tournament
-from jparty.domain.tournament_setup import (
+from jparty.domain.tournament.bracket import TournamentOptions, plan_tournament
+from jparty.domain.tournament.roster import (
+    PlayerSlot,
+    SignUp,
+    link_sign_up,
+    unlink_sign_up,
+)
+from jparty.domain.tournament.setup import (
     BracketSettings,
     TournamentBoard,
     assign_board,
@@ -21,7 +26,7 @@ from jparty.domain.tournament_setup import (
     unassign_board,
     with_cant_play,
 )
-from jparty.domain.tournament_store import (
+from jparty.domain.tournament.store import (
     PLAYERS_FILE,
     TournamentFileError,
     TournamentSettings,

@@ -31,7 +31,7 @@ from jparty import __version__ as version
 from jparty.app.helptext import helpmsg
 from jparty.app.paths import GAME_STATES_DIR, TOURNAMENTS_DIR
 from jparty.domain.models import GameData
-from jparty.domain.tournament_store import TournamentFileError
+from jparty.domain.tournament.store import TournamentFileError
 from jparty.services.game_loader import (
     RANDOM_GAME_MAX_ATTEMPTS,
     build_game_from_board_selection_configs,

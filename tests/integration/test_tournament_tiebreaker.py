@@ -4,13 +4,13 @@ import pytest
 from PyQt6.QtCore import Qt
 
 from jparty.domain.models import Question
-from jparty.domain.tournament_advancement import (
+from jparty.domain.tournament.advancement import (
     TIE_WILDCARD,
     Tiebreak,
     TiebreakerSession,
     TieForSpot,
 )
-from jparty.domain.tournament_store import TournamentFileError, load_tiebreaks
+from jparty.domain.tournament.store import TournamentFileError, load_tiebreaks
 from tests.integration.test_tournament_results import _seat_phones, folders  # noqa: F401
 
 pytestmark = pytest.mark.integration

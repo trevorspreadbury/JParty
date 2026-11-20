@@ -2,16 +2,16 @@
 
 from dataclasses import replace
 
-from jparty.domain.roster import PlayerSlot
-from jparty.domain.tournament import TournamentOptions, plan_tournament
-from jparty.domain.tournament_advancement import Tiebreak
-from jparty.domain.tournament_dropouts import (
+from jparty.domain.tournament.advancement import Tiebreak
+from jparty.domain.tournament.bracket import TournamentOptions, plan_tournament
+from jparty.domain.tournament.dropouts import (
     DROP_PLAY_IN,
     DROP_REDUCE,
     DROP_SLIDE,
     Dropout,
 )
-from jparty.domain.tournament_rankings import NOT_PLAYED_TEXT, tournament_rankings
+from jparty.domain.tournament.rankings import NOT_PLAYED_TEXT, tournament_rankings
+from jparty.domain.tournament.roster import PlayerSlot
 from tests.unit.test_tournament_advancement import (
     QF,
     SF,

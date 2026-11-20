@@ -1,8 +1,8 @@
 """Who advances from each round of a tournament, worked out from its results.
 
-The bracket's shape comes from :mod:`jparty.domain.tournament`, and each
+The bracket's shape comes from :mod:`jparty.domain.tournament.bracket`, and each
 game's rows from ``results.csv`` (see
-:class:`jparty.domain.tournament_play.GameResult`). This module applies the
+:class:`jparty.domain.tournament.play.GameResult`). This module applies the
 designer's rules to them:
 
 - Every game's winner advances.
@@ -30,8 +30,8 @@ tied for what.
 so a later round offers only the players who advanced into it.
 
 Players who drop out change these rules as described in
-:mod:`jparty.domain.tournament_dropouts`: each round's
-:class:`~jparty.domain.tournament_dropouts.RoundDrops` removes them and
+:mod:`jparty.domain.tournament.dropouts`: each round's
+:class:`~jparty.domain.tournament.dropouts.RoundDrops` removes them and
 says who takes their spot.
 
 These are pure functions over plain data, recomputed from the saved results
@@ -43,21 +43,21 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 
-from jparty.domain.roster import PlayerSlot
-from jparty.domain.tournament import (
+from jparty.domain.tournament.bracket import (
     CHASE_GAME_NEW_PLAYERS,
     PLAYERS_PER_GAME,
     BracketRound,
     TournamentPlan,
 )
-from jparty.domain.tournament_dropouts import (
+from jparty.domain.tournament.dropouts import (
     Dropout,
     RoundDrops,
     dropped_ids,
     round_drops,
 )
-from jparty.domain.tournament_play import GameResult, results_by_game
-from jparty.domain.tournament_setup import TournamentBoard, game_key, plan_games
+from jparty.domain.tournament.play import GameResult, results_by_game
+from jparty.domain.tournament.roster import PlayerSlot
+from jparty.domain.tournament.setup import TournamentBoard, game_key, plan_games
 
 TIE_WILDCARD = "wildcard"
 TIE_CHASER = "chaser"
@@ -140,7 +140,7 @@ class RoundStanding:
             so only a fixed result makes its chaser wrong.
         play_in_players: The next players after the advancers, who play
             the play-in games added when players with a bye drop out (see
-            :mod:`jparty.domain.tournament_dropouts`), best first.
+            :mod:`jparty.domain.tournament.dropouts`), best first.
         play_in_ties: Ties for the last play-in seat. They hold up the
             play-in games, not the rest of the tournament.
         replacements: The player who takes the dropped seat in each voided
@@ -799,7 +799,7 @@ def tournament_standings(
 
     Args:
         plan: The tournament's bracket, with any play-in games (see
-            :func:`jparty.domain.tournament_dropouts.effective_plan`).
+            :func:`jparty.domain.tournament.dropouts.effective_plan`).
         results: Every saved result.
         tiebreaks: Every tiebreaker played.
         dropouts: Every player who dropped out.
@@ -1031,7 +1031,7 @@ def eligible_players(
 
     Args:
         plan: The tournament's bracket.
-        key: The game, as :func:`jparty.domain.tournament_setup.game_key`
+        key: The game, as :func:`jparty.domain.tournament.setup.game_key`
             names it.
         slots: The roster.
         results: Every saved result.
@@ -1160,7 +1160,7 @@ def seating_gaps(
 ) -> list[str]:
     """Return seats that nobody is left to fill.
 
-    Dropouts can cause these, so :mod:`jparty.domain.tournament_drop_choices`
+    Dropouts can cause these, so :mod:`jparty.domain.tournament.drop_choices`
     refuses a choice that would. Three things are checked:
 
     - Each qualifying round knocks out a set number of players: its field

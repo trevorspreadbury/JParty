@@ -7,7 +7,7 @@ selected, the new board goes to the unassigned pool. "Can't Play..." picks
 the players who must not play a board; they stay with the board wherever it
 goes. Boards can be swapped between games, and boards whose game leaves the
 bracket wait in the pool. The rules live in
-:mod:`jparty.domain.tournament_setup`.
+:mod:`jparty.domain.tournament.setup`.
 
 "Download All Games" builds every board on a worker thread, saving its
 J-Archive games to the local cache so game day doesn't need the network
@@ -37,8 +37,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from jparty.domain.tournament import TournamentPlan
-from jparty.domain.tournament_setup import (
+from jparty.domain.tournament.bracket import TournamentPlan
+from jparty.domain.tournament.setup import (
     TournamentBoard,
     assign_from_pool,
     edited_board,

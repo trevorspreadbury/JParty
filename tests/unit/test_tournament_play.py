@@ -2,9 +2,8 @@
 
 import pytest
 
-from jparty.domain.roster import PlayerSlot, SignUp
-from jparty.domain.tournament_advancement import Tiebreak
-from jparty.domain.tournament_play import (
+from jparty.domain.tournament.advancement import Tiebreak
+from jparty.domain.tournament.play import (
     INTRO_HEADING,
     SAVED_PLAYER_ID,
     SAVED_PLAYER_NAME,
@@ -17,7 +16,8 @@ from jparty.domain.tournament_play import (
     introduction_lines,
     record_results,
 )
-from jparty.domain.tournament_store import (
+from jparty.domain.tournament.roster import PlayerSlot, SignUp
+from jparty.domain.tournament.store import (
     RESULTS_FILE,
     TIEBREAKS_FILE,
     TournamentFileError,

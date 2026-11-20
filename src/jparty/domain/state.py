@@ -15,7 +15,7 @@ from itertools import zip_longest
 from pathlib import Path
 
 from jparty.domain.models import FinalBoard
-from jparty.domain.tournament_play import SAVED_PLAYER_ID, SAVED_PLAYER_NAME
+from jparty.domain.tournament.play import SAVED_PLAYER_ID, SAVED_PLAYER_NAME
 from jparty.services.game_cache import write_text_atomic
 
 QUESTION_HISTORY_FILE_NAME = "question_history.jsonl"
@@ -1084,7 +1084,7 @@ class LoadedSave:
             lobby's reclaim flow.
         tournament_problem: For a tournament game's save, why it can't be
             resumed as one (see
-            :func:`jparty.domain.tournament_saves.resume_problem`), or
+            :func:`jparty.domain.tournament.saves.resume_problem`), or
             ``None``. Such a save resumes as a regular game, so it logs no
             results.
     """

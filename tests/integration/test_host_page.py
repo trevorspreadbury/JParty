@@ -6,9 +6,9 @@ import pytest
 from tornado.testing import AsyncHTTPTestCase
 
 from jparty.domain.models import Player
-from jparty.domain.roster import PlayerSlot, SignUp
-from jparty.domain.tournament_play import TournamentGameRef
-from jparty.domain.tournament_store import TournamentSettings, save_tournament
+from jparty.domain.tournament.play import TournamentGameRef
+from jparty.domain.tournament.roster import PlayerSlot, SignUp
+from jparty.domain.tournament.store import TournamentSettings, save_tournament
 from jparty.web.controller import BuzzerController
 
 pytestmark = pytest.mark.integration
@@ -98,7 +98,7 @@ class HostPageTest(AsyncHTTPTestCase):
         """POST /host/prompt marks the prompt, and the page shows it ticked."""
         import json
 
-        from jparty.domain.tournament_store import load_used_prompts
+        from jparty.domain.tournament.store import load_used_prompts
 
         self.controller.host_tournament = self.folder
         response = self.fetch(

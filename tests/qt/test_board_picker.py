@@ -5,7 +5,7 @@ from copy import deepcopy
 import pytest
 from PyQt6.QtWidgets import QRadioButton
 
-from jparty.domain.tournament_setup import TournamentBoard
+from jparty.domain.tournament.setup import TournamentBoard
 from jparty.services.question_media import QuestionMediaStatus
 from jparty.ui.widgets import advanced_boards
 from jparty.ui.widgets.advanced_boards import (

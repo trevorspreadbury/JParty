@@ -29,7 +29,7 @@ A :class:`Dropout` records each choice, in ``dropouts.csv``. This module
 turns them into the bracket that is actually played
 (:func:`effective_plan`) and into each round's adjustments
 (:func:`round_drops`), which
-:mod:`jparty.domain.tournament_advancement` applies.
+:mod:`jparty.domain.tournament.advancement` applies.
 """
 
 from __future__ import annotations
@@ -37,15 +37,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 
-from jparty.domain.roster import PlayerSlot
-from jparty.domain.tournament import (
+from jparty.domain.tournament.bracket import (
     ROUND_SEMIFINALS,
     ROUND_SHORT_NAMES,
     BracketGame,
     TournamentPlan,
     plan_tournament,
 )
-from jparty.domain.tournament_setup import BracketSettings
+from jparty.domain.tournament.roster import PlayerSlot
+from jparty.domain.tournament.setup import BracketSettings
 
 DROP_REDUCE = "reduce"
 DROP_REPLACE = "replace"

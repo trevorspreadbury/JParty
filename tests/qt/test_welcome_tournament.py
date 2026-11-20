@@ -7,9 +7,9 @@ import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget
 
-from jparty.domain.roster import PlayerSlot, SignUp
-from jparty.domain.tournament_play import INTRO_HEADING, GameResult, TournamentGameRef
-from jparty.domain.tournament_store import (
+from jparty.domain.tournament.play import INTRO_HEADING, GameResult, TournamentGameRef
+from jparty.domain.tournament.roster import PlayerSlot, SignUp
+from jparty.domain.tournament.store import (
     TournamentSettings,
     load_results,
     save_results,
@@ -488,7 +488,7 @@ def test_play_games_needs_a_working_bracket(qtbot: object, temp_dir: object) -> 
 def test_played_games_lock_their_boards(qtbot: object, temp_dir: object) -> None:
     """A played game's board can't be changed, swapped, or unassigned."""
     folder = write_tournament(temp_dir, sf1_results())
-    from jparty.domain.tournament_store import load_tournament
+    from jparty.domain.tournament.store import load_tournament
 
     settings, slots = load_tournament(folder)
     editor = make_editor(qtbot, temp_dir, FakeFetcher(), settings=settings, slots=slots)
@@ -510,7 +510,7 @@ def test_played_games_lock_their_boards(qtbot: object, temp_dir: object) -> None
 
 def _played_editor(qtbot: object, temp_dir: object) -> tuple[object, object]:
     """Return a tournament editor for a tournament whose SF 1 was played."""
-    from jparty.domain.tournament_store import load_tournament
+    from jparty.domain.tournament.store import load_tournament
 
     folder = write_tournament(temp_dir, sf1_results())
     settings, slots = load_tournament(folder)
@@ -563,8 +563,8 @@ def test_bracket_that_drops_a_played_game_cant_be_saved(
     qtbot: object, temp_dir: object
 ) -> None:
     """Re-planning away a played game warns, and Save refuses it."""
-    from jparty.domain.tournament import TournamentOptions, plan_tournament
-    from jparty.domain.tournament_store import load_tournament
+    from jparty.domain.tournament.bracket import TournamentOptions, plan_tournament
+    from jparty.domain.tournament.store import load_tournament
     from tests.qt.test_tournament_roster import click_save
 
     editor, folder = _played_editor(qtbot, temp_dir)
@@ -658,7 +658,7 @@ def test_board_that_fails_to_load_says_so(
     deferred_welcome: tuple, temp_dir: object
 ) -> None:
     """A board that can't be built leaves Start off and tells the host why."""
-    from jparty.domain.tournament_store import load_tournament, save_tournament
+    from jparty.domain.tournament.store import load_tournament, save_tournament
 
     widget, game, loader = deferred_welcome
     settings, slots = load_tournament(temp_dir / "Fun")
@@ -858,7 +858,7 @@ def test_reopening_the_tournament_window_locks_newly_played_games(
     qtbot: object, temp_dir: object
 ) -> None:
     """A game played while the window was hidden is locked when it reopens."""
-    from jparty.domain.tournament_store import load_tournament
+    from jparty.domain.tournament.store import load_tournament
     from tests.qt.test_tournament_roster import make_window
 
     folder = write_tournament(temp_dir, sf1_results())
@@ -1009,8 +1009,8 @@ def test_open_tie_is_listed_first_with_its_players(
 
 def test_saved_tiebreaker_settles_the_tie(qtbot: object, temp_dir: object) -> None:
     """Once the tiebreaker is saved, the tie is gone and its winner advances."""
-    from jparty.domain.tournament_advancement import Tiebreak
-    from jparty.domain.tournament_store import record_tiebreak
+    from jparty.domain.tournament.advancement import Tiebreak
+    from jparty.domain.tournament.store import record_tiebreak
 
     folder = write_tied_tournament(temp_dir)
     record_tiebreak(folder, Tiebreak(QF, frozenset("ef"), "f", "F"))
@@ -1070,8 +1070,8 @@ def test_chase_game_with_no_one_to_chase_starts_with_two_phones(
     qtbot: object, temp_dir: object, monkeypatch: object
 ) -> None:
     """In 11 players, the chaser dropping out leaves Chase 1 to its two new players."""
-    from jparty.domain.tournament_dropouts import DROP_SLIDE, Dropout
-    from jparty.domain.tournament_store import DROPOUTS_FILE, dropouts_csv_text
+    from jparty.domain.tournament.dropouts import DROP_SLIDE, Dropout
+    from jparty.domain.tournament.store import DROPOUTS_FILE, dropouts_csv_text
 
     quarterfinals = "Quarterfinals"
     chase = f"{quarterfinals}: Chase 1"

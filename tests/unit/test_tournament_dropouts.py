@@ -4,21 +4,20 @@ from dataclasses import replace
 
 import pytest
 
-from jparty.domain.roster import PlayerSlot
-from jparty.domain.tournament_advancement import (
+from jparty.domain.tournament.advancement import (
     advancement_conflicts,
     eligible_players,
     player_statuses,
     round_entrants,
 )
-from jparty.domain.tournament_drop_choices import (
+from jparty.domain.tournament.drop_choices import (
     TournamentData,
     apply_drop,
     drop_situation,
     undo_drop,
     undo_problem,
 )
-from jparty.domain.tournament_dropouts import (
+from jparty.domain.tournament.dropouts import (
     DROP_PLAY_IN,
     DROP_PROMOTE,
     DROP_REDUCE,
@@ -28,9 +27,10 @@ from jparty.domain.tournament_dropouts import (
     Dropout,
     field_size,
 )
-from jparty.domain.tournament_play import GameResult
-from jparty.domain.tournament_setup import BracketSettings, TournamentBoard
-from jparty.domain.tournament_store import (
+from jparty.domain.tournament.play import GameResult
+from jparty.domain.tournament.roster import PlayerSlot
+from jparty.domain.tournament.setup import BracketSettings, TournamentBoard
+from jparty.domain.tournament.store import (
     TournamentSettings,
     dropouts_csv_text,
     load_tournament_data,
@@ -439,7 +439,7 @@ def test_dropouts_csv_round_trips() -> None:
 )
 def test_bad_dropouts_csv_is_reported(text: str) -> None:
     """A missing column, unknown choice, or blank round is an error."""
-    from jparty.domain.tournament_store import TournamentFileError
+    from jparty.domain.tournament.store import TournamentFileError
 
     with pytest.raises(TournamentFileError):
         parse_dropouts_csv(text)
@@ -548,7 +548,7 @@ def test_promote_takes_a_waiting_winner_before_a_better_scoring_wildcard() -> No
 
 def test_tie_for_promotion_waits_for_a_tiebreaker() -> None:
     """w8 and w9 both won with 1300: a tiebreaker picks who gets the bye."""
-    from jparty.domain.tournament_advancement import TIE_BYE, Tiebreak
+    from jparty.domain.tournament.advancement import TIE_BYE, Tiebreak
 
     results = with_scores(twenty_seven_prelims(), w8=1300) + FIRST_R2
     data = data_for(TWENTY_SEVEN, results, BYES)

@@ -30,17 +30,17 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from jparty.domain.roster import PlayerSlot, roster_name_problem
-from jparty.domain.tournament import TournamentPlan
-from jparty.domain.tournament_dropouts import (
+from jparty.domain.tournament.bracket import TournamentPlan
+from jparty.domain.tournament.dropouts import (
     Dropout,
     apply_dropouts,
     field_size,
 )
-from jparty.domain.tournament_play import played_game_keys
-from jparty.domain.tournament_rankings import tournament_rankings
-from jparty.domain.tournament_setup import TournamentBoard, forget_removed_players
-from jparty.domain.tournament_store import (
+from jparty.domain.tournament.play import played_game_keys
+from jparty.domain.tournament.rankings import tournament_rankings
+from jparty.domain.tournament.roster import PlayerSlot, roster_name_problem
+from jparty.domain.tournament.setup import TournamentBoard, forget_removed_players
+from jparty.domain.tournament.store import (
     LOGO_SUFFIXES,
     TournamentFileError,
     TournamentSettings,

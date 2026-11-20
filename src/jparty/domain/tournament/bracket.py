@@ -125,7 +125,7 @@ class BracketGame:
         chase: Whether this is a chase game.
         play_in: Whether this is a play-in game, added when a player with a
             Semifinal bye drops out (see
-            :mod:`jparty.domain.tournament_dropouts`). Its three players
+            :mod:`jparty.domain.tournament.dropouts`). Its three players
             come from the round before, and its winner takes the bye's
             Semifinal seat.
     """

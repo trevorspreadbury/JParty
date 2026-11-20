@@ -5,14 +5,14 @@ from types import SimpleNamespace
 import pytest
 from PyQt6.QtWidgets import QMessageBox
 
-from jparty.domain.tournament_drop_choices import DropOption, DropSituation
-from jparty.domain.tournament_dropouts import (
+from jparty.domain.tournament.drop_choices import DropOption, DropSituation
+from jparty.domain.tournament.dropouts import (
     DROP_REDUCE,
     DROP_REPLACE,
     DROP_VOID,
     Dropout,
 )
-from jparty.domain.tournament_store import (
+from jparty.domain.tournament.store import (
     load_dropouts,
     load_results,
     load_tournament,
@@ -230,7 +230,7 @@ def test_open_tournament_window_doesnt_undo_a_drop_when_it_saves(
     choice: str,
 ) -> None:
     """An open, clean window rereads the drop, so its next Save keeps it."""
-    from jparty.domain.tournament_store import load_tournament_data
+    from jparty.domain.tournament.store import load_tournament_data
     from tests.qt.test_tournament_roster import make_window
 
     widget, _game, _parent = tournament_welcome

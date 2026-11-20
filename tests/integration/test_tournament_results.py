@@ -6,13 +6,13 @@ import pytest
 from PyQt6.QtCore import Qt
 
 from jparty.domain.models import Player, Question
-from jparty.domain.tournament_play import (
+from jparty.domain.tournament.play import (
     SAVED_PLAYER_ID,
     SAVED_PLAYER_NAME,
     GameResult,
     TournamentGameRef,
 )
-from jparty.domain.tournament_store import load_results, save_results
+from jparty.domain.tournament.store import load_results, save_results
 
 REF = TournamentGameRef("Fun", "Quarterfinals: QF 1")
 SEATS = [("ann-id", "Ann"), ("bob-id", "Bob"), ("cy-id", "Cy")]
@@ -177,7 +177,7 @@ def test_unwritable_results_warn_the_host(
 ) -> None:
     """A results file that can't be saved is reported, not swallowed."""
     from jparty.domain import game_engine
-    from jparty.domain.tournament_store import TournamentFileError
+    from jparty.domain.tournament.store import TournamentFileError
 
     def fail(_folder: object, _results: object) -> None:
         raise TournamentFileError("disk full")
@@ -307,8 +307,8 @@ def test_results_follow_players_who_change_seats_on_resume(
     # Each resumed player keeps their own id at their new seat, so the host
     # page steps through them last podium first: Bob, Ann, Cy.
     assert [player.tournament_player for player in claimed] == SEATS
-    from jparty.domain.roster import PlayerSlot
-    from jparty.domain.tournament_store import TournamentSettings, save_tournament
+    from jparty.domain.tournament.roster import PlayerSlot
+    from jparty.domain.tournament.store import TournamentSettings, save_tournament
 
     save_tournament(
         folders.parent,
@@ -339,8 +339,8 @@ SF_REF = TournamentGameRef("Fun", "Semifinals: SF 1")
 
 def _write_tournament(folder: object, dropouts: tuple = ()) -> None:
     """Save a nine-player "Fun" tournament whose roster includes SEATS."""
-    from jparty.domain.roster import PlayerSlot
-    from jparty.domain.tournament_store import (
+    from jparty.domain.tournament.roster import PlayerSlot
+    from jparty.domain.tournament.store import (
         DROPOUTS_FILE,
         TournamentSettings,
         dropouts_csv_text,
@@ -434,7 +434,7 @@ def test_load_saved_with_a_dropped_player_logs_no_results(
     game: object, folders: object
 ) -> None:
     """A save whose player dropped out resumes untracked, so no rows for them."""
-    from jparty.domain.tournament_dropouts import DROP_REPLACE, Dropout
+    from jparty.domain.tournament.dropouts import DROP_REPLACE, Dropout
 
     _write_tournament(folders)
     _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
@@ -479,7 +479,7 @@ def test_results_naming_a_dropped_player_arent_saved(
     game: object, folders: object, monkeypatch: object
 ) -> None:
     """The end of the game checks dropouts too, and warns instead."""
-    from jparty.domain.tournament_dropouts import DROP_SLIDE, Dropout
+    from jparty.domain.tournament.dropouts import DROP_SLIDE, Dropout
 
     warnings = _warnings(game, monkeypatch)
     _seat_phones(game, ["Phone A", "Phone B", "Phone C"])

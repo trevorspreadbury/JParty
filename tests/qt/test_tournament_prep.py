@@ -12,9 +12,9 @@ import pytest
 from PyQt6.QtGui import QImage
 
 from jparty.domain.models import Board, GameData, Question
-from jparty.domain.tournament_dropouts import DROP_REPLACE, Dropout
-from jparty.domain.tournament_play import GameResult, TournamentGameRef
-from jparty.domain.tournament_store import load_tournament, save_tournament
+from jparty.domain.tournament.dropouts import DROP_REPLACE, Dropout
+from jparty.domain.tournament.play import GameResult, TournamentGameRef
+from jparty.domain.tournament.store import load_tournament, save_tournament
 from jparty.services.board_prep import PreparedBoard
 from jparty.ui.widgets.tournament_editor import TAB_RANKINGS
 from jparty.ui.widgets.tournament_games import POOL_BOARD_KEY

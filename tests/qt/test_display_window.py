@@ -448,12 +448,12 @@ def test_tournament_tiebreaker_session_through_real_windows(
 ) -> None:
     """A tiebreaker session shows the tie, plays a clue, and saves the win."""
     from jparty.domain import game_engine
-    from jparty.domain.tournament_advancement import (
+    from jparty.domain.tournament.advancement import (
         TIE_WILDCARD,
         TiebreakerSession,
         TieForSpot,
     )
-    from jparty.domain.tournament_store import load_tiebreaks
+    from jparty.domain.tournament.store import load_tiebreaks
 
     game = game_with_players
     board_window, host_window = _game_with_real_windows(qtbot, game, monkeypatch)

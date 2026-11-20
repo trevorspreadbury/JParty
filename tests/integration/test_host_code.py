@@ -3,7 +3,7 @@
 import pytest
 from PyQt6.QtCore import Qt
 
-from jparty.domain.tournament_play import TournamentGameRef
+from jparty.domain.tournament.play import TournamentGameRef
 
 pytestmark = pytest.mark.integration
 

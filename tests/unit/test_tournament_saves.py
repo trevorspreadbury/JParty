@@ -3,18 +3,18 @@
 import json
 from pathlib import Path
 
-from jparty.domain.roster import PlayerSlot
-from jparty.domain.tournament_advancement import Eligibility
-from jparty.domain.tournament_dropouts import DROP_REPLACE, Dropout
-from jparty.domain.tournament_play import GameResult, TournamentGameRef
-from jparty.domain.tournament_saves import (
+from jparty.domain.tournament.advancement import Eligibility
+from jparty.domain.tournament.dropouts import DROP_REPLACE, Dropout
+from jparty.domain.tournament.play import GameResult, TournamentGameRef
+from jparty.domain.tournament.roster import PlayerSlot
+from jparty.domain.tournament.saves import (
     TournamentSave,
     find_tournament_saves,
     resume_problem,
     saved_game_problem,
     tournament_save,
 )
-from jparty.domain.tournament_store import (
+from jparty.domain.tournament.store import (
     TournamentSettings,
     save_results,
     save_tournament,

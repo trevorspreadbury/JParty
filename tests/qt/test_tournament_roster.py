@@ -5,14 +5,14 @@ import requests
 from PyQt6.QtCore import QPoint, QSize
 from PyQt6.QtWidgets import QDialog, QMessageBox
 
-from jparty.domain.roster import (
+from jparty.domain.tournament.roster import (
     MATCH_ADD_PLAYER,
     MATCH_IGNORE,
     PlayerSlot,
     SignUp,
     SignUpMatch,
 )
-from jparty.domain.tournament_store import (
+from jparty.domain.tournament.store import (
     TournamentSettings,
     load_tournament,
     save_tournament,

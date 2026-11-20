@@ -18,8 +18,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from jparty.domain.tournament_play import introduction_line
-from jparty.domain.tournament_store import (
+from jparty.domain.tournament.play import introduction_line
+from jparty.domain.tournament.store import (
     TournamentFileError,
     load_tournament,
     load_used_prompts,

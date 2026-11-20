@@ -9,8 +9,7 @@ from dataclasses import replace
 
 import pytest
 
-from jparty.domain.roster import PlayerSlot
-from jparty.domain.tournament_advancement import (
+from jparty.domain.tournament.advancement import (
     TIE_CHASER,
     Eligibility,
     advancement_conflicts,
@@ -19,15 +18,16 @@ from jparty.domain.tournament_advancement import (
     seating_gaps,
     seating_problem,
 )
-from jparty.domain.tournament_drop_choices import (
+from jparty.domain.tournament.drop_choices import (
     DropOption,
     TournamentData,
     apply_drop,
     drop_situation,
 )
-from jparty.domain.tournament_dropouts import DROP_PLAY_IN, DROP_SLIDE, DROP_VOID
-from jparty.domain.tournament_play import RESULT_LOSS, RESULT_WIN, GameResult
-from jparty.domain.tournament_setup import BracketSettings, plan_games
+from jparty.domain.tournament.dropouts import DROP_PLAY_IN, DROP_SLIDE, DROP_VOID
+from jparty.domain.tournament.play import RESULT_LOSS, RESULT_WIN, GameResult
+from jparty.domain.tournament.roster import PlayerSlot
+from jparty.domain.tournament.setup import BracketSettings, plan_games
 
 QF = "Quarterfinals"
 SF = "Semifinals"
@@ -541,17 +541,15 @@ def test_undo_that_would_leave_a_gap_is_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Undo Drop checks for seats nobody can fill, like the drop options do."""
-    from jparty.domain import tournament_drop_choices
+    from jparty.domain.tournament import drop_choices
 
     data = dropped(
         tournament(16, sixteen_quarterfinals([8000, 7000, 6000, 5000])), "p01"
     )
     (dropout,) = data.dropouts
-    assert tournament_drop_choices.undo_problem(data, dropout) == ""
-    monkeypatch.setattr(
-        tournament_drop_choices, "gaps_added", lambda before, after: ["A gap."]
-    )
-    assert tournament_drop_choices.undo_problem(data, dropout) == (
+    assert drop_choices.undo_problem(data, dropout) == ""
+    monkeypatch.setattr(drop_choices, "gaps_added", lambda before, after: ["A gap."])
+    assert drop_choices.undo_problem(data, dropout) == (
         "Nobody would be left for every seat: A gap."
     )
 
@@ -596,7 +594,7 @@ def test_chase_games_played_before_a_void_keep_their_chasers() -> None:
 
 def test_undoing_the_dropout_after_a_two_player_chase_game_flags_it() -> None:
     """Once the dropout is taken back there's a chaser again, so the game is listed."""
-    from jparty.domain.tournament_drop_choices import undo_drop
+    from jparty.domain.tournament.drop_choices import undo_drop
 
     data = dropped(tournament(11, eleven_quarterfinals()), "p01")
     data = play_two_player_chase(data, f"{QF}: Chase 1")

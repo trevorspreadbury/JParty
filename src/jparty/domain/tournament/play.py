@@ -1,15 +1,15 @@
 """Playing a tournament's games: who may play, results, and introductions.
 
 A tournament's games come from its bracket (see
-:mod:`jparty.domain.tournament`) and their boards from its setup (see
-:mod:`jparty.domain.tournament_setup`). This module adds what playing needs:
+:mod:`jparty.domain.tournament.bracket`) and their boards from its setup (see
+:mod:`jparty.domain.tournament.setup`). This module adds what playing needs:
 
 - :class:`GameResult` rows, one per player per game, as saved in
   ``results.csv``.
 - The host's introduction of the players before a game.
 
 Who may sit in a game depends on who advanced, so it lives in
-:mod:`jparty.domain.tournament_advancement`.
+:mod:`jparty.domain.tournament.advancement`.
 
 These are pure functions over plain data, so the welcome screen and the
 results editor share one set of rules.
@@ -20,7 +20,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
-from jparty.domain.roster import PlayerSlot
+from jparty.domain.tournament.roster import PlayerSlot
 
 RESULT_WIN = "win"
 RESULT_LOSS = "loss"

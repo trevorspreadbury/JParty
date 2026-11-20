@@ -3,7 +3,7 @@
 :class:`RosterEditor` is a tournament's Players tab: it edits the roster and
 fills it from the Google Form sign-up sheet. :class:`SignUpMatchDialog` steps
 the host through placing new sign-ups after a refresh. Roster rules live in
-:mod:`jparty.domain.roster`; saving is done by
+:mod:`jparty.domain.tournament.roster`; saving is done by
 :class:`jparty.ui.widgets.tournament_editor.TournamentEditor`.
 """
 
@@ -33,7 +33,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from jparty.domain.roster import (
+from jparty.domain.tournament.bracket import (
+    MAX_TOURNAMENT_PLAYERS,
+    MIN_TOURNAMENT_PLAYERS,
+)
+from jparty.domain.tournament.roster import (
     MATCH_ADD_PLAYER,
     MATCH_IGNORE,
     PlayerSlot,
@@ -49,8 +53,7 @@ from jparty.domain.roster import (
     unlink_sign_up,
     update_linked_sign_ups,
 )
-from jparty.domain.tournament import MAX_TOURNAMENT_PLAYERS, MIN_TOURNAMENT_PLAYERS
-from jparty.domain.tournament_store import TournamentSettings
+from jparty.domain.tournament.store import TournamentSettings
 from jparty.services.game_sources import GameSourceFetcher, SheetAccessError
 from jparty.ui.welcome_loader import WelcomeLoader
 

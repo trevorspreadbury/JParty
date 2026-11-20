@@ -1,6 +1,6 @@
 """A tournament's rankings: every player, best first.
 
-:class:`RankingsTable` shows :func:`jparty.domain.tournament_rankings
+:class:`RankingsTable` shows :func:`jparty.domain.tournament.rankings
 .tournament_rankings` as a table. The Tournament window shows it on a
 Rankings tab, and the play panel's Rankings button opens it in a
 :class:`RankingsDialog`.
@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from jparty.domain.tournament_rankings import PlayerRanking
+from jparty.domain.tournament.rankings import PlayerRanking
 
 LAYOUT_SPACING = 8
 RANKING_COLUMNS = (
