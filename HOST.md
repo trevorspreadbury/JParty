@@ -12,6 +12,7 @@ For the saved-state and clue-history file format, see
 - [Setting Up Lecterns](#setting-up-lecterns)
 - [Welcome Screen Overview](#welcome-screen-overview)
 - [Pre-Game Image Preview](#pre-game-image-preview)
+- [Tournaments](#tournaments)
 - [Resume Flow](#resume-flow)
 - [Core Game Flow](#core-game-flow)
 - [Editing Scores](#editing-scores)
@@ -271,6 +272,473 @@ That preview screen shows:
 
 Use this as a last sanity check before contestants see the board.
 
+## Tournaments
+
+The `Tournament` button at the bottom of the welcome screen opens the
+Tournament window. Everything for a tournament happens there:
+
+- `Create Tournament` starts a new tournament.
+- `Load Tournament` opens the tournament selected under `Saved tournaments`.
+  Double-clicking it works too.
+- `Bracket Designer` lets you try bracket formats for any number of players,
+  without saving anything. `Back to Tournaments` returns to the list.
+
+A created or loaded tournament opens with its name and logo at the top and
+four tabs: `Players`, `Bracket`, `Games`, and `Rankings`. Everything but the
+rankings stays editable. One `Save` button saves the first three tabs. `Close` goes back to the tournament list.
+`Play Games` saves if needed and hands the tournament to the welcome screen;
+see [Playing tournament games](#playing-tournament-games).
+Closing the window or the tournament with unsaved changes asks before
+discarding them. A tournament without unsaved changes stays open when you
+close the window, so reopening the window takes you back to it.
+
+The tournament name becomes the folder name, so it can't contain characters
+like `/` or `:`. It can't be changed after the first save.
+
+`Choose Logo...` picks the tournament logo. It is copied into the
+tournament's folder when you save, so it stays out of git. `Remove Logo`
+deletes it on the next save.
+
+### Bracket rules
+
+Every tournament ends with a three-player Final. With 9 players, three
+Semifinal winners meet in the Final. With more, a first round fills the nine
+Semifinal spots:
+
+- Each game's winner advances. Leftover spots go to wildcards: the
+  highest-scoring players who did not win their game.
+- With `3n + 2` players, `n` regular games are played first, then one chase
+  game. Its two new players advance by winning. The third seat goes to the
+  chaser, the first player who would miss out on a wildcard after the regular
+  games. A chaser who wins opens one more wildcard spot, but their chase-game
+  score does not count, so other players can still overtake their original
+  score.
+- With `3n + 1` players, there are two chase games. Both chasers are set once
+  the regular games are done: the second player out chases in Chase 1, and the
+  first player out in Chase 2. The second player out only gets in if both
+  chasers win, so they go first; if they lose, Chase 2 still matters to the
+  first player out. The regular games need two non-winners outside the
+  wildcards for this, so some second-round settings aren't allowed.
+
+For larger fields, turn on `Add a second round before the Semifinals`:
+
+- `Semifinal byes`: the top-scoring preliminary players who skip the second
+  round. Byes go to winners first, whether they won a regular or a chase
+  game. If there are more byes than winners, the top wildcards get the rest.
+- `Second-round players`: how many other players advance from the
+  preliminaries. It resets to fill the remaining Semifinal spots with
+  winners whenever you change the byes.
+
+The designer shows each round's games and where every seat comes from, along
+with the total games, how many players get more than one game, and how many
+games the champion plays. Ranges such as `9-10` depend on whether chasers win.
+If the options cannot work (for example, 28 players with no second round), the
+designer explains why.
+
+### Players tab
+
+The `Players` tab fills the tournament's players from your Google Form
+sign-up sheet.
+
+1. Paste the link to the form's response sheet. In the sheet, choose `Share`
+   and set General access to `Anyone with the link`. The sheet needs
+   `Timestamp` and `Full Name` columns; `Occupation`, `Hometown`, and
+   `Anecdote #1` to `#3` are saved too.
+2. Set `Players` to the number of players. It can be more than the sheet has
+   rows. This count also sets the bracket's size.
+3. Click `Refresh Sheet`. Sign-ups fill the player slots in sheet order.
+4. Edit the `Actual Name` column if someone used a silly name, and type names
+   for players who haven't signed up yet.
+
+Click `Refresh Sheet` again as more people sign up. If you've typed names that
+aren't linked to a sign-up yet, JParty steps through each new sign-up and
+suggests the player with the closest name. For each one, choose the player,
+`A new player`, or `Not a player` for test or duplicate responses. Ignored
+responses aren't asked about again. Linked players keep their Actual Name.
+
+JParty recognizes each response by its Timestamp. If a player edits or
+resubmits their response, Google gives it a new Timestamp, so JParty asks
+about it on the next refresh and suggests the player it replaces (shown as
+"sign-up no longer in the sheet"). Pick that player to keep their name and
+update their answers.
+
+To fix a mistake, select a row and click `Unlink Sign-up` (the sign-up is
+asked about again on the next refresh) or `Remove Player`. `Restore Ignored`
+makes the next refresh ask about every ignored response again.
+
+### Bracket tab
+
+The `Bracket` tab is the bracket designer for this tournament. The player
+count comes from the `Players` tab; choose the second round and byes here.
+The tab shows `Bracket (!)` while the options can't make a bracket. You can
+still save, and JParty reminds you that the bracket won't work yet. If the
+field drops to 9 or fewer players, the second round turns off; it turns back
+on if the field grows again.
+
+### Games tab
+
+The `Games` tab lists every game in the bracket in playing order. Each row
+shows where the game's players come from, its board, who can't play that
+board, and whether the board has question media. The tab title counts the
+games that have a board and the boards waiting in `Unassigned boards`, for
+example `Games (3/10 boards, 2 unassigned)`.
+
+To give a game a board, double-click the game, or select it and click
+`Set Board...`. With no game selected, `Set Board...` makes a new board for
+`Unassigned boards`, so you can set boards up before deciding which game gets
+each one. Either way it opens the same board slots as the welcome screen's
+`Advanced Options`:
+
+1. Fill each board slot: type a game id (or click `Random`), pick its round,
+   and adjust point values and Daily Doubles as you would on the welcome
+   screen (see [`Advanced Options`](#advanced-options)). `Load Media` loads
+   question media for a slot. Use the `Jeopardy Boards` and `Final Boards`
+   counts to change how many boards the game plays.
+2. Click `Use This Board`. It turns on once every slot is filled.
+
+To play one game as it aired, type its id under `Same game for every slot`
+and click `Use for Every Slot`. The slots go back to two boards and Final
+Jeopardy! with the usual values and Daily Doubles, then each loads that game
+and picks its matching round.
+
+Opening a game that already has a board shows that board, so you can edit it.
+The edited board replaces the old one. `Cancel` leaves the game as it was.
+Setting up a tournament board doesn't change the game on the welcome screen.
+
+To keep players off a board (for example, players who have seen that
+episode or wrote its clues), select the game and click `Can't Play...`, or
+double-click its `Can't Play` cell, then tick those players. For a board in
+`Unassigned boards`, select it and click the `Can't Play...` button next to
+`Assign to Selected Game`, or double-click the board. The list stays
+with the board: if you swap, unassign, or edit the board, the same players
+still can't play it. Renaming a player keeps their place on the list, and
+removing a player takes them off it when you save.
+
+Other buttons:
+
+- `Swap Boards`: select two games to swap their boards.
+- `Unassign`: move the selected games' boards to `Unassigned boards`.
+- `Assign to Selected Game`: give the selected game the selected unassigned
+  board.
+- `Delete Board`: remove the selected unassigned board.
+
+If the bracket changes and a game leaves it (for example, the field shrinks
+and loses a chase game), that game's board moves to `Unassigned boards`
+instead of being lost. If the game comes back before you close the
+tournament (for example, the player count changes back) and it has no board,
+the board returns to it. While the bracket can't work, boards stay where they
+are.
+
+The summary above the table lists games whose boards have no question media,
+meaning one of the board's source games has no folder or zip in the question
+media folder (see [`Load Question Media`](#load-question-media)). It also
+warns when two games play the same round of the same source game, because
+players would see the same clues twice.
+
+Once a game has been played, its board is locked: `Set Board...`, `Swap
+Boards`, `Unassign`, and `Assign to Selected Game` no longer change it, and
+its board shows `(played)`. A Bracket or Players change that would drop a
+played game warns you, and the tournament can't be saved that way: change
+it back, or delete that game's results with `Fix Results...` first.
+
+Before game day:
+
+- `Download All Games` loads every board, including the unassigned ones, and
+  saves their J-Archive games on this computer, so the tournament can be
+  played without the internet. It counts the boards that are ready and lists
+  any that couldn't load. Google Sheets games are checked, but they still
+  load from the sheet when played.
+- `Preview All Media...` loads every board the same way, then shows each
+  board's question media with its category, value, and correct response, so
+  you can check the images before anyone sees them. Boards with no question
+  media, or that couldn't load, say so. If you close the Tournament window
+  or click `Play Games` while the boards load, the preview doesn't open by
+  itself; click `Preview All Media...` again when you're back.
+
+### Rankings tab
+
+The `Rankings` tab ranks every player from the saved results. The champion
+comes first, then players by the furthest round they've reached (playing in
+a round, advancing into it, or skipping to it with a bye all count). Within a
+round, players still in the tournament come before players who are out, and
+then the higher score in their latest round goes first. Players level on all
+of that share a place. Players who haven't played yet are listed last
+without a place. Each row also shows where the player stands, their games
+played, and their total, best, and Coryat scores. Players who are out are
+greyed out.
+
+### Playing tournament games
+
+`Play Games` in a tournament puts the welcome screen into tournament mode.
+The game id box, round checkboxes, and `Advanced Options` are replaced by
+the tournament's games and players. `Reveal Answers after Triple Stumper` is
+hidden and always on for tournament games, so every game is played the same
+way; leaving the tournament puts your choice back.
+
+1. Pick a game from `Games`. Its board loads by itself, and its summary
+   shows below. Games already played, and games with no board, are greyed
+   out and can't be picked.
+2. Pick a player for each podium. Only players who can play that game are
+   offered:
+   - A first-round game: anyone who hasn't played that round yet.
+   - A later round: the players who advanced into it (see
+     [Advancement](#advancement)) and haven't played it yet. Until the round
+     before is decided, no one is offered, and the status line says why.
+   - A chase game: two new players, and the round's chaser (marked
+     `(chaser)`, and shown next to the game in `Games`).
+   - Players on the board's Can't Play list are never offered.
+3. Have the three players join from their phones as usual. Each podium shows
+   the phone on it: the typed name, or the signature a player signed in with. Podium 1 is the first phone in the scoreboard, and so
+   on; use the scoreboard's `▲`/`▼` to put the phones in podium order.
+4. Click `Start!`. The host screen shows "Let's meet today's contestants:"
+   and an introduction for each player, such as "A teacher from Chicago,
+   Jane Smith (Ziggy)". The name appears once when the sheet's Full Name
+   and the Actual Name match, and a player with no sign-up is introduced by
+   their Actual Name. Click `Start Game` to begin (`Back` returns to the
+   welcome screen). If another phone joins while the introduction is
+   showing, `Start Game` goes back to the welcome screen, and the status
+   line says what's wrong; remove the extra phone, or use `▲`/`▼` to fix
+   the order. A phone that drops keeps its podium and rejoins it when it
+   reconnects.
+
+When the game ends, after Final Jeopardy or a tiebreaker, its results are
+saved to the tournament's `results.csv`. A tie for first has to be settled
+by a tiebreaker before the results are saved. Back on the welcome screen, the
+game is greyed out, and `Players` shows where each of its players stands (see
+[Advancement](#advancement)).
+
+A tournament game that stopped part way through (for example, the app
+closed) shows `(in progress)` in `Games`. Its tooltip names the players it
+started with. To pick it up where it stopped, select it and click `Resume
+Saved Game`: `Start!` becomes `Resume!`, and each player's phone claims their
+saved player as it would after `Load Saved`. `Resume!` turns on once every
+saved player is claimed, and skips the introduction. Selecting another game
+drops the resume. If one of the saved players has dropped out, or can no
+longer play that game, `Resume Saved Game` stays off and the status line says
+why, since the game's results would be logged for them; start the game again
+with new players, or undo the drop. A resumed game still saves its results
+when it ends. You can also start an in-progress game again from the
+beginning by picking its players and clicking `Start!` as usual.
+
+The regular `Load Saved` button checks a tournament game's save the same
+way, and also checks whether the game already has results from another
+save (for example, an abandoned start of a game that was then replayed).
+A save that fails a check still resumes, but as a regular game: a warning
+says why, and its results aren't saved to the tournament. When any
+tournament game ends, its results are also not saved over another save's
+results for that game, or for a player who has dropped out; a warning says
+so instead. Use `Fix Results` if those results should count.
+
+`Rankings...` shows the same rankings as the Tournament window's
+[Rankings tab](#rankings-tab). `Edit Tournament...` opens this tournament in
+the Tournament window to change its players, bracket, or boards. Saving
+there updates the games and players here straight away, unless a game is
+being played; then they update when you return to the welcome screen.
+`Fix Results...` opens the saved results. You can change scores, Coryat
+scores, and who won (each game needs a winner), or use `Delete Game's
+Results` so a game can be played again. `Leave Tournament` returns to
+choosing a regular game.
+
+### Advancement
+
+JParty works out who advances from `results.csv` each time, so a fixed
+result changes it right away. `Players` shows where each player is, such as
+`(won, in the Semifinals)`, `(wildcard, in the Semifinals)`, `(bye to the
+Semifinals)`, `(chaser in Chase 1)`, `(out)`, or `(champion)`. Players who
+are out, or who are waiting for the rest of their round, are greyed out.
+
+- Every game's winner advances.
+- A round's leftover spots go to wildcards: the players who didn't win
+  their game, by highest final score.
+- A chase game's third seat goes to the chaser: the first player who would
+  miss out on a wildcard once the round's regular games are played. With two
+  chase games, Chase 1 is for the second player out and Chase 2 for the
+  first, and they can be played in either order. A chaser who wins doesn't
+  advance directly; the win opens one more wildcard spot, ranked on
+  everyone's first score of the round, so the chaser's chase-game score
+  doesn't count.
+- With a second round, the top-scoring preliminary winners get byes to the
+  Semifinals. If there are more byes than winners, the top wildcards get
+  the rest.
+
+Players tied on score for the last wildcard spot, a chaser seat, or the
+last bye need a tiebreaker. Until it's played, the next game can't start,
+and the status line says who is tied. A tie that only decides seeding, not
+who gets in, goes to the higher Coryat score instead: for example, two
+chasers level on score both chase, and the one with the better Coryat is the
+first player out (so plays Chase 2). If their Coryat scores are level too, or
+unknown, it's a tiebreaker. To play it:
+
+1. Pick the tie at the top of `Games`, such as `Tiebreaker: Eve, Fay for
+   the last wildcard spot in the Quarterfinals`. The podiums show the tied
+   players in the order their phones join.
+2. Have the tied players join from their phones, in that order. `Start!`
+   turns on once there is one phone per tied player.
+3. Click `Start!`. There's no board or introduction: the screen shows the
+   tie, and the tiebreaker plays as after a tied Final (see
+   [Tiebreaker](#tiebreaker)). `Cancel` on the game id prompt goes back to
+   the tournament without settling the tie.
+4. When someone wins, the win is saved, and `Space` returns to the welcome
+   screen with the tie settled.
+
+If several players are tied for more than one spot, each tiebreaker settles
+one spot; play the next one for the players still tied.
+
+If a fixed result means someone who already played a later game no longer
+advanced into it, or a chase game was played by someone who shouldn't have
+chased, a red warning above `Games` lists them. Fix that game's results too,
+or delete them and play it again. A chase game whose chaser already chased
+in the other chase game waits until the results are sorted out. A chase
+game played before all of its round's regular games (for example after a
+regular game's results were deleted) is listed too: delete it, and play it
+again once the regular games are played.
+
+### Dropouts
+
+A player can drop out at any time. Select them in `Players` and click `Drop
+Player...`. The dialog says where they stand and what can happen to their
+spot. Your choice is saved straight away, and the player shows as `(dropped
+out)` and can't be picked again. What happens depends on how far they got:
+
+- **Before their first game**, choose one:
+  - `Reduce the field`: the games not yet played are planned again for one
+    fewer player, and games already played stay as played. This can turn a
+    regular game into a chase game, for example. Boards of games that go away
+    go back to unassigned. If the smaller bracket doesn't work, or doesn't
+    have a game that's already been played, this choice is greyed out.
+  - `Replace them with a new player`: type the new player's name. They join
+    the roster and play in the dropped player's place. Link their sign-up on
+    the `Players` tab if they have one.
+- **After their first game, before they win a Semifinal**, everyone ranked
+  beneath them in the last round they played moves up a place. If they won
+  their game, that round gets one more wildcard. A chaser who hasn't played
+  their chase game yet is worked out again, so the next player out may chase
+  instead. A chase game that was already played keeps its chaser, and
+  someone who already chased isn't asked to chase again.
+- **A Semifinal winner** who drops out has their Semifinal voided: its
+  results move to `voided_results.csv`, its board is retired so it isn't
+  played again, and the game is played again with a new board. Set the new
+  board on the `Games` tab. The next-ranked player of the round before the
+  Semifinals (the Second Round, if there is one) takes the dropped player's
+  seat. When the Semifinals are the first round, the best player from the
+  other Semifinals who didn't win takes it, marked `(replacement)` on the
+  podiums; the replay waits until the other Semifinals have been played, so
+  that player is known. They can't drop out once the Final has been played. This case
+  isn't fully worked out yet: the dropout rules are meant for brackets with
+  three or more rounds, and with only the Semifinals and the Final (4 to 9
+  players) the replacement has played two Semifinals. With 4 to 8 players,
+  where the Semifinals also send a wildcard to the Final, check the Final's
+  players by hand.
+- **A player with a Semifinal bye**: if no Second Round game has been played
+  yet, the Preliminaries move up as above, so the best remaining winner gets
+  the bye and the next player gets a Second Round seat. Once a Second Round
+  game has been played, choose one:
+  - `Add a play-in game`: the next three Preliminaries players play a new
+    game, `Play-in 1`, in the Second Round. Its winner takes the bye's seat
+    in the Semifinals. Set its board on the `Games` tab.
+  - `Promote a waiting player`: the best-ranked Second Round player who
+    hasn't played yet gets the bye, and the next Preliminaries player takes
+    their Second Round seat. Winners come first, then wildcards, each by
+    Preliminaries score. If the best waiting players are tied, a tiebreaker
+    between them decides who is promoted.
+
+Ties for these spots, such as two players level for a dropped player's
+seat, are settled with a tiebreaker like any other.
+
+Some brackets (such as 11 or 13 players) have no spare players: every
+regular-game player who doesn't win is a wildcard or a chaser. If one of them
+drops out before the chase game, everyone moves up and there's no one left
+to chase. The chase game is then played by its two new players alone, for
+its one spot: pick them, leave the third podium empty, and start with two
+phones.
+
+A choice is greyed out, with the reason, if it would leave a seat that
+nobody can fill: for example a play-in game with fewer than three players
+left to play it, or more players dropping out of a round than it knocks out,
+so no one is left to move up. This is checked as soon as the player drops
+out, even if the round isn't finished. `Undo Drop...` is refused for the
+same reason.
+
+`Undo Drop...` takes a dropout back, for example if it was a mistake. A
+voided Semifinal gets its results back, and its board if it has no new one,
+as long as it hasn't been played again. A replacement player stays on the
+roster; remove them on the `Players` tab if they aren't needed.
+
+Dropping a player out changes the roster and boards, so first save or
+discard any unsaved changes in the Tournament window.
+
+### Host phone page
+
+While you play a tournament, open `http://<address>/host` on your phone,
+where `<address>` is the address shown on the JParty welcome screen (for
+example `http://192.168.1.20:8080/host`). It shows one player at a time:
+their name, how to introduce them (the same line the host screen shows),
+and their sign-up anecdotes.
+
+- During a game, it steps through that game's players in reverse seat
+  order: the last podium first. With no game in progress, it steps through
+  every player. Use `Previous` and `Next` to move between them.
+- Tick the box next to an anecdote once you've used it. It's saved straight
+  away and stays ticked (and crossed out) for the rest of the tournament, so
+  you can pick a fresh one next time. Untick it to use it again.
+- Tap `Refresh` (or reload the page) after a game starts or ends; the page
+  doesn't update by itself. It stays on the player you were looking at.
+- It shows the tournament chosen with `Play Games`, or the tournament of a
+  saved tournament game you resumed. Outside a tournament it says so.
+
+You don't need to type the address: in a tournament game, when you finish
+the first board and press `Space`, your host screen shows a QR code for the
+page instead of the next board (the audience screen doesn't change). Scan it
+with your phone, then press `Space` again for the next board. It's shown
+once per game.
+
+Anyone on the same network can open the page and tick anecdotes, like the
+buzzer page, so keep
+sign-up answers to things players are happy for others to see.
+
+### Saved files
+
+Each tournament is saved in `tournaments/<name>/` in the JParty data folder,
+outside git:
+
+- `players.csv` holds the players, their sign-up answers, and an id for each
+  player that other settings refer to. If you edit it by hand, leave the
+  `player_id` column as it is.
+- `tournament.json` holds the sheet link, the ignored responses, the bracket
+  options, each game's board and who can't play it, the unassigned boards,
+  the boards of voided games, and the logo's file name.
+  The app writes it; you don't need to edit it by hand.
+- `logo.png` (or `.jpg`, and so on) is the logo, if you chose one.
+- `results.csv` has one row per player per played game: `player` (Actual
+  Name), `score`, `coryat`, `game` (`<tournament name>-<game id>`, where the
+  game id is the board's id, as in the saved game's folder name), and
+  `result` (`win` or `loss`). The `player_id`, `game_key`, and `saved_game`
+  columns after them are what JParty matches on; leave them as they are if
+  you edit the file by hand. Saving the tournament's setup never changes it.
+  If you edit it in Excel, save it as "CSV UTF-8" with commas between cells.
+  JParty won't play a game while it can't read the file, so a game can't
+  overwrite results it couldn't read. `Fix Results...` reads it again once
+  it's fixed.
+- `tiebreaks.csv` has one row per tiebreaker played to settle a tie:
+  `round`, `winner_name`, `winner` (the winner's player id), and `players`
+  (the tied players' ids, separated by spaces). Playing the same tie again
+  replaces its row. To play a tie again, delete its row.
+- `dropouts.csv` has one row per player who dropped out: `player_name`,
+  `round`, `choice` (`reduce`, `replace`, `slide`, `void`, `play_in`, or
+  `promote`), and the ids JParty matches on (`player_id`, then `game_key`
+  for a voided or play-in game and `other_id` for a replacement or promoted
+  player). Use `Undo Drop...` rather than editing it.
+- `voided_results.csv` keeps the results of voided Semifinals, in the same
+  columns as `results.csv`. They don't count toward anything.
+- `used_prompts.csv` lists the anecdotes you've ticked on the host phone
+  page: `player_id`, `prompt` (the anecdote's number), and `text`.
+
+To reuse a tournament's setup, copy its folder and give the copy a new name;
+the copy saves into its own folder. Tournaments saved by an older JParty
+still load, with the default bracket and no boards.
+
+Back to [Table of Contents](#table-of-contents).
+
 ## Resume Flow
 
 Resuming is slightly different from starting fresh.
@@ -374,7 +842,8 @@ or below), JParty shows the tie and offers a tiebreaker.
 
 1. Press `Space`. JParty asks for a J-Archive game ID to take the
    tiebreaker clues from. Leave it blank for a random game, or press
-   `Cancel` to end the game in a tie.
+   `Cancel` to end the game in a tie. A tournament game can't end in a
+   tie, so there `Cancel` goes back to the tie screen.
 2. JParty loads that game in the background and picks its highest-value
    clues, in random order. Lower-value clues are only used once the top ones
    run out. Final Jeopardy, blank clues, and image clues are skipped.

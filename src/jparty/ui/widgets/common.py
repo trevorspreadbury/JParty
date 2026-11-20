@@ -8,10 +8,17 @@ and auto-sizing label and button mixins used throughout the widget layer.
 import logging
 import re
 
-from PyQt6.QtCore import QSize, Qt, QUrl
+from PyQt6.QtCore import QDir, QSize, Qt, QUrl
 from PyQt6.QtGui import QColor, QFontMetrics
 from PyQt6.QtMultimedia import QMediaDevices, QSoundEffect
-from PyQt6.QtWidgets import QGraphicsDropShadowEffect, QLabel, QPushButton, QSizePolicy
+from PyQt6.QtWidgets import (
+    QFileDialog,
+    QGraphicsDropShadowEffect,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QWidget,
+)
 
 from jparty.app.paths import data_asset_path
 
@@ -30,6 +37,27 @@ def resource_path(relative_path: object) -> object:
         A string filesystem path for the requested asset.
     """
     return str(data_asset_path(relative_path))
+
+
+def choose_question_media_path(parent: QWidget | None) -> str:
+    """Ask the host for a question-media zip file or folder.
+
+    Args:
+        parent: Parent for the file dialog.
+
+    Returns:
+        The chosen path, or ``""`` if the host cancelled.
+    """
+    dialog = QFileDialog(parent, "Select Question Media")
+    dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+    dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
+    dialog.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot)
+    dialog.setNameFilter("Zip archives (*.zip);;All directories and files (*)")
+    if dialog.exec():
+        selected_files = dialog.selectedFiles()
+        if selected_files:
+            return selected_files[0]
+    return ""
 
 
 def has_audio_output() -> bool:

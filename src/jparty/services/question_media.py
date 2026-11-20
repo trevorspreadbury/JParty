@@ -297,12 +297,29 @@ def local_media_questions(
     game: object, round_indices: object
 ) -> list[tuple[int, object]]:
     """Return selected-round questions backed by local media files."""
-    if not getattr(game, "data", None):
+    return game_local_media_questions(getattr(game, "data", None), round_indices)
+
+
+def game_local_media_questions(
+    data: object, round_indices: object = None
+) -> list[tuple[int, object]]:
+    """Return a game's questions backed by local media files.
+
+    Args:
+        data: A ``GameData``, or ``None``.
+        round_indices: Rounds to look in; ``None`` looks in every round.
+
+    Returns:
+        ``(round index, question)`` for each question with local media.
+    """
+    if not data:
         return []
-    selected = {int(index) for index in round_indices}
+    selected = (
+        None if round_indices is None else {int(index) for index in round_indices}
+    )
     preview_questions = []
-    for round_index, round_data in enumerate(game.data.rounds):
-        if round_index not in selected:
+    for round_index, round_data in enumerate(data.rounds):
+        if selected is not None and round_index not in selected:
             continue
         for question in getattr(round_data, "questions", []):
             image_url = getattr(question, "image_url", None)

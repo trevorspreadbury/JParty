@@ -19,7 +19,7 @@ from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QInputDialog, QMessageBox, QWidget
 
 from jparty import __version__
-from jparty.app.paths import GAME_STATES_DIR
+from jparty.app.paths import GAME_STATES_DIR, TOURNAMENTS_DIR
 from jparty.domain.gameplay import (
     ClueFlow,
     FinalJeopardyFlow,
@@ -41,11 +41,13 @@ from jparty.domain.state import (
     QUESTION_HISTORY_FILE_NAME,
     HistoryFileError,
     LoadedSave,
+    build_end_game_summary,
     build_score_correction_lines,
     classify_buzz_phases,
     clue_player_results,
     corrected_history_entries,
     current_saved_players,
+    get_current_game_state,
     history_score_totals,
     is_question_history_entry,
     is_tiebreaker_clue,
@@ -55,6 +57,25 @@ from jparty.domain.state import (
     read_history_file,
     save_general_state,
     tiebreaker_winner_number,
+)
+from jparty.domain.tournament.advancement import TiebreakerSession
+from jparty.domain.tournament.dropouts import Dropout, dropped_ids
+from jparty.domain.tournament.play import (
+    SAVED_PLAYER_ID,
+    SAVED_PLAYER_NAME,
+    GameResult,
+    PlayerOutcome,
+    TournamentGameRef,
+    already_recorded,
+    game_results,
+)
+from jparty.domain.tournament.saves import saved_game_problem, tournament_save
+from jparty.domain.tournament.store import (
+    TournamentFileError,
+    load_dropouts,
+    load_results,
+    record_game_results,
+    record_tiebreak,
 )
 from jparty.services.game_loader import (
     build_game_from_board_selection_configs,
@@ -123,6 +144,64 @@ def _ends_with_newline(path: Path) -> bool:
     with path.open("rb") as file_obj:
         file_obj.seek(-1, os.SEEK_END)
         return file_obj.read(1) == b"\n"
+
+
+def _tournament_save_problem(path: Path, general_state: dict) -> str | None:
+    """Return why a tournament game's save can't resume as one, or ``None``.
+
+    ``None`` for a regular game's save. This reads the tournament's files,
+    so it runs with the rest of :meth:`Game.read_saved_game`.
+
+    Args:
+        path: The saved game's folder.
+        general_state: Its decoded ``general.json``.
+
+    Returns:
+        A message for the host, or ``None``.
+    """
+    save = tournament_save(path, general_state)
+    ref = TournamentGameRef.from_json(general_state.get("tournament"))
+    if save is None or ref is None:
+        return None
+    return saved_game_problem(TOURNAMENTS_DIR / ref.tournament, save)
+
+
+def _results_problem(
+    ref: TournamentGameRef,
+    saved: list[GameResult],
+    dropouts: list[Dropout],
+    results: list[GameResult],
+    saved_game: str,
+) -> str | None:
+    """Return why a finished game's results mustn't be logged, or ``None``.
+
+    Args:
+        ref: The tournament game.
+        saved: Every result already in results.csv.
+        dropouts: Every dropout.
+        results: The game's new rows.
+        saved_game: The game's save folder name.
+
+    Returns:
+        A message for the host, or ``None``.
+    """
+    others = sorted(
+        {r.saved_game for r in saved if r.game_key == ref.game_key} - {saved_game}
+    )
+    if others:
+        return (
+            f"{ref.game_key} already has results from another saved game "
+            f"({', '.join(others)}), so this game's results weren't saved over "
+            "them. Use Fix Results in the tournament if this game should count."
+        )
+    dropped = dropped_ids(dropouts)
+    gone = [r.player for r in results if r.player_id in dropped]
+    if gone:
+        return (
+            f"{', '.join(gone)} dropped out of the {ref.tournament} tournament, "
+            f"so the results of {ref.game_key} weren't saved."
+        )
+    return None
 
 
 class Game(QObject):
@@ -312,8 +391,27 @@ class Game(QObject):
         # Player who won a tiebreaker, or None. The scores stay tied; the
         # saved tiebreaker_clue line is what records the win.
         self.tiebreaker_winner = None
+        self._reset_tournament_state()
         # Replaced in tests so loading runs without a thread or network.
         self.load_tiebreaker_clues = load_tiebreaker_clues
+
+    def _reset_tournament_state(self) -> None:
+        """Forget the tournament game, tiebreaker session, and /host code.
+
+        Returns:
+            ``None``.
+        """
+        # The tournament game being played, or None for a regular game. Its
+        # results go to the tournament's results.csv when the game ends.
+        self.tournament_game = None
+        # A tournament tiebreaker played outside any game, or None; see
+        # start_tiebreaker_session. Its tied player id by phone.
+        self.tiebreaker_session = None
+        # Whether the /host QR code was shown this game, and whether it's
+        # on the host's screen now; see _show_host_code.
+        self.host_code_done = False
+        self.host_code_shown = False
+        self._session_player_ids = {}
 
     def startable(self) -> bool:
         """Determine whether the game can start with the current connections.
@@ -355,6 +453,7 @@ class Game(QObject):
         self._composed_board_selection_configs = None
         self._composed_game_data = None
         self._session_game_id = ""
+        self._reset_tournament_state()
         if self.buzzer_controller:
             self.buzzer_controller.clear_saved_player_reclaim()
 
@@ -445,6 +544,194 @@ class Game(QObject):
     def set_session_game_id(self, game_id: object) -> None:
         """Store the current session identifier used for saves and logging."""
         self._session_game_id = str(game_id or "").strip()
+
+    def set_tournament_game(
+        self,
+        ref: TournamentGameRef | None,
+        players: list[tuple[str, str]] | None = None,
+    ) -> None:
+        """Make the next fresh game a tournament game, or a regular one.
+
+        Args:
+            ref: The tournament game, or ``None`` for a regular game.
+            players: ``(player_id, actual_name)`` for each podium, in seat
+                order. Seat ``i`` is the ``i``-th connected player. Ignored
+                when ``ref`` is ``None``.
+
+        Returns:
+            ``None``.
+
+        Raises:
+            ValueError: If ``ref`` is set and the number of ``players``
+                doesn't match the connected players. Pairing them anyway
+                would log one player's results under another's name.
+        """
+        choices = list(players or []) if ref is not None else []
+        if ref is not None and len(choices) != len(self.players):
+            raise ValueError(
+                f"{ref.game_key} needs one player per phone: "
+                f"{len(choices)} players for {len(self.players)} phones"
+            )
+        self.tournament_game = ref
+        seated = sorted(self.players, key=lambda player: player.player_number)
+        for index, player in enumerate(seated):
+            player.tournament_player = (
+                tuple(choices[index]) if index < len(choices) else None
+            )
+
+    def _restore_tournament_players(self, raw_history: list[dict]) -> None:
+        """Give resumed players back their tournament player ids.
+
+        A resumed game's players are new objects from the phones, so they
+        don't carry the ids :meth:`set_tournament_game` gave them. The saved
+        roster has them, under the seat each player had when the game
+        started; seat changes in the history move them to the current seat.
+
+        Args:
+            raw_history: The saved game's history, in file order.
+
+        Returns:
+            ``None``.
+        """
+        if self.tournament_game is None:
+            return
+        by_seat = {}
+        for saved in current_saved_players(self._starting_roster or [], raw_history):
+            player_id = saved.get(SAVED_PLAYER_ID)
+            if player_id:
+                by_seat[saved.get("player_number")] = (
+                    str(player_id),
+                    str(saved.get(SAVED_PLAYER_NAME) or ""),
+                )
+        for player in self.players:
+            player.tournament_player = by_seat.get(player.player_number)
+
+    def record_tournament_results(self) -> None:
+        """Log a finished tournament game's results to its results.csv.
+
+        Called once the winner is known: after Final Jeopardy, or after a
+        tiebreaker. Does nothing for a regular game. A resumed game that
+        already logged its results leaves them alone, since the host may
+        have fixed them. Results that would replace another save's rows for
+        the game, or that name a player who dropped out, aren't saved; the
+        host is warned instead.
+
+        Returns:
+            ``None``.
+        """
+        ref = self.tournament_game
+        if ref is None or not self._game_state_dir:
+            return
+        try:
+            summary = build_end_game_summary(self)
+            history = self._load_question_history()
+        except HistoryFileError as error:
+            self.show_history_error(error)
+            return
+        saved_game = Path(self._game_state_dir).name
+        folder = TOURNAMENTS_DIR / ref.tournament
+        saved_players = current_saved_players(
+            get_current_game_state(self)["players"], history
+        )
+        results = game_results(
+            ref,
+            saved_players,
+            [
+                PlayerOutcome(stats.player_number, stats.final_score, stats.coryat)
+                for stats in summary.current_players
+            ],
+            summary.winner_player_numbers,
+            str(self.current_game_id() or ""),
+            saved_game,
+        )
+        try:
+            saved = load_results(folder)
+            if already_recorded(saved, ref.game_key, saved_game):
+                logging.info("Results for %s are already saved", ref.game_key)
+                return
+            problem = _results_problem(
+                ref, saved, load_dropouts(folder), results, saved_game
+            )
+            if problem:
+                logging.error("Not saving results for %s: %s", ref.game_key, problem)
+                self.show_host_warning("Results Not Saved", problem)
+                return
+            record_game_results(folder, results)
+        except TournamentFileError as error:
+            logging.error("Couldn't save tournament results: %s", error)
+            self.show_host_warning(
+                "Results Not Saved",
+                f"Couldn't save the results of {ref.game_key} to the "
+                f"{ref.tournament} tournament: {error}",
+            )
+            return
+        logging.info("Saved results for %s", ref.game_key)
+
+    def start_tiebreaker_session(self, session: TiebreakerSession) -> None:
+        """Play a tournament tiebreaker between the connected phones.
+
+        There's no board: the tie card shows, and Space asks for a game to
+        take tiebreaker clues from, as after a tied Final (see
+        :class:`jparty.domain.gameplay.TiebreakerFlow`). The win is saved to
+        the tournament's ``tiebreaks.csv``. Nothing is written to the saved
+        games, so the session can't be resumed; Cancel returns to the lobby.
+
+        Args:
+            session: The tie. Phone ``i`` plays as ``session.players[i]``.
+
+        Raises:
+            ValueError: If the number of phones doesn't match the tied
+                players.
+        """
+        seated = sorted(self.players, key=lambda player: player.player_number)
+        if len(seated) != len(session.players):
+            raise ValueError(
+                f"The tiebreaker needs one phone per tied player: "
+                f"{len(session.players)} players for {len(seated)} phones"
+            )
+        logging.info("Starting a tiebreaker for %s", session.description)
+        self.tournament_game = None
+        # Nothing about the session is saved as a game, so make sure no
+        # earlier save folder is written into.
+        self._game_state_dir = None
+        self.tiebreaker_session = session
+        self._session_player_ids = {
+            player: player_id
+            for player, (player_id, _name) in zip(seated, session.players, strict=True)
+        }
+        self.dc.hide_welcome_widgets()
+        self.buzzer_controller.accepting_players = False
+        self.song_player.stop()
+        self.song_player.keep_output_awake()
+        self.dc.load_final_judgement()
+        self.dc.final_window.show_tie()
+        self.tiebreaker_flow.contenders = seated
+        self.keystroke_manager.activate("START_TIEBREAKER")
+        self._refresh_score_edit_controls()
+
+    def record_tiebreaker_session(self, winner: object) -> None:
+        """Save the winner of a tiebreaker session to ``tiebreaks.csv``.
+
+        Args:
+            winner: The phone that won.
+
+        Returns:
+            ``None``.
+        """
+        session = self.tiebreaker_session
+        if session is None or winner not in self._session_player_ids:
+            return
+        tiebreak = session.tiebreak(self._session_player_ids[winner])
+        try:
+            record_tiebreak(TOURNAMENTS_DIR / session.tournament, tiebreak)
+        except TournamentFileError as error:
+            logging.error("Couldn't save the tiebreaker: %s", error)
+            self.show_host_warning(
+                "Tiebreaker Not Saved",
+                f"Couldn't save the tiebreaker for {session.description}: {error}",
+            )
+            return
+        logging.info("Saved the tiebreaker for %s", session.description)
 
     def set_reveal_answers_after_triple_stumper(self, enabled: bool) -> None:
         """Store whether triple-stumper clues should reveal their answer.
@@ -556,6 +843,7 @@ class Game(QObject):
             general_state=general_state,
             saved_game=saved_game,
             current_players=current_players,
+            tournament_problem=_tournament_save_problem(saved_game_path, general_state),
         )
 
     def apply_saved_game(self, loaded: LoadedSave) -> object:
@@ -578,6 +866,14 @@ class Game(QObject):
             general_state.get("reveal_answers_after_triple_stumper", False)
         )
         self.set_session_game_id(general_state.get("game_id", loaded.game_id))
+        # A tournament game keeps logging its results when resumed; the
+        # player ids are on the saved players list. A save that can no
+        # longer be resumed as one resumes as a regular game instead.
+        self.tournament_game = (
+            None
+            if loaded.tournament_problem
+            else TournamentGameRef.from_json(general_state.get("tournament"))
+        )
         self._resume_state = {
             "path": loaded.path,
             "game_id": loaded.game_id,
@@ -849,6 +1145,7 @@ class Game(QObject):
         )
         self._mark_completed_questions(question_history)
         self._restore_player_scores(raw_history)
+        self._restore_tournament_players(raw_history)
         # Tiebreaker clues use question numbers too, so continue after them.
         numbered_entries = question_history + [
             entry for entry in raw_history if is_tiebreaker_clue(entry)
@@ -1446,6 +1743,11 @@ class Game(QObject):
         self.dc.scoreboard.refresh_players()
         self._refresh_score_edit_controls()
         self._update_all_lecterns()
+        # A tournament game seats podium i as the i-th phone, so the welcome
+        # screen shows the new order.
+        welcome = getattr(self.host_display, "welcome_widget", None)
+        if welcome is not None:
+            welcome.check_start()
 
     def _in_saved_player_reclaim_mode(self) -> bool:
         """Return whether the lobby is reclaiming players from a saved game."""
@@ -1580,10 +1882,19 @@ class Game(QObject):
     def next_round(self) -> None:
         """Advance from the current round to the next round in the game.
 
+        In a tournament game, the first Space after the first board shows the
+        host the ``/host`` page's QR code instead; the next Space moves on.
+
         Returns:
             ``None``.
         """
         logging.info("next round")
+        if self.host_code_shown:
+            self.host_code_shown = False
+            self.host_display.hide_host_code()
+        elif self._show_host_code():
+            self.keystroke_manager.activate("NEXT_ROUND")
+            return
         playable_round_indices = self._playable_round_indices()
         i = self.data.rounds.index(self.current_round)
         logging.info(f"ROUND {i}")
@@ -1605,6 +1916,35 @@ class Game(QObject):
         else:
             self.dc.board_widget.load_round(self.current_round)
         self._refresh_score_edit_controls()
+
+    def _show_host_code(self) -> bool:
+        """Show the ``/host`` QR code after a tournament game's first board.
+
+        It's shown once per game, only when another round follows.
+
+        Returns:
+            Whether the code is now showing.
+        """
+        if (
+            self.tournament_game is None
+            or self.host_code_done
+            or self.buzzer_controller is None
+            or not hasattr(self.host_display, "load_host_code")
+        ):
+            return False
+        playable = self._playable_round_indices()
+        index = self.data.rounds.index(self.current_round)
+        if not playable or index != playable[0] or not self.has_later_round():
+            return False
+        try:
+            host = self.buzzer_controller.host()
+        except OSError:
+            logging.warning("No network address for the host page", exc_info=True)
+            return False
+        self.host_code_done = True
+        self.host_code_shown = True
+        self.host_display.load_host_code(host)
+        return True
 
     def start_final(self) -> None:
         """Begin the Final Jeopardy wagering phase.
@@ -1784,13 +2124,22 @@ class Game(QObject):
         names = " and ".join(
             player.text_name() for player in self.tiebreaker_flow.contenders
         )
+        if self.tiebreaker_session is not None:
+            tied_for = self.tiebreaker_session.description
+            cancel_text = "Cancel goes back to the tournament without settling it."
+        elif self.tournament_game is not None:
+            tied_for = "first"
+            cancel_text = "A tournament game needs a winner, so Cancel comes back here."
+        else:
+            tied_for = "first"
+            cancel_text = "Cancel ends the game in a tie."
         game_id, accepted = QInputDialog.getText(
             self.host_display,
             "Tiebreaker",
-            f"{names} are tied for first.\n\n"
+            f"{names} are tied for {tied_for}.\n\n"
             "Enter a J-Archive game ID for the tiebreaker clues,\n"
             "or leave it blank for a random game.\n\n"
-            "Cancel ends the game in a tie.",
+            f"{cancel_text}",
         )
         if not accepted:
             return None
@@ -1915,6 +2264,7 @@ class Game(QObject):
         self._starting_roster = None
         self.tiebreaker_flow.reset()
         self.tiebreaker_winner = None
+        self._reset_tournament_state()
         self.previous_answerers = set()
         self.dc.restart()
         self.begin()

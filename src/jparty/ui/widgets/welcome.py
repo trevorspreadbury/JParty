@@ -5,16 +5,14 @@ game, plus the QR-code display shown on the audience screen so players can join
 the buzzer web app.
 """
 
-import itertools
 import logging
 from functools import partial
 from pathlib import Path
 
 import qrcode
-from PyQt6.QtCore import QDir, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QBrush, QFont, QImage, QPainter, QPalette, QPixmap
 from PyQt6.QtWidgets import (
-    QButtonGroup,
     QCheckBox,
     QFileDialog,
     QGridLayout,
@@ -25,28 +23,22 @@ from PyQt6.QtWidgets import (
     QRadioButton,
     QScrollArea,
     QSizePolicy,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from jparty import __version__ as version
 from jparty.app.helptext import helpmsg
-from jparty.app.paths import GAME_STATES_DIR
+from jparty.app.paths import GAME_STATES_DIR, TOURNAMENTS_DIR
 from jparty.domain.models import GameData
+from jparty.domain.tournament.store import TournamentFileError
 from jparty.services.game_loader import (
-    QUESTION_INDEX_PART_COUNT,
     RANDOM_GAME_MAX_ATTEMPTS,
-    advanced_standard_board_selection,
+    build_game_from_board_selection_configs,
     compose_game_from_resolved_board_selections,
-    default_board_row_values,
     describe_source_round,
-    final_board_selection,
-    find_random_game,
     get_game,
-    get_random_game,
     original_board_selection,
-    round_matches_board_type,
 )
 from jparty.services.question_media import (
     detect_question_media,
@@ -54,15 +46,27 @@ from jparty.services.question_media import (
     is_local_media_path,
     local_media_questions,
 )
+from jparty.ui.board_sources import (
+    composed_board_summary_text,
+    composed_session_game_id,
+    find_random_game_with_media,
+    game_warning_lines,
+    is_playable_game_data,
+    random_game_failure_text,
+)
 from jparty.ui.styles import WINDOWPAL
 from jparty.ui.welcome_loader import LatestRequest, WelcomeLoader
 from jparty.ui.welcome_presenter import WelcomePresenter
+from jparty.ui.widgets.advanced_boards import AdvancedBoardEditor
 from jparty.ui.widgets.common import (
     DynamicButton,
     DynamicLabel,
     add_shadow,
+    choose_question_media_path,
     resource_path,
 )
+from jparty.ui.widgets.tournament.play import TournamentPlayPanel
+from jparty.ui.widgets.tournament.window import TournamentWindow
 
 ROUND_CHECKBOX_STYLE = """
 QCheckBox {
@@ -86,92 +90,6 @@ QLabel {
     font-weight: 700;
 }
 """
-
-MISSING_DAILY_DOUBLE_WARNING = "CRITICAL: Missing Daily Double"
-ADVANCED_BOARD_SLOT_COUNT_MIN = 1
-ADVANCED_BOARD_SLOT_COUNT_MAX = 5
-ADVANCED_STANDARD_VALUE_COUNT = 5
-ADVANCED_FINAL_BOARD_SLOT_COUNT_MIN = 0
-ADVANCED_DAILY_DOUBLE_COUNT_MIN = 0
-ADVANCED_DAILY_DOUBLE_COUNT_MAX = 6
-ADVANCED_ROW_DEBOUNCE_MS = 2000
-# Random games a row's Random button tries before giving up.
-ADVANCED_RANDOM_MAX_ATTEMPTS = RANDOM_GAME_MAX_ATTEMPTS
-
-
-def _is_playable_game_data(data: object) -> bool:
-    """Return whether loaded game data has at least one playable round."""
-    return data is not None and bool(getattr(data, "rounds", None))
-
-
-def find_random_game_with_media(
-    accept: object, is_cancelled: object, max_attempts: int
-) -> tuple[str, object, object]:
-    """Find a random game and its local media status, on a worker thread.
-
-    Both Random buttons use this. It never touches widgets.
-
-    Args:
-        accept: Returns whether a loaded game can be used.
-        is_cancelled: Returns ``True`` once a newer request replaced this one.
-        max_attempts: Most games to try.
-
-    Returns:
-        ``(game_id, data, media_status)``, or ``("", None, None)`` when every
-        try failed or the search was cancelled.
-    """
-    game_id, data = find_random_game(
-        accept,
-        max_attempts=max_attempts,
-        is_cancelled=is_cancelled,
-        pick_game_id=get_random_game,
-        load_game=get_game,
-    )
-    media_status = detect_question_media(game_id) if game_id else None
-    return game_id, data, media_status
-
-
-def random_game_failure_text(wanted: str, max_attempts: int) -> str:
-    """Return the message shown when Random found no usable game.
-
-    Args:
-        wanted: What the game had to have, such as ``"playable random game"``.
-        max_attempts: How many games were tried.
-
-    Returns:
-        The message.
-    """
-    return f"Could not find a {wanted} after {max_attempts} tries. Try again."
-
-
-def game_warning_lines(
-    data: object, expected_daily_double_counts: list[int] | None = None
-) -> list[str]:
-    """Return the missing-clue warnings for a game shown on the welcome screen.
-
-    The regular summary, each advanced row and the advanced summary all use
-    this, so the warnings read the same everywhere.
-
-    Args:
-        data: Game, or rounds of one, to check.
-        expected_daily_double_counts: Daily Doubles each standard round should
-            have, or ``None`` for the regular-game rule.
-
-    Returns:
-        Zero or more warning lines.
-    """
-    lines = []
-    missing_question_count = getattr(data, "missing_question_count", lambda: 0)()
-    if missing_question_count:
-        lines.append(
-            f"WARNING: Missing {missing_question_count} question"
-            f"{'' if missing_question_count == 1 else 's'}"
-        )
-    if getattr(data, "has_missing_daily_double", lambda *_: False)(
-        expected_daily_double_counts
-    ):
-        lines.append(MISSING_DAILY_DOUBLE_WARNING)
-    return lines
 
 
 class Image(qrcode.image.base.BaseImage):
@@ -296,13 +214,14 @@ class Welcome(StartWidget):
     """Host-side lobby screen for choosing, previewing, and resuming games."""
 
     summary_trigger = pyqtSignal(str)
-    # (row_index, request_id, game_id, data, media_status)
-    advanced_row_load_result_trigger = pyqtSignal(int, int, object, object, object)
-    advanced_row_random_result_trigger = pyqtSignal(int, int, object, object, object)
     # (request_id, game_id, data, error, media_status, from_random)
     summary_load_result_trigger = pyqtSignal(int, str, object, object, object, bool)
     # (request_id, selected_dir, loaded_save, error)
     saved_game_result_trigger = pyqtSignal(int, str, object, object)
+    # (request_id, game_key, data, error) for a tournament game's board
+    tournament_board_result_trigger = pyqtSignal(int, str, object, object)
+    # (request_id, game_key, loaded_save, error) for a tournament game's save
+    tournament_resume_result_trigger = pyqtSignal(int, str, object, object)
 
     def __init__(self, game: object, parent: object = None) -> None:
         """Initialize the welcome screen and its lobby controls.
@@ -333,14 +252,7 @@ class Welcome(StartWidget):
         self._loaded_summary_game_id = ""
         self._question_media_status = None
         self.round_checkboxes = []
-        self._advanced_rows = []
-        self._advanced_game_cache = {}
-        self._advanced_media_status_cache = {}
-        # Each row tracks its newest load, with ids from this one counter so
-        # a result can never match a rebuilt row.
-        self._advanced_request_ids = itertools.count(1)
         self._advanced_mode_summary_text = ""
-        self._resetting_advanced_configuration = False
         main_layout = QVBoxLayout()
         main_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         self.title_font = QFont()
@@ -410,63 +322,19 @@ class Welcome(StartWidget):
         self.advanced_options_checkbox.stateChanged.connect(
             self.toggle_advanced_options
         )
-        self.advanced_controls_widget = QWidget(self)
-        self.advanced_controls_layout = QVBoxLayout()
-        self.advanced_controls_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.advanced_controls_widget.setLayout(self.advanced_controls_layout)
-        self.advanced_controls_widget.setVisible(False)
-        advanced_header_layout = QHBoxLayout()
-        self.standard_board_count_label = QLabel(
-            "Jeopardy Boards:", self.advanced_controls_widget
+        # Late-bound, so the editor always uses this screen's current loader
+        # and media chooser, even if either is replaced after construction.
+        self.advanced_boards = AdvancedBoardEditor(
+            self,
+            run_async=lambda work: self.loader.run_async(work),
+            choose_media_path=lambda: self.select_question_media_path(),
         )
-        self.standard_board_count_spinbox = QSpinBox(self.advanced_controls_widget)
-        self.standard_board_count_spinbox.setRange(
-            ADVANCED_BOARD_SLOT_COUNT_MIN, ADVANCED_BOARD_SLOT_COUNT_MAX
-        )
-        self.standard_board_count_spinbox.setValue(2)
-        self.standard_board_count_spinbox.valueChanged.connect(
-            self.rebuild_advanced_rows
-        )
-        self.final_board_count_label = QLabel(
-            "Final Boards:", self.advanced_controls_widget
-        )
-        self.final_board_count_spinbox = QSpinBox(self.advanced_controls_widget)
-        self.final_board_count_spinbox.setRange(
-            ADVANCED_FINAL_BOARD_SLOT_COUNT_MIN, ADVANCED_BOARD_SLOT_COUNT_MAX
-        )
-        self.final_board_count_spinbox.setValue(1)
-        self.final_board_count_spinbox.valueChanged.connect(self.rebuild_advanced_rows)
-        advanced_header_layout.addWidget(self.standard_board_count_label)
-        advanced_header_layout.addWidget(self.standard_board_count_spinbox)
-        advanced_header_layout.addSpacing(20)
-        advanced_header_layout.addWidget(self.final_board_count_label)
-        advanced_header_layout.addWidget(self.final_board_count_spinbox)
-        advanced_header_layout.addSpacing(20)
-        self.advanced_start_button = DynamicButton(
-            "Start!", self.advanced_controls_widget
-        )
+        self.advanced_boards.setVisible(False)
+        self.advanced_start_button = DynamicButton("Start!", self.advanced_boards)
         self.advanced_start_button.clicked.connect(self.on_start_clicked)
         self.advanced_start_button.setEnabled(False)
-        advanced_header_layout.addWidget(self.advanced_start_button)
-        advanced_header_layout.addStretch(1)
-        self.advanced_controls_layout.addLayout(advanced_header_layout)
-        self.advanced_scroll = QScrollArea(self.advanced_controls_widget)
-        self.advanced_scroll.setWidgetResizable(True)
-        self.advanced_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self.advanced_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-        self.advanced_scroll.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
-        self.advanced_rows_widget = QWidget(self.advanced_scroll)
-        self.advanced_rows_layout = QVBoxLayout()
-        self.advanced_rows_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.advanced_rows_widget.setLayout(self.advanced_rows_layout)
-        self.advanced_scroll.setWidget(self.advanced_rows_widget)
-        self.advanced_controls_layout.addWidget(self.advanced_scroll)
+        self.advanced_boards.add_header_widget(self.advanced_start_button)
+        self.advanced_boards.setup_changed.connect(self.sync_active_configuration)
         self.reveal_answers_radio = QRadioButton(
             "Reveal Answers after Triple Stumper", self
         )
@@ -486,11 +354,51 @@ class Welcome(StartWidget):
         self.quit_button.clicked.connect(self.game.close)
         self.help_button = DynamicButton("Show help", self)
         self.help_button.clicked.connect(self.show_help)
+        self.tournament_button = DynamicButton("Tournament", self)
+        self.tournament_button.clicked.connect(self.show_tournament_window)
+        self.tournament_window = None
+        # While a tournament is played, this panel replaces the game id and
+        # round controls; see enter_tournament_mode.
+        self.tournament_mode = False
+        self.tournament_panel = TournamentPlayPanel(self)
+        self.tournament_panel.setVisible(False)
+        self.tournament_start_button = DynamicButton("Start!", self.tournament_panel)
+        self.tournament_start_button.setEnabled(False)
+        self.tournament_start_button.clicked.connect(self.on_start_clicked)
+        self.tournament_panel.layout().addWidget(
+            self.tournament_start_button, 0, Qt.AlignmentFlag.AlignHCenter
+        )
+        self.tournament_panel.selection_changed.connect(
+            self.on_tournament_selection_changed
+        )
+        self.tournament_panel.leave_requested.connect(self.leave_tournament_mode)
+        self.tournament_panel.results_changed.connect(self.check_start)
+        self.tournament_panel.before_change = self._tournament_change_problem
+        self.tournament_panel.tournament_changed.connect(self._on_tournament_changed)
+        self.tournament_panel.edit_requested.connect(self.edit_tournament)
+        self.tournament_panel.resume_requested.connect(self.resume_tournament_game)
+        # Newest board or save load for the chosen tournament game.
+        self._tournament_request = LatestRequest()
+        # Key of the tournament game whose board is in ``game.data``, or None.
+        self._tournament_board_key = None
+        # Key of the tournament game whose save is ready to resume, or None.
+        self._tournament_resume_key = None
+        # Key of the tournament game whose save is being read, or None.
+        self._tournament_resume_loading = None
+        # Whether a tournament game or tiebreaker has started and not come
+        # back to this screen yet.
+        self._tournament_game_running = False
+        self._tournament_summary_text = ""
+        # Whether the chosen tournament game can start; see
+        # _check_tournament_start.
+        self._tournament_ready = False
         footer_layout = QHBoxLayout()
         footer_layout.addStretch(5)
         footer_layout.addWidget(self.quit_button, 3)
         footer_layout.addStretch(1)
         footer_layout.addWidget(self.help_button, 3)
+        footer_layout.addStretch(1)
+        footer_layout.addWidget(self.tournament_button, 3)
         footer_layout.addStretch(5)
         main_layout.addStretch(3)
         main_layout.addLayout(self.icon_layout, 6)
@@ -498,28 +406,30 @@ class Welcome(StartWidget):
         main_layout.addWidget(self.version_label, 1)
         main_layout.addStretch(1)
         main_layout.addWidget(self.regular_workflow_widget, 5)
+        main_layout.addWidget(self.tournament_panel, 16)
         main_layout.addStretch(1)
         main_layout.addWidget(self.summary_label, 7)
         main_layout.addWidget(self.rounds_widget, 4)
         main_layout.addWidget(self.advanced_options_checkbox, 1)
-        main_layout.addWidget(self.advanced_controls_widget, 7)
+        main_layout.addWidget(self.advanced_boards, 7)
         main_layout.addWidget(self.reveal_answers_radio, 2)
         main_layout.addLayout(footer_layout, 3)
         main_layout.addStretch(3)
         self.summary_trigger.connect(self.set_summary)
-        self.advanced_row_load_result_trigger.connect(
-            self.handle_advanced_row_load_result
-        )
-        self.advanced_row_random_result_trigger.connect(
-            self.handle_advanced_row_random_result
-        )
         self.summary_load_result_trigger.connect(self.handle_summary_load_result)
         self.saved_game_result_trigger.connect(self.handle_saved_game_result)
+        self.tournament_board_result_trigger.connect(
+            self.handle_tournament_board_result
+        )
+        self.tournament_resume_result_trigger.connect(
+            self.handle_tournament_resume_result
+        )
         self.setLayout(main_layout)
         self.update_reveal_answers_after_triple_stumper(
             self.reveal_answers_radio.isChecked()
         )
-        self.rebuild_advanced_rows()
+        self.resizeEvent(None)
+        self.sync_active_configuration()
         self.show()
 
     def show_help(self) -> None:
@@ -537,6 +447,54 @@ class Welcome(StartWidget):
             self,
         )
         msgbox.exec()
+
+    def show_tournament_window(self) -> None:
+        """Open the Tournament window, reusing it if already open.
+
+        Returns:
+            ``None``.
+        """
+        logging.info("Showing tournament window")
+        if self.tournament_window is None:
+            self.tournament_window = TournamentWindow(TOURNAMENTS_DIR, self)
+            self.tournament_window.play_requested.connect(self.enter_tournament_mode)
+            self.tournament_window.tournament_saved.connect(self._on_tournament_saved)
+        self.tournament_window.show()
+        self.tournament_window.raise_()
+        self.tournament_window.activateWindow()
+
+    def edit_tournament(self) -> None:
+        """Open the tournament being played in the Tournament window.
+
+        Returns:
+            ``None``.
+        """
+        settings = self.tournament_panel.settings
+        if settings is None:
+            return
+        logging.info("Editing tournament %s from the play screen", settings.name)
+        self.show_tournament_window()
+        self.tournament_window.open_tournament(settings.name)
+
+    def _on_tournament_saved(self, folder: object) -> None:
+        """Show a saved change to the tournament being played.
+
+        A game in progress keeps its board; the panel catches up when the
+        game comes back to this screen.
+        """
+        settings = self.tournament_panel.settings
+        if (
+            not self.tournament_mode
+            or self._tournament_game_running
+            or settings is None
+            or Path(folder).name != settings.name
+        ):
+            return
+        logging.info("Showing the saved changes to tournament %s", settings.name)
+        self._tournament_request.cancel()
+        self._clear_tournament_board()
+        self.tournament_panel.reload()
+        self.on_tournament_selection_changed()
 
     def resizeEvent(self, event: object) -> None:
         """Resize the game-id textbox to match the current layout.
@@ -595,18 +553,6 @@ QCheckBox {{
 }}
 """
         )
-        self.standard_board_count_label.setStyleSheet(
-            f"QLabel {{ color: black; font-size: {radio_font_size}px; font-weight: 700; }}"
-        )
-        self.standard_board_count_spinbox.setStyleSheet(
-            f"QSpinBox {{ font-size: {radio_font_size}px; min-height: {radio_font_size + 10}px; }}"
-        )
-        self.final_board_count_label.setStyleSheet(
-            f"QLabel {{ color: black; font-size: {radio_font_size}px; font-weight: 700; }}"
-        )
-        self.final_board_count_spinbox.setStyleSheet(
-            f"QSpinBox {{ font-size: {radio_font_size}px; min-height: {radio_font_size + 10}px; }}"
-        )
         advanced_start_width = max(int(self.width() * 0.11), 150)
         self.advanced_start_button.setMinimumWidth(advanced_start_width)
         self.summary_label.setMaximumHeight(
@@ -615,48 +561,466 @@ QCheckBox {{
                 * (0.16 if self.advanced_options_checkbox.isChecked() else 0.28)
             )
         )
-        self.advanced_scroll.setMinimumHeight(int(self.height() * 0.26))
-        self.advanced_scroll.setMaximumHeight(int(self.height() * 0.42))
+        self.advanced_boards.scroll.setMinimumHeight(int(self.height() * 0.26))
+        self.advanced_boards.scroll.setMaximumHeight(int(self.height() * 0.42))
         for index in range(self.rounds_layout.count()):
             widget = self.rounds_layout.itemAt(index).widget()
             if isinstance(widget, QCheckBox):
                 widget.setStyleSheet(checkbox_style)
             elif isinstance(widget, QLabel):
                 widget.setStyleSheet(rounds_label_style)
-        advanced_status_font_size = max(int(self.height() * 0.018), 14)
-        advanced_value_font_size = max(int(self.height() * 0.02), 14)
-        advanced_gameid_width = min(max(int(self.width() * 0.18), 180), 260)
-        advanced_action_width = min(max(int(self.width() * 0.11), 130), 180)
-        advanced_value_width = min(max(int(self.width() * 0.055), 60), 85)
-        for row in self._advanced_rows:
-            row["title_label"].setStyleSheet(
-                f"QLabel {{ color: black; font-size: {radio_font_size}px; font-weight: 700; }}"
+        self.advanced_boards.apply_scale(self.height(), self.width())
+        self.tournament_panel.apply_scale(self.height())
+        self._size_footer_buttons()
+        self.tournament_start_button.setMinimumSize(
+            max(int(self.width() * 0.14), 150), max(int(self.height() * 0.06), 36)
+        )
+
+    def enter_tournament_mode(self, folder: object) -> bool:
+        """Show a tournament's games in place of the regular game controls.
+
+        Any prepared resume or loaded regular game is dropped. The host picks
+        a game and its players on the panel, and Start plays that game.
+
+        Args:
+            folder: The tournament's folder.
+
+        Returns:
+            Whether the tournament could be read.
+        """
+        try:
+            self.tournament_panel.load(Path(folder))
+        except TournamentFileError as exc:
+            logging.error("Couldn't open tournament %s: %s", folder, exc)
+            QMessageBox.warning(self, "Couldn't open tournament", str(exc))
+            return False
+        logging.info("Playing tournament %s", folder)
+        self._set_host_tournament(Path(folder))
+        self.debounce_timer.stop()
+        self._summary_request.cancel()
+        self._loading_summary = False
+        self.advanced_options_checkbox.setChecked(False)
+        self.resume_path = None
+        self.game.clear_resume_state()
+        self.clear_round_selector()
+        self.tournament_mode = True
+        self._show_tournament_controls(True)
+        self._clear_tournament_board()
+        self.on_tournament_selection_changed()
+        return True
+
+    def _set_host_tournament(self, folder: Path | None) -> None:
+        """Show ``folder``'s players on the phone ``/host`` page, or none."""
+        controller = getattr(self.game, "buzzer_controller", None)
+        if controller is not None:
+            controller.host_tournament = folder
+
+    def _tournament_change_problem(self) -> str | None:
+        """Return why a dropout can't be saved now, or ``None``.
+
+        The Tournament window saves its own copy of the roster and boards,
+        so unsaved edits there would overwrite a dropout's changes.
+        """
+        window = self.tournament_window
+        editor = window.editor if window is not None else None
+        if editor is not None and editor.has_unsaved_changes():
+            return (
+                "The Tournament window has unsaved changes. Save or discard them first."
             )
-            row["status_label"].setStyleSheet(
-                f"QLabel {{ color: #333333; font-size: {advanced_status_font_size}px; }}"
+        return None
+
+    def _on_tournament_changed(self) -> None:
+        """Reread the tournament in an open Tournament window after a dropout.
+
+        Otherwise its copy of the roster and boards is stale, and its next
+        Save would undo the dropout.
+        """
+        window = self.tournament_window
+        settings = self.tournament_panel.settings
+        if (
+            window is not None
+            and settings is not None
+            and window.editing(settings.name)
+        ):
+            window.reload_tournament()
+
+    def leave_tournament_mode(self) -> None:
+        """Go back to choosing a regular game.
+
+        Returns:
+            ``None``.
+        """
+        logging.info("Leaving tournament mode")
+        self._set_host_tournament(None)
+        self.tournament_mode = False
+        self._tournament_request.cancel()
+        self._clear_tournament_board()
+        self.game.clear_resume_state()
+        self._show_tournament_controls(False)
+        self.show_summary(self)
+
+    def _show_tournament_controls(self, shown: bool) -> None:
+        """Swap the regular game controls for the tournament panel."""
+        self.tournament_panel.setVisible(shown)
+        self.regular_workflow_widget.setVisible(not shown)
+        self.advanced_options_checkbox.setVisible(not shown)
+        if shown:
+            self.rounds_widget.setVisible(False)
+            self.advanced_boards.setVisible(False)
+        self.tournament_button.setEnabled(not shown)
+        # Tournament games always reveal the answer after a triple stumper,
+        # so every game is played the same way. Leaving restores the choice.
+        self.reveal_answers_radio.setVisible(not shown)
+        self.update_reveal_answers_after_triple_stumper(
+            True if shown else self.reveal_answers_radio.isChecked()
+        )
+        self._size_footer_buttons()
+
+    def _size_footer_buttons(self) -> None:
+        """Keep the footer buttons readable while the tournament panel is up.
+
+        The panel takes most of the screen's height, which would otherwise
+        leave Quit, Show help, and Tournament only a few pixels tall.
+        """
+        height = max(int(self.height() * 0.045), 32) if self.tournament_mode else 0
+        for button in (self.quit_button, self.help_button, self.tournament_button):
+            button.setMinimumHeight(height)
+
+    def _clear_tournament_board(self) -> None:
+        """Forget any tournament board or save pushed into the game."""
+        self._tournament_resume_loading = None
+        if self._tournament_resume_key is not None:
+            self._tournament_resume_key = None
+            self.game.clear_resume_state()
+        self.tournament_start_button.setText("Start!")
+        self._tournament_board_key = None
+        self._tournament_summary_text = ""
+        self.game.data = None
+        if hasattr(self.game, "set_board_selection_configs"):
+            self.game.set_board_selection_configs(None)
+        if hasattr(self.game, "set_tournament_game"):
+            self.game.set_tournament_game(None)
+
+    def on_tournament_selection_changed(self) -> None:
+        """Load the chosen game's board, then update Start.
+
+        The board loads on a worker thread, since its source games may come
+        from the network. Start stays off until it is in the game.
+
+        Returns:
+            ``None``.
+        """
+        if not self.tournament_mode:
+            return
+        key = self.tournament_panel.selected_key()
+        resuming = self._tournament_resume_key or self._tournament_resume_loading
+        if resuming is not None:
+            if key == resuming:
+                # Picking players doesn't change a resumed game, or one
+                # whose save is still being read.
+                self.check_start()
+                return
+            self._tournament_request.cancel()
+            self._clear_tournament_board()
+        if self.tournament_panel.selected_tie() is not None:
+            # A tiebreaker has no board.
+            self._tournament_request.cancel()
+            self._clear_tournament_board()
+            self.check_start()
+            return
+        board = self.tournament_panel.selected_board()
+        if key is None or board is None:
+            self._tournament_request.cancel()
+            self._clear_tournament_board()
+        elif key != self._tournament_board_key:
+            self._clear_tournament_board()
+            self._tournament_summary_text = "Loading the board..."
+            request_id = self._tournament_request.begin()
+            selections = [dict(selection) for selection in board.board_selections]
+            self.loader.run_async(
+                partial(self._load_tournament_board, request_id, key, selections)
             )
-            row["gameid_edit"].setStyleSheet(
-                f"QLineEdit {{ font-size: {advanced_value_font_size}px; }}"
+        self.check_start()
+
+    def _load_tournament_board(
+        self, request_id: int, key: str, selections: list[dict]
+    ) -> None:
+        """Build a tournament board's game on a worker thread."""
+        try:
+            data = build_game_from_board_selection_configs(selections)
+            error = None
+        except Exception as exc:  # noqa: BLE001 - shown to the host
+            logging.exception("Couldn't load the board for %s", key)
+            data, error = None, exc
+        self.tournament_board_result_trigger.emit(request_id, key, data, error)
+
+    def handle_tournament_board_result(
+        self, request_id: int, key: str, data: object, error: object
+    ) -> None:
+        """Push a loaded tournament board into the game, if still wanted.
+
+        Args:
+            request_id: The load's request id.
+            key: The game the board belongs to.
+            data: The built game, or ``None`` if it couldn't be built.
+            error: The error, if loading raised one.
+
+        Returns:
+            ``None``.
+        """
+        if not self.tournament_mode or not self._tournament_request.is_current(
+            request_id
+        ):
+            return
+        board = self.tournament_panel.selected_board()
+        if self.tournament_panel.selected_key() != key or board is None:
+            return
+        if data is None or not data.rounds:
+            detail = f": {error}" if error else ""
+            self._tournament_summary_text = f"Couldn't load this game's board{detail}."
+            self.check_start()
+            return
+        selections = [dict(selection) for selection in board.board_selections]
+        self._push_composed_board(
+            selections, data, composed_session_game_id(selections) or board.label
+        )
+        self._tournament_board_key = key
+        daily_double_counts = [
+            selection.get("daily_double_count")
+            for selection in selections
+            if selection.get("board_type") != "final"
+        ]
+        # A board taken as it aired has no counts; check it like a regular
+        # game instead.
+        if None in daily_double_counts:
+            daily_double_counts = None
+        self._tournament_summary_text = composed_board_summary_text(
+            selections, data, daily_double_counts
+        )
+        self.check_start()
+
+    def resume_tournament_game(self, save: object) -> None:
+        """Read a half-played tournament game's save, to resume it.
+
+        The save is read on a worker thread, since its board may come from
+        the network. Once it is applied, Start becomes Resume! and the
+        players' phones claim their saved players.
+
+        Args:
+            save: The game's :class:`TournamentSave`.
+
+        Returns:
+            ``None``.
+        """
+        if not self.tournament_mode:
+            return
+        key = save.game_key
+        self._clear_tournament_board()
+        self._tournament_resume_loading = key
+        self._tournament_summary_text = "Loading the saved game..."
+        request_id = self._tournament_request.begin()
+        self.check_start()
+        self.loader.run_async(
+            partial(self._read_tournament_save, request_id, key, str(save.path))
+        )
+
+    def _read_tournament_save(self, request_id: int, key: str, path: str) -> None:
+        """Read a tournament game's save on a worker thread."""
+        loaded, error = None, None
+        try:
+            loaded = self.game.read_saved_game(path)
+        except Exception as exc:  # noqa: BLE001 - shown to the host
+            logging.error("Couldn't read the save of %s: %s", key, exc)
+            error = exc
+        self.tournament_resume_result_trigger.emit(request_id, key, loaded, error)
+
+    def handle_tournament_resume_result(
+        self, request_id: int, key: str, loaded: object, error: object
+    ) -> None:
+        """Make a read save the game to resume, if it's still wanted.
+
+        Args:
+            request_id: The read's request id.
+            key: The game the save belongs to.
+            loaded: The save read by ``Game.read_saved_game``, or ``None``.
+            error: The error, if reading raised one.
+
+        Returns:
+            ``None``.
+        """
+        if not self.tournament_mode or not self._tournament_request.is_current(
+            request_id
+        ):
+            return
+        self._tournament_resume_loading = None
+        if self.tournament_panel.selected_key() != key:
+            return
+        resume_state = None
+        if error is None:
+            try:
+                resume_state = self.game.apply_saved_game(loaded)
+            except Exception as exc:  # noqa: BLE001 - shown to the host
+                logging.error("Couldn't resume %s: %s", key, exc)
+                error = exc
+        ref = getattr(self.game, "tournament_game", None)
+        if error is None and ref != self.tournament_panel.game_ref():
+            error = "The save is for a different tournament game."
+        if error is not None:
+            if resume_state is not None:
+                self.game.clear_resume_state()
+            QMessageBox.warning(self, "Couldn't resume the game", str(error))
+            # Load the board again, so the game can still start fresh.
+            self._tournament_summary_text = ""
+            self.on_tournament_selection_changed()
+            return
+        self._tournament_resume_key = key
+        self.tournament_start_button.setText("Resume!")
+        general_state = resume_state.get("general_state", {}) if resume_state else {}
+        saved_players = general_state.get("players", [])
+        names = [
+            str(player.get("tournament_player_name") or player.get("name") or "")
+            for player in saved_players
+            if isinstance(player, dict)
+        ]
+        lines = [f"Resume {key} from:", str(resume_state.get("path", ""))]
+        if names:
+            lines += ["", "Saved players: " + ", ".join(names)]
+        self._tournament_summary_text = "\n".join(lines)
+        self.check_start()
+
+    def _tournament_phone_names(self) -> list[object]:
+        """Return each connected phone's player name, in podium order."""
+        players = sorted(
+            getattr(self.game, "players", []) or [],
+            key=lambda player: player.player_number,
+        )
+        return [player.name for player in players]
+
+    def _check_tournament_start(self) -> None:
+        """Enable Start once the chosen game, board, and phones are ready."""
+        names = self._tournament_phone_names()
+        self.tournament_panel.set_phones(names)
+        selected = self.tournament_panel.selected_key()
+        if self._tournament_resume_key is not None and (
+            self._tournament_resume_key == selected
+        ):
+            self._check_tournament_resume()
+            return
+        if self._tournament_resume_loading is not None and (
+            self._tournament_resume_loading == selected
+        ):
+            self._tournament_ready = False
+            self.tournament_start_button.setEnabled(False)
+            self.tournament_panel.show_status("Loading the saved game...", True)
+            self.summary_label.setText(self._tournament_summary_text)
+            return
+        problem = self.tournament_panel.problem(len(names))
+        if self.tournament_panel.selected_tie() is not None:
+            self._tournament_ready = problem is None
+            self.tournament_start_button.setEnabled(self._tournament_ready)
+            self.tournament_panel.show_status(
+                problem or "Ready to start the tiebreaker.", problem is not None
             )
-            row["gameid_edit"].setMinimumWidth(advanced_gameid_width)
-            row["gameid_edit"].setMaximumWidth(advanced_gameid_width)
-            row["random_button"].setMinimumWidth(advanced_action_width)
-            row["random_button"].setMaximumWidth(advanced_action_width)
-            row["load_media_button"].setMinimumWidth(advanced_action_width)
-            row["load_media_button"].setMaximumWidth(advanced_action_width)
-            for value_edit in row["value_edits"]:
-                value_edit.setStyleSheet(
-                    f"QLineEdit {{ font-size: {advanced_value_font_size}px; min-width: {advanced_value_width}px; }}"
+            self.summary_label.setText(self.tournament_panel.selected_tie_text())
+            return
+        board_ready = (
+            self._tournament_board_key is not None
+            and self._tournament_board_key == self.tournament_panel.selected_key()
+        )
+        startable = bool(getattr(self.game, "startable", lambda: False)())
+        enabled = problem is None and board_ready and startable
+        # Kept apart from the button: the host window disables the whole
+        # welcome screen while the introduction shows, and a button in a
+        # disabled widget always reports itself disabled.
+        self._tournament_ready = enabled
+        self.tournament_start_button.setEnabled(enabled)
+        if problem is None and not board_ready:
+            problem = "Loading the board..."
+        # Keep the panel's note on why the game's save can't be resumed;
+        # HOST.md promises the status line says why.
+        self.tournament_panel.show_status(
+            self.tournament_panel.with_resume_note(problem or "Ready to start."),
+            not enabled,
+        )
+        self.summary_label.setText(self._tournament_summary_text)
+
+    def _check_tournament_resume(self) -> None:
+        """Enable Resume! once every saved player has been claimed.
+
+        The save is checked again first: a player who dropped out since it
+        was prepared would otherwise have results logged for them.
+        """
+        problem = self.tournament_panel.resume_problem()
+        if problem is None:
+            claimed, total = self.game.resume_claim_status()
+            if not self.game.startable():
+                problem = (
+                    "Each player's phone claims their saved player to resume "
+                    f"({claimed} of {total} so far)."
                 )
-                value_edit.setMaximumWidth(advanced_value_width)
-            if row["daily_double_spinbox"] is not None:
-                row["daily_double_spinbox"].setStyleSheet(
-                    f"QSpinBox {{ font-size: {advanced_value_font_size}px; min-height: {advanced_value_font_size + 10}px; }}"
-                )
-            for button in row["board_radios"]:
-                button.setStyleSheet(
-                    f"QRadioButton {{ color: black; font-size: {advanced_status_font_size}px; font-weight: 600; }}"
-                )
+        self._tournament_ready = problem is None
+        self.tournament_start_button.setEnabled(self._tournament_ready)
+        self.tournament_panel.show_status(
+            problem or "Ready to resume.", problem is not None
+        )
+        self.summary_label.setText(self._tournament_summary_text)
+
+    def start_tournament_game(self) -> None:
+        """Start the chosen tournament game, after the introduction.
+
+        The local-media preview opens first if the board has local media.
+        Each step checks the game is still ready, since phones can join or
+        leave while the introduction or preview is up.
+
+        Returns:
+            ``None``.
+        """
+        if not self._tournament_still_ready():
+            return
+        preview_questions = self.preview_questions()
+        parent = self.parent()
+        if preview_questions and hasattr(parent, "load_question_media_preview"):
+            parent.load_question_media_preview(
+                preview_questions, on_start=self._seat_and_start_tournament_game
+            )
+            return
+        self._seat_and_start_tournament_game()
+
+    def _seat_and_start_tournament_game(self) -> None:
+        """Seat the chosen players on the phones and start the game.
+
+        Podium ``i`` is the ``i``-th phone.
+        """
+        if not self._tournament_still_ready():
+            return
+        self.game.set_tournament_game(
+            self.tournament_panel.game_ref(), self.tournament_panel.chosen_players()
+        )
+        self.update_reveal_answers_after_triple_stumper(True)
+        self._tournament_game_running = True
+        self.game.start_game()
+
+    def _tournament_still_ready(self) -> bool:
+        """Re-check Start, and go back to the welcome screen if it's off.
+
+        The lobby stays open until the game starts, so a phone may have
+        joined or dropped since Start! was clicked. Seating then would log
+        results under the wrong players. The status line says what's wrong.
+
+        Returns:
+            Whether the game can still start.
+        """
+        self.check_start()
+        if self._tournament_ready:
+            return True
+        logging.warning(
+            "Not starting the tournament game: %s",
+            self.tournament_panel.status_label.text(),
+        )
+        parent = self.parent()
+        if hasattr(parent, "show_welcome_from_preview"):
+            parent.show_welcome_from_preview()
+        return False
 
     def _begin_summary_request(self, loading: bool) -> int:
         """Invalidate any single-game load in flight and return a new request id.
@@ -694,7 +1058,7 @@ QCheckBox {{
             ``None``.
         """
         game_id, data, media_status = find_random_game_with_media(
-            _is_playable_game_data,
+            is_playable_game_data,
             lambda: not self._summary_request.is_current(request_id),
             RANDOM_GAME_MAX_ATTEMPTS,
         )
@@ -877,7 +1241,7 @@ QCheckBox {{
         if request_id != self._media_reload_request_id:
             return False
         self._media_reload_request_id = None
-        if error is None and _is_playable_game_data(data):
+        if error is None and is_playable_game_data(data):
             return False
         if game_id != self._loaded_summary_game_id or not self.game.valid_game():
             return False
@@ -910,7 +1274,7 @@ QCheckBox {{
         Returns:
             ``None``.
         """
-        playable = error is None and _is_playable_game_data(data)
+        playable = error is None and is_playable_game_data(data)
         self.game.data = data if playable else None
         self._loaded_summary_game_id = game_id if playable else ""
         if hasattr(self.game, "set_session_game_id"):
@@ -1061,7 +1425,7 @@ QCheckBox {{
         self._clear_prepared_resume()
         if not enabled:
             self.clear_advanced_configuration()
-        self.advanced_controls_widget.setVisible(enabled)
+        self.advanced_boards.setVisible(enabled)
         self.regular_workflow_widget.setVisible(not enabled)
         if enabled:
             self.rounds_widget.setVisible(False)
@@ -1077,166 +1441,10 @@ QCheckBox {{
         self.resizeEvent(None)
         self.sync_active_configuration()
 
-    def rebuild_advanced_rows(self, _: object = None) -> None:
-        """Recreate the advanced board rows for the selected board count."""
-        row_snapshots = (
-            {"standard": [], "final": []}
-            if self._resetting_advanced_configuration
-            else self.snapshot_advanced_rows()
-        )
-        for old_row in self._advanced_rows:
-            # A row Random's worker checks its own row's request id, so this
-            # stops it before its next fetch.
-            old_row["load_timer"].stop()
-            old_row["request"].cancel()
-        while self.advanced_rows_layout.count():
-            item = self.advanced_rows_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-        self._advanced_rows = []
-        standard_board_count = self.standard_board_count_spinbox.value()
-        final_board_count = self.final_board_count_spinbox.value()
-        for board_index in range(standard_board_count):
-            self._add_advanced_row(
-                board_index=board_index,
-                board_count=standard_board_count,
-                board_type="standard",
-                display_index=board_index + 1,
-            )
-        for board_index in range(final_board_count):
-            self._add_advanced_row(
-                board_index=board_index,
-                board_count=final_board_count,
-                board_type="final",
-                display_index=board_index + 1,
-            )
-        self.restore_advanced_rows(row_snapshots)
-        self.resizeEvent(None)
-        self.sync_active_configuration()
-
-    def snapshot_advanced_rows(self) -> dict[str, list[dict]]:
-        """Return the current advanced row state grouped by slot type."""
-        snapshots = {"standard": [], "final": []}
-        for row in self._advanced_rows:
-            board_type = row["board_type"]
-            snapshots.setdefault(board_type, []).append(
-                {
-                    "game_id": row["gameid_edit"].text(),
-                    # Untouched defaults are left out so the new board count's
-                    # ladder applies to them.
-                    "values": [
-                        None if edit.text() == str(default) else edit.text()
-                        for edit, default in zip(
-                            row["value_edits"], row["default_values"], strict=False
-                        )
-                    ],
-                    "daily_double_count": (
-                        row["daily_double_spinbox"].value()
-                        if row.get("daily_double_spinbox") is not None
-                        else None
-                    ),
-                    **self.advanced_row_selection(row),
-                }
-            )
-        return snapshots
-
-    def restore_advanced_rows(self, snapshots: dict[str, list[dict]]) -> None:
-        """Restore preserved advanced row state after resizing slot counts."""
-        row_positions = {"standard": 0, "final": 0}
-        for row in self._advanced_rows:
-            board_type = row["board_type"]
-            snapshot_list = snapshots.get(board_type, [])
-            position = row_positions.get(board_type, 0)
-            row_positions[board_type] = position + 1
-            if position >= len(snapshot_list):
-                continue
-            snapshot = snapshot_list[position]
-            row["gameid_edit"].setText(snapshot.get("game_id", ""))
-            if row.get("daily_double_spinbox") is not None:
-                daily_double_count = snapshot.get("daily_double_count")
-                if daily_double_count is not None:
-                    row["daily_double_spinbox"].setValue(int(daily_double_count))
-            for value_edit, value in zip(
-                row["value_edits"], snapshot.get("values", [])
-            ):
-                if value is not None:
-                    value_edit.setText(value)
-            if row["gameid_edit"].text().strip():
-                # Loading clears the row, so the round and Daily Doubles are
-                # re-applied once the source game is back.
-                self.reload_advanced_row(row["index"], snapshot)
-
-    def advanced_row_selection(self, row: dict) -> dict:
-        """Return one row's selected round and Daily Double layout.
-
-        Args:
-            row: Advanced row state.
-
-        Returns:
-            A dictionary that ``reload_advanced_row`` can re-apply.
-        """
-        return {
-            "selected_round_index": self._selected_source_round(row),
-            "daily_double_indices": [
-                list(index) for index in row.get("daily_double_indices", [])
-            ],
-            "daily_double_source_round_index": row.get(
-                "daily_double_source_round_index"
-            ),
-        }
-
-    def _selected_source_round(self, row: dict) -> int | None:
-        """Return the source round index picked in one advanced row.
-
-        Args:
-            row: Advanced row state.
-
-        Returns:
-            Index into the row's source game rounds, or ``None`` when no
-            round is picked (or the row has not loaded).
-        """
-        return next(
-            (
-                int(radio.property("source_round_index"))
-                for radio in row["board_radios"]
-                if radio.isChecked()
-            ),
-            None,
-        )
-
-    def reload_advanced_row(self, row_index: int, selection: object = None) -> None:
-        """Load one row's source game again on a worker thread.
-
-        Args:
-            row_index: Index of the advanced row.
-            selection: Optional result of ``advanced_row_selection`` (or a row
-                snapshot) to re-apply once the game has loaded, so the row
-                keeps its round and Daily Doubles.
-
-        Returns:
-            ``None``.
-        """
-        if not 0 <= row_index < len(self._advanced_rows):
-            return
-        row = self._advanced_rows[row_index]
-        row["load_timer"].stop()
-        self._clear_advanced_row_loaded_state(row)
-        row["pending_selection"] = selection
-        self.load_advanced_row_async(row_index)
-        # The row is empty until its load finishes, so Start must turn off
-        # now rather than wait for the next sync.
-        self.sync_active_configuration()
-
     def clear_advanced_configuration(self) -> None:
         """Discard advanced configuration and reset the welcome screen."""
-        self._resetting_advanced_configuration = True
-        self._advanced_game_cache = {}
-        self._advanced_media_status_cache = {}
         self._advanced_mode_summary_text = ""
-        self.standard_board_count_spinbox.setValue(2)
-        self.final_board_count_spinbox.setValue(1)
-        self.rebuild_advanced_rows()
+        self.advanced_boards.reset()
         self.resume_path = None
         self._loading_summary = False
         self._question_media_status = None
@@ -1255,471 +1463,16 @@ QCheckBox {{
             self.game.set_board_selection_configs(None)
         if hasattr(self.game, "set_session_game_id"):
             self.game.set_session_game_id("")
-        self._resetting_advanced_configuration = False
-
-    def _add_advanced_row(
-        self, board_index: int, board_count: int, board_type: str, display_index: int
-    ) -> None:
-        """Create one advanced configuration row."""
-        row_widget = QWidget(self.advanced_rows_widget)
-        row_layout = QVBoxLayout()
-        row_widget.setLayout(row_layout)
-        title_text = (
-            f"Jeopardy Board {display_index}"
-            if board_type == "standard"
-            else f"Final Jeopardy Board {display_index}"
-        )
-        title_label = QLabel(title_text, row_widget)
-        row_layout.addWidget(title_label)
-        controls_layout = QGridLayout()
-        controls_layout.setColumnStretch(0, 0)
-        controls_layout.setColumnStretch(1, 0)
-        controls_layout.setColumnStretch(2, 0)
-        controls_layout.setColumnStretch(3, 1)
-        controls_layout.addWidget(QLabel("Game ID", row_widget), 0, 0)
-        gameid_edit = QLineEdit(row_widget)
-        gameid_edit.setPlaceholderText("Enter game id")
-        gameid_edit.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        controls_layout.addWidget(gameid_edit, 0, 1)
-        random_button = DynamicButton("Random", row_widget)
-        load_media_button = DynamicButton("Load Media", row_widget)
-        controls_layout.addWidget(random_button, 0, 2)
-        controls_layout.addWidget(load_media_button, 0, 3)
-        value_edits = []
-        default_values = []
-        daily_double_spinbox = None
-        if board_type == "standard":
-            default_values = self.default_values_for_board(board_index, board_count)
-            controls_layout.addWidget(QLabel("Point Values", row_widget), 1, 0)
-            values_widget = QWidget(row_widget)
-            values_layout = QHBoxLayout()
-            values_layout.setContentsMargins(0, 0, 0, 0)
-            values_layout.setSpacing(8)
-            values_widget.setLayout(values_layout)
-            for value in default_values:
-                value_edit = QLineEdit(str(value), row_widget)
-                value_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                value_edit.editingFinished.connect(self.sync_active_configuration)
-                values_layout.addWidget(value_edit)
-                value_edits.append(value_edit)
-            controls_layout.addWidget(values_widget, 1, 1, 1, 3)
-            controls_layout.addWidget(QLabel("Daily Doubles", row_widget), 2, 0)
-            daily_double_spinbox = QSpinBox(row_widget)
-            daily_double_spinbox.setRange(
-                ADVANCED_DAILY_DOUBLE_COUNT_MIN, ADVANCED_DAILY_DOUBLE_COUNT_MAX
-            )
-            daily_double_spinbox.setValue(min(board_index + 1, 2))
-            daily_double_spinbox.valueChanged.connect(self.sync_active_configuration)
-            controls_layout.addWidget(daily_double_spinbox, 2, 1)
-        row_layout.addLayout(controls_layout)
-        board_radio_widget = QWidget(row_widget)
-        board_radio_layout = QHBoxLayout()
-        board_radio_layout.setContentsMargins(0, 0, 0, 0)
-        board_radio_widget.setLayout(board_radio_layout)
-        board_radio_group = QButtonGroup(row_widget)
-        board_radio_group.setExclusive(True)
-        load_timer = QTimer(row_widget)
-        load_timer.setSingleShot(True)
-        row_layout.addWidget(board_radio_widget)
-        status_label = QLabel("Enter a source game id.", row_widget)
-        status_label.setWordWrap(True)
-        row_layout.addWidget(status_label)
-        row = {
-            "index": len(self._advanced_rows),
-            "board_type": board_type,
-            "widget": row_widget,
-            "title_label": title_label,
-            "gameid_edit": gameid_edit,
-            "random_button": random_button,
-            "load_media_button": load_media_button,
-            "value_edits": value_edits,
-            "default_values": default_values,
-            "daily_double_spinbox": daily_double_spinbox,
-            "daily_double_indices": [],
-            "daily_double_source_round_index": None,
-            "board_radio_widget": board_radio_widget,
-            "board_radio_layout": board_radio_layout,
-            "board_radio_group": board_radio_group,
-            "board_radios": [],
-            "load_timer": load_timer,
-            "request": LatestRequest(self._advanced_request_ids),
-            "loading": False,
-            "status_label": status_label,
-            "loaded_data": None,
-            "pending_selection": None,
-            # Note kept under the row's summary until the row changes, such
-            # as "Kept game X" after a failed Random.
-            "notice": "",
-        }
-        row_index = row["index"]
-        load_timer.timeout.connect(partial(self.load_advanced_row_async, row_index))
-        gameid_edit.textChanged.connect(
-            partial(self.start_advanced_row_debounce_timer, row_index)
-        )
-        gameid_edit.returnPressed.connect(partial(self.refresh_advanced_row, row_index))
-        random_button.clicked.connect(partial(self.random_advanced_row, row_index))
-        load_media_button.clicked.connect(
-            partial(self.load_advanced_question_media, row_index)
-        )
-        self._advanced_rows.append(row)
-        self.advanced_rows_layout.addWidget(row_widget)
-
-    def default_values_for_board(self, board_index: int, board_count: int) -> list[int]:
-        """Return the default clue values shown for one advanced board row."""
-        return default_board_row_values(board_index, board_count)
-
-    def start_advanced_row_debounce_timer(
-        self, row_index: int, _: object = None
-    ) -> None:
-        """Debounce advanced row source-game loading while typing."""
-        if not 0 <= row_index < len(self._advanced_rows):
-            return
-        row = self._advanced_rows[row_index]
-        row["load_timer"].stop()
-        self._clear_advanced_row_loaded_state(row)
-        row["notice"] = ""
-        # Typing drops any load in flight, including a row Random.
-        row["request"].cancel()
-        if not row["gameid_edit"].text().strip():
-            row["status_label"].setText("Enter a source game id.")
-            self.sync_active_configuration()
-            return
-        row["load_timer"].start(ADVANCED_ROW_DEBOUNCE_MS)
-        row["status_label"].setText("Loading...")
-        self.sync_active_configuration()
-
-    def _clear_advanced_row_loaded_state(self, row: dict) -> None:
-        """Clear one advanced row's loaded selection state."""
-        row["loaded_data"] = None
-        row["loading"] = False
-        row["daily_double_indices"] = []
-        row["daily_double_source_round_index"] = None
-        row["pending_selection"] = None
-        self._clear_advanced_row_radios(row)
-
-    def load_advanced_row_async(self, row_index: int) -> None:
-        """Load one advanced row's source game on a worker thread."""
-        if not 0 <= row_index < len(self._advanced_rows):
-            return
-        row = self._advanced_rows[row_index]
-        game_id = row["gameid_edit"].text().strip()
-        if not game_id:
-            row["status_label"].setText("Enter a source game id.")
-            self.sync_active_configuration()
-            return
-        request_id = row["request"].begin()
-        row["loading"] = True
-        row["status_label"].setText("Loading...")
-        if (
-            game_id in self._advanced_game_cache
-            and game_id in self._advanced_media_status_cache
-        ):
-            row["loading"] = False
-            self._apply_advanced_row_loaded_data(
-                row_index,
-                game_id,
-                self._advanced_game_cache.get(game_id),
-                self._advanced_media_status_cache.get(game_id),
-            )
-            return
-
-        def _load() -> None:
-            # The worker only computes; the UI thread caches the result.
-            data = None
-            try:
-                data = get_game(game_id)
-            except Exception as exc:
-                logging.error(exc)
-            media_status = detect_question_media(game_id)
-            self.advanced_row_load_result_trigger.emit(
-                row_index, request_id, game_id, data, media_status
-            )
-
-        self.loader.run_async(_load)
-
-    def _cache_advanced_game(
-        self, game_id: str, data: object, media_status: object
-    ) -> None:
-        """Cache a successful source-game load for reuse by other rows.
-
-        Failed loads are not cached, so the id can be retried.
-
-        Args:
-            game_id: Source game id.
-            data: Loaded game data, or ``None`` when the load failed.
-            media_status: Local question-media status for ``game_id``.
-
-        Returns:
-            ``None``.
-        """
-        if data is None:
-            return
-        self._advanced_game_cache[game_id] = data
-        self._advanced_media_status_cache[game_id] = media_status
-
-    def handle_advanced_row_load_result(
-        self,
-        row_index: int,
-        request_id: int,
-        game_id: object,
-        data: object,
-        media_status: object,
-    ) -> None:
-        """Apply one advanced row's async load result if it is still current."""
-        if not 0 <= row_index < len(self._advanced_rows):
-            return
-        row = self._advanced_rows[row_index]
-        if not row["request"].is_current(request_id):
-            return
-        if str(game_id).strip() != row["gameid_edit"].text().strip():
-            return
-        row["loading"] = False
-        self._cache_advanced_game(str(game_id).strip(), data, media_status)
-        self._apply_advanced_row_loaded_data(
-            row_index, str(game_id).strip(), data, media_status
-        )
-
-    def refresh_advanced_row(self, row_index: int) -> None:
-        """Load one advanced row's source game now (Enter key).
-
-        Skips the debounce. The load runs on a worker thread unless the game
-        is already cached.
-        """
-        if 0 <= row_index < len(self._advanced_rows):
-            self._advanced_rows[row_index]["notice"] = ""
-        self.reload_advanced_row(row_index)
-
-    def _apply_advanced_row_loaded_data(
-        self, row_index: int, game_id: str, data: object, media_status: object
-    ) -> None:
-        """Apply loaded game data and rebuild one advanced row's radios."""
-        if not 0 <= row_index < len(self._advanced_rows):
-            return
-        row = self._advanced_rows[row_index]
-        pending_selection = row.get("pending_selection") or {}
-        row["pending_selection"] = None
-        if data is None:
-            row["notice"] = ""
-            row["status_label"].setText(
-                "\n".join(
-                    [
-                        "Cannot load game",
-                        media_status.summary_text() if media_status else "",
-                    ]
-                ).strip()
-            )
-            self.sync_active_configuration()
-            return
-        matching_rounds = [
-            (round_index, round_data)
-            for round_index, round_data in enumerate(data.rounds)
-            if round_matches_board_type(round_data, row["board_type"])
-        ]
-        if not matching_rounds:
-            row["notice"] = ""
-            expected_label = self.expected_board_type_label(row["board_type"])
-            row["status_label"].setText(
-                "\n".join(
-                    [
-                        self.build_source_game_summary_text(
-                            game_id, data, media_status
-                        ),
-                        "",
-                        f"No {expected_label} found in this source game.",
-                    ]
-                ).strip()
-            )
-            self.sync_active_configuration()
-            return
-        row["loaded_data"] = data
-        default_selection = min(row_index, len(matching_rounds) - 1)
-        kept_round_index = pending_selection.get("selected_round_index")
-        for radio_index, (round_index, _) in enumerate(matching_rounds):
-            if round_index == kept_round_index:
-                default_selection = radio_index
-        if row.get("daily_double_spinbox") is not None and pending_selection:
-            row["daily_double_indices"] = [
-                tuple(index)
-                for index in pending_selection.get("daily_double_indices") or []
-                if isinstance(index, list | tuple)
-                and len(index) == QUESTION_INDEX_PART_COUNT
-            ]
-            row["daily_double_source_round_index"] = pending_selection.get(
-                "daily_double_source_round_index"
-            )
-        for radio_index, (round_index, _) in enumerate(matching_rounds):
-            radio = QRadioButton(
-                describe_source_round(data, round_index),
-                row["board_radio_widget"],
-            )
-            radio.setProperty("source_round_index", round_index)
-            radio.setChecked(radio_index == default_selection)
-            radio.clicked.connect(self.sync_active_configuration)
-            row["board_radio_group"].addButton(radio)
-            row["board_radio_layout"].addWidget(radio)
-            row["board_radios"].append(radio)
-        row["status_label"].setText(
-            self.build_source_game_summary_text(
-                game_id,
-                data,
-                media_status,
-                selected_round_index=matching_rounds[default_selection][0],
-            )
-        )
-        self.resizeEvent(None)
-        self.sync_active_configuration()
-
-    def random_advanced_row(self, row_index: int, checked: object = False) -> None:
-        """Load a random source game into one advanced row on a worker thread.
-
-        The worker tries at most ``ADVANCED_RANDOM_MAX_ATTEMPTS`` games and
-        stops early once a newer load for the row has started. If every try
-        fails, the game the row had loaded before is restored (see
-        ``handle_advanced_row_random_result``).
-        """
-        if not 0 <= row_index < len(self._advanced_rows):
-            return
-        row = self._advanced_rows[row_index]
-        row["load_timer"].stop()
-        previous_game_id = row["gameid_edit"].text().strip()
-        row["random_fallback"] = (
-            (previous_game_id, self.advanced_row_selection(row))
-            if previous_game_id and row.get("loaded_data") is not None
-            else None
-        )
-        self._clear_advanced_row_loaded_state(row)
-        row["notice"] = ""
-        request = row["request"]
-        request_id = request.begin()
-        row["loading"] = True
-        row["status_label"].setText("Loading...")
-        self.sync_active_configuration()
-        board_type = row["board_type"]
-
-        def _load() -> None:
-            game_id, data, media_status = find_random_game_with_media(
-                lambda candidate: any(
-                    round_matches_board_type(round_data, board_type)
-                    for round_data in candidate.rounds
-                ),
-                lambda: not request.is_current(request_id),
-                ADVANCED_RANDOM_MAX_ATTEMPTS,
-            )
-            if not request.is_current(request_id):
-                return
-            self.advanced_row_random_result_trigger.emit(
-                row_index, request_id, game_id, data, media_status
-            )
-
-        self.loader.run_async(_load)
-
-    def handle_advanced_row_random_result(
-        self,
-        row_index: int,
-        request_id: int,
-        game_id: object,
-        data: object,
-        media_status: object,
-    ) -> None:
-        """Apply one row's Random result on the UI thread if it is still current.
-
-        Args:
-            row_index: Index of the advanced row.
-            request_id: Id the load was started with.
-            game_id: Picked game id, or ``""`` when every attempt failed.
-            data: Loaded game data, or ``None``.
-            media_status: Local question-media status for ``game_id``.
-
-        Returns:
-            ``None``.
-        """
-        if not 0 <= row_index < len(self._advanced_rows):
-            return
-        row = self._advanced_rows[row_index]
-        if not row["request"].is_current(request_id):
-            return
-        row["loading"] = False
-        fallback = row.pop("random_fallback", None)
-        game_id = str(game_id).strip()
-        if not game_id:
-            expected_label = self.expected_board_type_label(row["board_type"])
-            failure_text = random_game_failure_text(
-                f"random game with a {expected_label}", ADVANCED_RANDOM_MAX_ATTEMPTS
-            )
-            if (
-                fallback is not None
-                and fallback[0] == row["gameid_edit"].text().strip()
-            ):
-                # Put back the game the row had before Random, keeping its
-                # round and Daily Doubles. It is usually cached, so this is
-                # immediate; otherwise it reloads on the worker thread.
-                previous_game_id, selection = fallback
-                # The note stays under the row's summary until the row
-                # changes, so later syncs don't wipe it.
-                row["notice"] = f"{failure_text} Kept game {previous_game_id}."
-                self.reload_advanced_row(row_index, selection)
-                return
-            row["status_label"].setText(failure_text)
-            self.sync_active_configuration()
-            return
-        self._cache_advanced_game(game_id, data, media_status)
-        # Block signals so showing the picked id doesn't start a reload.
-        row["gameid_edit"].blockSignals(True)
-        row["gameid_edit"].setText(game_id)
-        row["gameid_edit"].blockSignals(False)
-        self._apply_advanced_row_loaded_data(row_index, game_id, data, media_status)
-
-    def load_advanced_question_media(
-        self, row_index: int, checked: object = False
-    ) -> None:
-        """Import question media for one advanced row's source game id."""
-        if not 0 <= row_index < len(self._advanced_rows):
-            return
-        row = self._advanced_rows[row_index]
-        game_id = row["gameid_edit"].text().strip()
-        if not game_id:
-            QMessageBox.warning(
-                self,
-                "Question Media",
-                "Enter a game id for this advanced board before loading question media.",
-            )
-            return
-        selected_path = self.select_question_media_path()
-        if not selected_path:
-            return
-        try:
-            import_question_media(selected_path, game_id)
-        except Exception as exc:
-            logging.error(exc)
-            QMessageBox.warning(self, "Question Media", str(exc))
-            return
-        # Image paths are set when the game is parsed, so drop the cached copy
-        # and reload every row using this game, keeping their selections.
-        self._advanced_game_cache.pop(game_id, None)
-        self._advanced_media_status_cache.pop(game_id, None)
-        for other_row in self._advanced_rows:
-            if other_row["gameid_edit"].text().strip() == game_id:
-                self.reload_advanced_row(
-                    other_row["index"], self.advanced_row_selection(other_row)
-                )
-
-    def expected_board_type_label(self, board_type: str) -> str:
-        """Return the user-facing label for an advanced slot type."""
-        return "Final Jeopardy board" if board_type == "final" else "Jeopardy board"
-
-    def _clear_advanced_row_radios(self, row: dict) -> None:
-        """Remove any previous round-selection radios from one advanced row."""
-        for radio in row["board_radios"]:
-            row["board_radio_group"].removeButton(radio)
-        while row["board_radio_layout"].count():
-            item = row["board_radio_layout"].takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-        row["board_radios"] = []
 
     def sync_active_configuration(self) -> None:
-        """Push either the regular or advanced startup config into the game."""
+        """Push either the regular or advanced startup config into the game.
+
+        In tournament mode the chosen tournament board is already in the
+        game, so only Start is updated.
+        """
+        if self.tournament_mode:
+            self.check_start()
+            return
         if self.advanced_options_checkbox.isChecked():
             self.sync_advanced_configuration()
             return
@@ -1768,99 +1521,19 @@ QCheckBox {{
             self.game.set_session_game_id(game_id)
 
     def sync_advanced_configuration(self) -> None:
-        """Build and apply the current advanced Frankenstein-board selection."""
-        board_selections = []
-        resolved_boards = []
-        requested_daily_double_counts = []
-        for row in self._advanced_rows:
-            game_id = row["gameid_edit"].text().strip()
-            if not game_id or row["loaded_data"] is None:
-                continue
-            selected_round_index = self._selected_source_round(row)
-            if selected_round_index is None:
-                continue
-            try:
-                row_values = [int(edit.text()) for edit in row["value_edits"]]
-            except ValueError:
-                row["status_label"].setText(
-                    "Point values must be whole numbers for this board slot."
-                )
-                continue
-            source_round_label = describe_source_round(
-                row["loaded_data"], selected_round_index
-            )
-            source_round = row["loaded_data"].rounds[selected_round_index]
-            media_status = self._advanced_media_status_cache.get(game_id)
-            row["status_label"].setText(
-                "\n\n".join(
-                    text
-                    for text in [
-                        self.build_source_game_summary_text(
-                            game_id,
-                            row["loaded_data"],
-                            media_status,
-                            selected_round_index=selected_round_index,
-                        ),
-                        row["notice"],
-                    ]
-                    if text
-                )
-            )
-            if row["board_type"] == "final":
-                selection = final_board_selection(
-                    game_id, selected_round_index, source_round_label
-                )
-            else:
-                existing_daily_double_indices = (
-                    row.get("daily_double_indices")
-                    if row.get("daily_double_source_round_index")
-                    == selected_round_index
-                    else None
-                )
-                requested_daily_double_count = row["daily_double_spinbox"].value()
-                selection = advanced_standard_board_selection(
-                    game_id,
-                    source_round,
-                    selected_round_index,
-                    source_round_label,
-                    row_values,
-                    requested_daily_double_count,
-                    existing_daily_double_indices=existing_daily_double_indices,
-                )
-                row["daily_double_indices"] = [
-                    tuple(index) for index in selection["daily_double_indices"]
-                ]
-                row["daily_double_source_round_index"] = selected_round_index
-                requested_daily_double_counts.append(requested_daily_double_count)
-            board_selections.append(selection)
-            resolved_boards.append((selection, row["loaded_data"], source_round))
-        configuration_complete = len(board_selections) == len(self._advanced_rows)
-        if hasattr(self.game, "set_board_selection_configs"):
-            self.game.set_board_selection_configs(
-                board_selections if configuration_complete else None
-            )
-        session_game_id = self.compose_session_game_id(board_selections)
-        if hasattr(self.game, "set_session_game_id"):
-            self.game.set_session_game_id(session_game_id)
-        if hasattr(self.game, "set_selected_round_indices"):
-            self.game.set_selected_round_indices(list(range(len(board_selections))))
+        """Push the advanced editor's board into the game and the summary."""
+        setup = self.advanced_boards.current_setup()
+        board_selections = list(setup.board_selections)
         # A partial board set is never a playable game, so ``game.data`` stays
         # empty until every row is filled.
-        composed_data = (
-            compose_game_from_resolved_board_selections(resolved_boards)
-            if configuration_complete
-            else None
+        self._push_composed_board(
+            board_selections,
+            setup.composed_data,
+            self.compose_session_game_id(board_selections),
+            complete=setup.complete,
         )
-        self.game.data = composed_data
-        if hasattr(self.game, "set_composed_game_data"):
-            self.game.set_composed_game_data(
-                board_selections if configuration_complete else None,
-                composed_data,
-            )
-        if configuration_complete and composed_data is not None:
-            self._advanced_mode_summary_text = self.build_advanced_summary_text(
-                board_selections, composed_data, requested_daily_double_counts
-            )
+        if setup.ready:
+            self._advanced_mode_summary_text = setup.summary_text()
             self.summary_label.setText(self._advanced_mode_summary_text)
         elif self.advanced_options_checkbox.isChecked():
             self._advanced_mode_summary_text = (
@@ -1869,88 +1542,42 @@ QCheckBox {{
             self.summary_label.setText(self._advanced_mode_summary_text)
         self.check_start()
 
-    def compose_session_game_id(self, board_selections: list[dict]) -> str:
-        """Return the save/log identifier for the current board composition."""
-        source_ids = [
-            str(selection.get("game_id", "")).strip() for selection in board_selections
-        ]
-        source_ids = [game_id for game_id in source_ids if game_id]
-        if not source_ids:
-            return self.textbox.text().strip()
-        if len(set(source_ids)) == 1:
-            return source_ids[0]
-        return "frankenstein-" + "-".join(source_ids)
-
-    def build_source_game_summary_text(
-        self,
-        game_id: str,
-        data: object,
-        media_status: object,
-        selected_round_index: int | None = None,
-    ) -> str:
-        """Return one advanced row's summary text."""
-        summary_data = data
-        if selected_round_index is not None and 0 <= selected_round_index < len(
-            data.rounds
-        ):
-            summary_data = GameData(
-                [data.rounds[selected_round_index]], data.date, data.comments
-            )
-        summary_lines = [f"{game_id}: {summary_data.date}", str(summary_data.comments)]
-        expected_daily_doubles = None
-        if summary_data is not data:
-            # One round picked from the source: hold it to its own place there.
-            expected_daily_doubles = data.source_daily_double_counts(
-                [selected_round_index]
-            )
-        summary_lines.extend(game_warning_lines(summary_data, expected_daily_doubles))
-        if media_status is not None:
-            summary_lines.append(media_status.summary_text())
-        return "\n".join(line for line in summary_lines if line)
-
-    def build_advanced_summary_text(
+    def _push_composed_board(
         self,
         board_selections: list[dict],
-        composed_data: object,
-        requested_daily_double_counts: object = None,
-    ) -> str:
-        """Return the summary text for the current Frankenstein composition.
+        data: object,
+        session_game_id: str,
+        complete: bool = True,
+    ) -> None:
+        """Put a composed board into the game, ready for Start.
+
+        Used by both advanced mode and tournament games, so Start sees the
+        same game state whichever built the board.
 
         Args:
-            board_selections: Board selections in play order.
-            composed_data: Game composed from ``board_selections``.
-            requested_daily_double_counts: Daily Double count the host asked
-                for on each standard board, in order. The missing-Daily-Double
-                warning compares against these instead of the regular-game
-                rule.
+            board_selections: The board's selections, one per round.
+            data: The composed game, or ``None`` if it isn't built yet.
+            session_game_id: The id saves and logs use for this board.
+            complete: Whether every selection is filled. An incomplete set
+                is kept out of the game's board configuration.
 
         Returns:
-            Summary text for the advanced-mode summary label.
+            ``None``.
         """
-        summary_lines = [composed_data.date, composed_data.comments, ""]
-        standard_index = 0
-        final_index = 0
-        for selection in board_selections:
-            values = ", ".join(str(value) for value in selection.get("row_values", []))
-            if selection.get("board_type") == "final":
-                final_index += 1
-                board_label = f"Final {final_index}"
-                suffix = ""
-            else:
-                standard_index += 1
-                board_label = f"Board {standard_index}"
-                suffix = (
-                    f", DDs: {selection.get('daily_double_count', 0)}"
-                    if selection.get("daily_double_count") is not None
-                    else ""
-                )
-            summary_lines.append(
-                f"{board_label}: {selection.get('game_id')} - {selection.get('source_round_label')}"
-                + (f" ({values}{suffix})" if values or suffix else "")
-            )
-        for warning in game_warning_lines(composed_data, requested_daily_double_counts):
-            summary_lines.extend(["", warning])
-        return "\n".join(str(line) for line in summary_lines if line is not None)
+        configs = board_selections if complete else None
+        if hasattr(self.game, "set_board_selection_configs"):
+            self.game.set_board_selection_configs(configs)
+        if hasattr(self.game, "set_session_game_id"):
+            self.game.set_session_game_id(session_game_id)
+        if hasattr(self.game, "set_selected_round_indices"):
+            self.game.set_selected_round_indices(list(range(len(board_selections))))
+        self.game.data = data
+        if hasattr(self.game, "set_composed_game_data"):
+            self.game.set_composed_game_data(configs, data)
+
+    def compose_session_game_id(self, board_selections: list[dict]) -> str:
+        """Return the save/log identifier for the current board composition."""
+        return composed_session_game_id(board_selections) or self.textbox.text().strip()
 
     def start_debounce_timer(self, text: object) -> None:
         """Start the debounce timer whenever the text changes."""
@@ -2005,6 +1632,28 @@ QCheckBox {{
         """
         self.sync_active_configuration()
         self.check_start()
+        if self.tournament_mode:
+            if not self._tournament_ready:
+                return
+            session = self.tournament_panel.tiebreaker_session()
+            if session is not None:
+                self.update_reveal_answers_after_triple_stumper(True)
+                self._tournament_game_running = True
+                self.game.start_tiebreaker_session(session)
+                return
+            if self._tournament_resume_key is not None:
+                # A resumed game has had its introduction already.
+                self._tournament_game_running = True
+                self.game.start_game()
+                return
+            parent = self.parent()
+            if hasattr(parent, "load_contestant_intro"):
+                parent.load_contestant_intro(
+                    self.tournament_panel.intro_lines(), self.start_tournament_game
+                )
+                return
+            self.start_tournament_game()
+            return
         active_start_button = (
             self.advanced_start_button
             if self.advanced_options_checkbox.isChecked()
@@ -2074,16 +1723,7 @@ QCheckBox {{
 
     def select_question_media_path(self) -> str:
         """Open a dialog that allows choosing a directory or zip file."""
-        dialog = QFileDialog(self, "Select Question Media")
-        dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
-        dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
-        dialog.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot)
-        dialog.setNameFilter("Zip archives (*.zip);;All directories and files (*)")
-        if dialog.exec():
-            selected_files = dialog.selectedFiles()
-            if selected_files:
-                return selected_files[0]
-        return ""
+        return choose_question_media_path(self)
 
     def load_saved_game(self, checked: object = False) -> None:
         """Prompt for a saved game folder and read it on a worker thread.
@@ -2197,6 +1837,24 @@ QCheckBox {{
                 f"Saved players: {len(saved_players)}",
             ]
         )
+        problem = getattr(loaded, "tournament_problem", None)
+        if problem:
+            # The game resumes as a regular game, so nothing is logged over
+            # the tournament's results; see Game.apply_saved_game.
+            logging.warning(
+                "Tournament save %s resumes as a regular game: %s",
+                selected_dir,
+                problem,
+            )
+            self._base_summary_text += (
+                "\n\nThis tournament game's results won't be saved: " + problem
+            )
+            QMessageBox.warning(
+                self,
+                "Tournament Results Won't Be Saved",
+                f"{problem}\n\nThis save resumes as a regular game, so its "
+                "results won't be saved to the tournament.",
+            )
         self.check_start()
 
     def check_start(self) -> None:
@@ -2205,6 +1863,9 @@ QCheckBox {{
         Returns:
             ``None``.
         """
+        if self.tournament_mode:
+            self._check_tournament_start()
+            return
         self.presenter.set_advanced_enabled(self.advanced_options_checkbox.isChecked())
         self.presenter.set_resume_path(self.resume_path)
         self.presenter.set_summary_text(self._base_summary_text)
@@ -2228,6 +1889,13 @@ QCheckBox {{
         self.start_button.setText("Start!")
         self.advanced_options_checkbox.setChecked(False)
         self.clear_round_selector()
+        if self.tournament_mode:
+            # Back from a tournament game: show what's been played since.
+            self._tournament_game_running = False
+            self._clear_tournament_board()
+            self.tournament_panel.reload()
+            self.on_tournament_selection_changed()
+            return
         self.show_summary(self)
 
     def update_reveal_answers_after_triple_stumper(self, checked: bool) -> None:
@@ -2360,6 +2028,62 @@ QCheckBox {{
         if self.advanced_options_checkbox.isChecked():
             return local_media_questions(self.game, range(len(self.game.data.rounds)))
         return local_media_questions(self.game, self.game.selected_round_indices())
+
+
+class ContestantIntro(StartWidget):
+    """The host's introduction of a tournament game's players.
+
+    Shown on the host screen after Start, before the game begins, so the
+    host can read each player's introduction aloud.
+    """
+
+    def __init__(
+        self,
+        lines: list[str],
+        on_back: object,
+        on_start: object,
+        parent: object = None,
+    ) -> None:
+        """Show ``lines``: a heading, then one line per player.
+
+        Args:
+            lines: The introduction, heading first.
+            on_back: Called by Back, to return to the welcome screen.
+            on_start: Called by Start Game.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__(parent)
+        self.lines = list(lines)
+        main_layout = QVBoxLayout()
+        main_layout.addStretch(1)
+        main_layout.addLayout(self.icon_layout, 3)
+        heading = self.lines[0] if self.lines else ""
+        self.title_label = DynamicLabel(heading, lambda: self.height() * 0.07, self)
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(self.title_label, 2)
+        self.line_labels = []
+        for line in self.lines[1:]:
+            label = DynamicLabel(line, lambda: self.height() * 0.045, self)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setWordWrap(True)
+            main_layout.addWidget(label, 2)
+            self.line_labels.append(label)
+        button_layout = QHBoxLayout()
+        button_layout.addStretch(3)
+        self.back_button = DynamicButton("Back", self)
+        self.back_button.clicked.connect(on_back)
+        button_layout.addWidget(self.back_button, 2)
+        button_layout.addStretch(1)
+        self.start_button = DynamicButton("Start Game", self)
+        self.start_button.clicked.connect(on_start)
+        button_layout.addWidget(self.start_button, 2)
+        button_layout.addStretch(3)
+        main_layout.addLayout(button_layout, 2)
+        main_layout.addStretch(1)
+        self.setLayout(main_layout)
 
 
 class QuestionMediaPreview(StartWidget):
@@ -2495,14 +2219,27 @@ QScrollBar::sub-page:vertical {
 
 
 class QRWidget(StartWidget):
-    """Audience-side startup screen that shows the buzzer join QR code."""
+    """A QR code for a page on the buzzer server, with its address.
 
-    def __init__(self, host: object, parent: object = None) -> None:
-        """Initialize the QR join screen.
+    The audience screen's lobby shows the buzzer page's code. The host's
+    screen also shows the ``/host`` page's code once in a tournament game.
+    """
+
+    def __init__(
+        self,
+        host: object,
+        parent: object = None,
+        path: str = "",
+        hint: str = "Scan for Buzzer:",
+    ) -> None:
+        """Initialize the QR screen.
 
         Args:
             host: Hostname or address players should visit to join.
             parent: Optional parent widget.
+            path: The page on the server, such as ``"/host"``; ``""`` for
+                the buzzer page.
+            hint: Text above the code.
 
         Returns:
             ``None``.
@@ -2511,12 +2248,12 @@ class QRWidget(StartWidget):
         self.font = QFont()
         self.font.setPointSize(30)
         main_layout = QVBoxLayout()
-        self.hint_label = DynamicLabel("Scan for Buzzer:", self.start_fontsize, self)
+        self.hint_label = DynamicLabel(hint, self.start_fontsize, self)
         self.hint_label.setFont(self.font)
         self.hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.qrlabel = QLabel(self)
         self.qrlabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.url = "http://" + host
+        self.url = "http://" + host + path
         self.url_label = DynamicLabel(self.url, self.start_fontsize, self)
         self.url_label.setFont(self.font)
         self.url_label.setAlignment(Qt.AlignmentFlag.AlignCenter)

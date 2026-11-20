@@ -126,6 +126,7 @@ USER_DATA_ROOT = _default_user_data_root()
 SAVED_GAMES = USER_DATA_ROOT / "saved_games"
 QUESTION_MEDIA = USER_DATA_ROOT / "question_media"
 GAME_STATES_DIR = USER_DATA_ROOT / "game_states"
+TOURNAMENTS_DIR = USER_DATA_ROOT / "tournaments"
 LOG_FILE = USER_DATA_ROOT / "latest.log"
 
 

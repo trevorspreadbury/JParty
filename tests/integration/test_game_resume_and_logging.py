@@ -1813,3 +1813,30 @@ def test_general_state_write_retries_while_windows_locks_the_file(
     assert sleeps == list(game_cache._REPLACE_RETRY_DELAYS[:2])
     assert warnings == []
     assert json.loads(general_file.read_text())["players"][0]["name"] == "Alicia"
+
+
+def test_a_started_tournament_game_save_is_found(
+    game: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """A started tournament game's save is found for that tournament game."""
+    from jparty.domain import game_engine
+    from jparty.domain.tournament.play import TournamentGameRef
+    from jparty.domain.tournament.saves import find_tournament_saves
+    from jparty.services import archive_client
+
+    monkeypatch.setattr(archive_client, "save_game_html", lambda game_id: None)
+    states_dir = temp_dir / "game_states"
+    monkeypatch.setattr(game_engine, "GAME_STATES_DIR", states_dir)
+    _freeze_save_folder_clock(monkeypatch, "20260418T1435")
+    players = [Player("Alice", DummyWaiter(), 0), Player("Bob", DummyWaiter(), 1)]
+    data = game.data
+    game.buzzer_controller.connected_players = players
+    game.players = players
+    ref = TournamentGameRef("Fun", "Semifinals: SF 2")
+    game.set_tournament_game(ref, [("p0", "Ziggy"), ("p4", "P4")])
+    saved_dir = _start_fresh_game(game, players, data)
+
+    saves = find_tournament_saves(states_dir, "Fun", {ref.game_key: "4453"})
+    assert saves[ref.game_key].path == saved_dir
+    assert saves[ref.game_key].players == ("Ziggy", "P4")
+    assert find_tournament_saves(states_dir, "Other", {ref.game_key: "4453"}) == {}

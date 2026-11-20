@@ -66,15 +66,24 @@ the smallest relevant Qt subset first.
 
 ### Welcome screen
 
-Most startup complexity lives in `src/jparty/ui/widgets/welcome.py`.
+Most startup complexity lives in `src/jparty/ui/widgets/welcome.py` and the
+advanced board editor it embeds, `src/jparty/ui/widgets/advanced_boards.py`.
 
-Important behaviors there include:
+Important behaviors in `welcome.py` include:
 
 - debounced single-game loading
-- advanced "Frankenstein" board composition
-- source-board row caching and async loading
 - round selection and summary warnings
+- pushing the chosen board (regular or advanced) into the game for Start
 - local question media preview before game start
+
+`AdvancedBoardEditor` in `advanced_boards.py` owns the advanced "Frankenstein"
+board rows: source-board row caching and async loading, per-row Random and
+media import, and composing the board. It never touches a game object; it
+emits `setup_changed` and callers read `current_setup()`. The welcome screen
+and the tournament board picker (`ui/widgets/tournament/board_setup.py`)
+both use it, so change board-slot behavior there, not in either caller. Helpers both the
+single-game and advanced setups share (Random's search, warnings, summaries)
+live in `src/jparty/ui/board_sources.py`.
 
 If you change advanced options:
 
@@ -94,11 +103,60 @@ Daily Double handling now has two important invariants:
 DD rules live in `src/jparty/services/game_loader.py`:
 `select_advanced_daily_double_indices` picks the baseline to keep for an
 advanced board, and `normalize_standard_board_daily_doubles` applies the layout
-and draws any extras. `src/jparty/ui/widgets/welcome.py` only calls them and
-keeps each row's chosen coordinates stable across reloads.
+and draws any extras. `src/jparty/ui/widgets/advanced_boards.py` only calls
+them and keeps each row's chosen coordinates stable across reloads.
 
 If you touch DD logic, run `tests/unit/test_game_loading.py` and the relevant
-Qt tests in `tests/qt/test_welcome_widget.py`.
+Qt tests in `tests/qt/test_welcome_widget.py` and `tests/qt/test_board_picker.py`.
+
+### Tournament mode
+
+Tournament PRs target the `tournament` integration branch, not `dev`.
+
+Tournament rules are pure functions over plain data in the
+`src/jparty/domain/tournament/` package. Widgets call them; they don't decide
+who plays, advances, or may resume. Put a new rule in the domain, with a unit
+test, even if only one widget needs it today.
+
+Modules in `domain/tournament/`:
+
+- `roster.py`: player slots and the Google Form sign-ups linked to them
+- `bracket.py`: bracket planning (qualifying rounds, wildcards, chase
+  games, the optional second round and its byes)
+- `setup.py`: bracket settings, each game's board, and `game_key`, which
+  builds every game key
+- `advancement.py`: who advances, chasers, byes, tiebreaker ties, who may
+  sit in a game, and conflicts after a fixed result
+- `dropouts.py`: dropout records and how they change each round;
+  `drop_choices.py`: the host's choices for a dropout, and applying or
+  undoing one
+- `play.py`: result rows and player introductions; `rankings.py`: rankings;
+  `saves.py`: finding the saved games of half-played tournament games;
+  `host.py`: the `/host` phone page's data
+- `store.py`: reading and writing the tournament folder
+
+Elsewhere: `services/board_prep.py` builds and caches every board ahead of
+time; in `ui/widgets/tournament/`, `window.py` (with `editor.py`,
+`roster.py`, `bracket.py`, `games.py`, `board_setup.py`, `prep.py`, and
+`rankings.py`) is the setup window, and `play.py` and `dropouts.py` are the
+welcome screen's play panel and dropout dialogs; and
+`web/handlers.py` with `assets/buzzer/templates/host.html` serves `/host`.
+`Game` in `domain/game_engine.py` records a tournament game's results when it
+ends.
+
+Each tournament's folder, `<data dir>/tournaments/<name>/`, is a
+compatibility contract, like `general.json`. That covers `tournament.json`,
+`players.csv`, `results.csv`, `tiebreaks.csv`, `dropouts.csv`,
+`voided_results.csv`, and `used_prompts.csv`. The game key format
+`"<Round>: <Game>"` (for example `"Quarterfinals: Chase 1"`) is stored in
+several of those files and in tournament games' `general.json`. Don't change
+file columns or the key format without loading older files, and update
+`HOST.md`, which documents the files for hosts.
+
+If you touch tournament rules, run `tests/unit/test_tournament*.py`. For the
+play panel and welcome-screen flow, also run `tests/qt/test_welcome_tournament.py`,
+`tests/qt/test_tournament_prep.py`, `tests/qt/test_drop_player.py`, and
+`tests/integration/test_tournament_results.py`.
 
 ### Saved game state
 

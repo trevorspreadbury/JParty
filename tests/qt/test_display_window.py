@@ -409,3 +409,113 @@ def test_tiebreaker_clue_replaces_final_and_winner_returns(
     assert _board_slot_widget(board_window) is board_window.graph_display
     game.keystroke_manager.call(Qt.Key.Key_Space)
     _assert_back_in_lobby(board_window, host_window)
+
+
+def test_contestant_intro_back_and_start(qtbot: object) -> None:
+    """The intro replaces the welcome screen; Back returns, Start Game starts."""
+    from jparty.ui.widgets.welcome import ContestantIntro
+
+    host_window = StubHostDisplayWindow(_stub_game())
+    qtbot.addWidget(host_window)
+    lines = ["Let's meet today's contestants:", "A teacher from Chicago, Jane Smith"]
+    starts = []
+
+    def on_start() -> None:
+        """Record the start, and whether the intro was already closed."""
+        starts.append(host_window.preview_widget)
+
+    host_window.load_contestant_intro(lines, on_start)
+    intro = host_window.preview_widget
+    assert isinstance(intro, ContestantIntro)
+    assert intro.title_label.text() == lines[0]
+    assert [label.text() for label in intro.line_labels] == lines[1:]
+    assert host_window.welcome_widget.isHidden()
+
+    intro.back_button.click()
+    assert host_window.preview_widget is None
+    assert not host_window.welcome_widget.isHidden()
+    assert host_window.welcome_widget.isEnabled()
+    assert starts == []
+
+    host_window.load_contestant_intro(lines, on_start)
+    host_window.preview_widget.start_button.click()
+    assert starts == [None]
+    assert host_window.preview_widget is None
+
+
+def test_tournament_tiebreaker_session_through_real_windows(
+    qtbot: object, game_with_players: object, monkeypatch: object, temp_dir: object
+) -> None:
+    """A tiebreaker session shows the tie, plays a clue, and saves the win."""
+    from jparty.domain import game_engine
+    from jparty.domain.tournament.advancement import (
+        TIE_WILDCARD,
+        TiebreakerSession,
+        TieForSpot,
+    )
+    from jparty.domain.tournament.store import load_tiebreaks
+
+    game = game_with_players
+    board_window, host_window = _game_with_real_windows(qtbot, game, monkeypatch)
+    monkeypatch.setattr(game_engine, "TOURNAMENTS_DIR", temp_dir / "tournaments")
+    clue = Question(
+        index=(0, 4), text="Clue", answer="Answer", category="Category", value=2000
+    )
+    monkeypatch.setattr(
+        game, "load_tiebreaker_clues", lambda game_id, is_cancelled: (game_id, [clue])
+    )
+    monkeypatch.setattr(game, "run_in_background", lambda work: work())
+    monkeypatch.setattr(game, "prompt_tiebreaker_game_id", lambda: "")
+    seats = tuple(
+        (f"id{index}", player.name) for index, player in enumerate(game.players)
+    )
+    tie = TieForSpot("Quarterfinals", TIE_WILDCARD, tuple(p for p, _ in seats), 400, 1)
+    game.start_tiebreaker_session(TiebreakerSession("Fun", tie, seats))
+
+    assert not host_window.welcome_widget.isVisible()
+    for window in (board_window, host_window):
+        assert window.final_window.guess_label.text() == "We have a tie!"
+
+    game.keystroke_manager.call(Qt.Key.Key_Space)  # Load the clue.
+    game.keystroke_manager.call(Qt.Key.Key_Space)  # Show it.
+    game.keystroke_manager.call(Qt.Key.Key_Space)  # Open buzzing.
+    game.buzz(0)
+    game.correct_answer()
+    for window in (board_window, host_window):
+        assert window.final_window.guess_label.text() == "We have a winner!"
+    (tiebreak,) = load_tiebreaks(temp_dir / "tournaments" / "Fun")
+    assert tiebreak.winner == "id0"
+
+    game.keystroke_manager.call(Qt.Key.Key_Space)  # Back to the lobby.
+    _assert_back_in_lobby(board_window, host_window)
+
+
+def test_host_code_replaces_the_board_until_hidden(qtbot: object) -> None:
+    """The /host QR code sits where the board was, then gives it back."""
+    from jparty.ui.widgets.welcome import QRWidget
+
+    host_window = StubHostDisplayWindow(_stub_game())
+    qtbot.addWidget(host_window)
+    host_window.load_host_code("192.168.1.20:8080")
+    code = host_window.host_code_widget
+    assert isinstance(code, QRWidget)
+    assert code.url == "http://192.168.1.20:8080/host"
+    assert code.hint_label.text() == "Scan for the players' prompts:"
+    assert host_window.board_layout.indexOf(code) == 1
+    assert host_window.board_widget.isHidden()
+
+    host_window.hide_host_code()
+    assert host_window.host_code_widget is None
+    assert host_window.board_layout.indexOf(host_window.board_widget) == 1
+    assert not host_window.board_widget.isHidden()
+    host_window.hide_host_code()  # Nothing to hide; no error.
+
+
+def test_restart_puts_the_board_back_from_the_host_code(qtbot: object) -> None:
+    """Closing a game while the code shows leaves the board ready next game."""
+    host_window = StubHostDisplayWindow(_stub_game())
+    qtbot.addWidget(host_window)
+    host_window.load_host_code("192.168.1.20:8080")
+    host_window.restart()
+    assert host_window.host_code_widget is None
+    assert host_window.board_layout.indexOf(host_window.board_widget) == 1

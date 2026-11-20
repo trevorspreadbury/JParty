@@ -99,6 +99,11 @@ Field notes:
 - `players[].player_number`: the player's number when the session started.
   Their current number is this number with every `player_renumber` line in
   `question_history.jsonl` applied in order
+- `players[].tournament_player_id` and `players[].tournament_player_name`
+  (tournament games only): the roster player this phone played as, by their
+  `player_id` in the tournament's `players.csv` and their Actual Name. They
+  follow the player through seat changes like the rest of the entry, so a
+  resumed game logs results for the right players.
 - `selected_round_indices`: the rounds being played, as positions in the game
   that was played, the same numbering as the history's `round_index`. In
   both regular and advanced mode the game is built from `board_selections`,
@@ -132,6 +137,13 @@ Field notes:
 - `history_format`: version of the `question_history.jsonl` format the session
   was started with. `2` is the append-only ledger described below, with
   `score_correction` lines and the score-chain rule.
+- `tournament` (tournament games only): `{"name": ..., "game_key": ...}`,
+  the tournament (its folder under `tournaments/`) and the bracket game,
+  such as `"Quarterfinals: QF 1"`. When the game ends, its results go to
+  that tournament's `results.csv`, including after a resume. A save that
+  can no longer be resumed as a tournament game (a player dropped out or
+  can't play the game, or the game has results from another save) resumes
+  as a regular game and logs nothing. Saves without it are regular games.
 - `jparty_version`: the JParty version that started the session, kept as-is
   when the game is resumed. This is for diagnosing saves only; between
   releases, dev builds all report the same number.
