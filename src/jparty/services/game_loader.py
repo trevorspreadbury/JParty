@@ -72,6 +72,7 @@ def clone_question(question: object) -> Question:
         image=question.image,
         image_url=question.image_url,
         actual_results=question.actual_results,
+        category_comment=question.category_comment,
     )
 
 
@@ -79,11 +80,16 @@ def clone_round(round_data: object) -> object:
     """Return a detached board/final-board copy safe for composition."""
     if isinstance(round_data, FinalBoard):
         cloned_question = clone_question(round_data.question)
-        return FinalBoard(round_data.category, cloned_question)
+        return FinalBoard(
+            round_data.category,
+            cloned_question,
+            category_comment=round_data.category_comments[0],
+        )
     return type(round_data)(
         list(round_data.categories),
         [clone_question(question) for question in round_data.questions],
         dj=round_data.dj,
+        category_comments=list(round_data.category_comments),
     )
 
 

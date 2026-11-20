@@ -90,6 +90,81 @@ def test_process_game_board_from_saved_html_parses_real_fixture() -> None:
     assert len(game.rounds[0].questions) == 30
     assert len(game.rounds[1].questions) == 30
     assert game.rounds[2].category
+    # This game has no category comments, so every hint is empty.
+    assert game.rounds[0].category_comments == [""] * 6
+    assert game.rounds[2].category_comments == [""]
+    assert game.rounds[0].get_question(0, 0).category_comment == ""
+
+
+def _jarchive_category(name: str, comment: str = "") -> str:
+    """Return one category cell laid out the way J-Archive game pages do."""
+    return f"""
+        <td class="category">
+          <table>
+            <tr><td class="category_name">{name}</td></tr>
+            <tr><td class="category_comments">{comment}</td></tr>
+          </table>
+        </td>"""
+
+
+def test_process_game_board_from_html_reads_category_comments() -> None:
+    """Category comments become host hints on boards, clues, and Final."""
+    hint = "(Ken: Each response ends in &quot;-ing&quot;.)"
+    first_round = _jarchive_category("VERBING", hint) + "".join(
+        _jarchive_category(f"Cat {i}") for i in range(2, 7)
+    )
+    second_round = "".join(_jarchive_category(f"DJ {i}") for i in range(1, 7))
+    html = f"""
+    <html>
+      <div id="game_title"><h1>Show #9001 - Monday, January 5, 2026</h1></div>
+      <div id="game_comments"></div>
+      <div id="jeopardy_round"><table class="round">
+        <tr>{first_round}</tr>
+        <tr><td class="clue"><td class="clue_text" id="clue_J_1_1">Q1</td><td class="clue_value">$200</td><em class="correct_response">A1</em></td>
+        <td class="clue"><td class="clue_text" id="clue_J_2_1">Q2</td><td class="clue_value">$200</td><em class="correct_response">A2</em></td></tr>
+      </table></div>
+      <div id="double_jeopardy_round"><table class="round">
+        <tr>{second_round}</tr>
+        <tr><td class="clue"><td class="clue_text" id="clue_DJ_1_1">Q3</td><td class="clue_value">$400</td><em class="correct_response">A3</em></td></tr>
+      </table></div>
+      <div id="final_jeopardy_round"><table class="final_round">
+        <tr>{_jarchive_category("WORLD CAPITALS", "(Alex: Name the country.)")}</tr>
+        <tr><td class="clue"><td class="clue_text">Final clue</td><em class="correct_response">Final answer</em></td></tr>
+      </table></div>
+    </html>
+    """
+    game = retrieve.process_game_board_from_html(html, 9001)
+    assert game is not None
+    first = game.rounds[0]
+    assert first.categories[0] == "VERBING"
+    assert first.category_comments == [
+        '(Ken: Each response ends in "-ing".)',
+        "",
+        "",
+        "",
+        "",
+        "",
+    ]
+    assert first.get_question(0, 0).category_comment == (
+        '(Ken: Each response ends in "-ing".)'
+    )
+    assert first.get_question(1, 0).category_comment == ""
+    assert game.rounds[1].category_comments == [""] * 6
+    final = game.rounds[2]
+    assert final.category == "WORLD CAPITALS"
+    assert final.category_comments == ["(Alex: Name the country.)"]
+    assert final.question.category_comment == "(Alex: Name the country.)"
+
+
+def test_list_to_game_has_no_category_comments(
+    sample_custom_game_csv_text: object,
+) -> None:
+    """Google Sheets games have no category hints."""
+    rows = list(csv.reader(sample_custom_game_csv_text.splitlines()))
+    game = retrieve.list_to_game(rows)
+    assert game.rounds[0].category_comments == [""] * 6
+    assert game.rounds[2].category_comments == [""]
+    assert game.rounds[0].get_question(0, 0).category_comment == ""
 
 
 def test_process_game_board_from_html_keeps_third_standard_round() -> None:

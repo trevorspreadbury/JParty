@@ -9,7 +9,13 @@ from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QGridLayout, QWidget
 
 from jparty.domain.models import Board
-from jparty.ui.styles import CARDPAL, DARKBLUE, JBLUE, MyLabel
+from jparty.ui.styles import (
+    CARDPAL,
+    CATEGORY_COMMENT_STYLE,
+    DARKBLUE,
+    JBLUE,
+    MyLabel,
+)
 
 
 class CardLabel(QWidget):
@@ -74,7 +80,97 @@ class CardLabel(QWidget):
 class CategoryCard(CardLabel):
     """Display a category heading at the top of the board."""
 
-    pass
+    def setComment(self, comment: str) -> None:
+        """Ignore category comments; only the host sees them.
+
+        Args:
+            comment: Host-only hint for the category.
+
+        Returns:
+            ``None``.
+        """
+        return None
+
+
+# Share of a host category card's height given to the hint when there is one.
+CATEGORY_COMMENT_HEIGHT_FRACTION = 0.4
+
+
+class HostCategoryCard(CategoryCard):
+    """Category heading on the host board, with the category's hint beneath it.
+
+    J-Archive records what the TV host said about some categories, such as
+    ``(Ken: Each response ends in "-ing".)``. The host board shows that under
+    the category name so the host can read it out; the audience board never
+    does.
+    """
+
+    def __init__(self, text: object, parent: object = None) -> None:
+        """Initialize a host category card with an empty hint.
+
+        Args:
+            text: Initial category name.
+            parent: Optional parent widget.
+
+        Returns:
+            ``None``.
+        """
+        super().__init__(text, parent)
+        self.comment_label = MyLabel("", self.commentFontSize, parent=self)
+        self.comment_label.setAutosizeMargins(0.05)
+        self.comment_label.setStyleSheet(CATEGORY_COMMENT_STYLE)
+        self.comment_label.setVisible(False)
+
+    def commentFontSize(self) -> object:
+        """Return the initial text size used for the hint.
+
+        Returns:
+            A font size derived from the current widget height.
+        """
+        return self.height() * 0.25
+
+    def setComment(self, comment: str) -> None:
+        """Show ``comment`` under the category name, or hide it when empty.
+
+        Args:
+            comment: Host-only hint for the category.
+
+        Returns:
+            ``None``.
+        """
+        comment = comment or ""
+        self.comment_label.setText(comment)
+        self.comment_label.setVisible(bool(comment))
+        self.resizeEvent(None)
+
+    @property
+    def comment(self) -> str:
+        """Return the hint currently shown under the category name.
+
+        Returns:
+            The hint text, or ``""`` when the category has none.
+        """
+        return self.comment_label.text()
+
+    def resizeEvent(self, event: object) -> None:
+        """Split the card between the name and the hint when there is a hint.
+
+        Args:
+            event: Qt resize event object.
+
+        Returns:
+            ``None``.
+        """
+        rect = self.rect()
+        if not self.comment_label.isVisibleTo(self):
+            self.label.setGeometry(rect)
+            return
+        comment_height = int(rect.height() * CATEGORY_COMMENT_HEIGHT_FRACTION)
+        name_rect = rect.adjusted(0, 0, 0, -comment_height)
+        self.label.setGeometry(name_rect)
+        self.comment_label.setGeometry(
+            rect.left(), name_rect.bottom() + 1, rect.width(), comment_height
+        )
 
 
 class QuestionCard(CardLabel):
@@ -242,7 +338,10 @@ class BoardWidget(QWidget):
         for x in range(Board.size[0]):
             for y in range(Board.size[1] + 1):
                 if y == 0:
-                    label = CategoryCard("")
+                    if self.parent().host():
+                        label = HostCategoryCard("")
+                    else:
+                        label = CategoryCard("")
                     self.grid_layout.addWidget(label, 0, x)
                 else:
                     if self.parent().host():
@@ -267,7 +366,10 @@ class BoardWidget(QWidget):
         for x in range(Board.size[0]):
             for y in range(Board.size[1] + 1):
                 if y == 0:
-                    gl.itemAtPosition(y, x).widget().setText(round.categories[x])
+                    card = gl.itemAtPosition(y, x).widget()
+                    card.setText(round.categories[x])
+                    comments = getattr(round, "category_comments", [])
+                    card.setComment(comments[x] if x < len(comments) else "")
                 else:
                     q = round.get_question(x, y - 1)
                     gl.itemAtPosition(y, x).widget().question = q
@@ -303,5 +405,6 @@ class BoardWidget(QWidget):
             for y in range(Board.size[1] + 1):
                 if y == 0:
                     gl.itemAtPosition(y, x).widget().setText("")
+                    gl.itemAtPosition(y, x).widget().setComment("")
                 else:
                     gl.itemAtPosition(y, x).widget().question = None

@@ -29,6 +29,7 @@ class Question:
     image: bool = False
     image_url: str = None
     actual_results: str = None
+    category_comment: str = ""
 
 
 @dataclass
@@ -50,7 +51,11 @@ class Board:
     size = (6, 5)
 
     def __init__(
-        self, categories: object, questions: object, dj: object = False
+        self,
+        categories: object,
+        questions: object,
+        dj: object = False,
+        category_comments: object = None,
     ) -> None:
         """Initialize a board with categories and clue objects.
 
@@ -58,6 +63,9 @@ class Board:
             categories: Sequence of category names displayed on the board.
             questions: Sequence of ``Question`` objects belonging to the board.
             dj: Whether this board represents the Double Jeopardy round.
+            category_comments: Optional host-only hints shown beneath each
+                category name, parallel to ``categories``. Missing entries
+                default to an empty string.
 
         Returns:
             ``None``.
@@ -65,6 +73,11 @@ class Board:
         self.categories = categories
         self.dj = dj
         self.questions = questions or []
+        comments = list(category_comments or [])
+        category_count = len(categories or [])
+        comments = comments[:category_count]
+        comments += [""] * (category_count - len(comments))
+        self.category_comments = comments
 
     def get_question(self, i: object, j: object) -> object:
         """Return the question at a board coordinate if one exists.
@@ -113,17 +126,22 @@ class FinalBoard(Board):
 
     size = (1, 1)
 
-    def __init__(self, category: object, question: object) -> None:
+    def __init__(
+        self, category: object, question: object, category_comment: str = ""
+    ) -> None:
         """Initialize the Final Jeopardy board wrapper.
 
         Args:
             category: Final Jeopardy category name.
             question: ``Question`` object representing the final clue.
+            category_comment: Optional host-only hint for the category.
 
         Returns:
             ``None``.
         """
-        super().__init__([category], [question], dj=False)
+        super().__init__(
+            [category], [question], dj=False, category_comments=[category_comment]
+        )
         self.category = category
         self.question = question
 

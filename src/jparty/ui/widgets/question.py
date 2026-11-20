@@ -37,7 +37,7 @@ from jparty.services.image_lookup import (
     parse_wikimedia_image_response,
     wikimedia_image_search_url,
 )
-from jparty.ui.styles import CARDPAL, MyLabel
+from jparty.ui.styles import CARDPAL, CATEGORY_COMMENT_STYLE, MyLabel
 
 WINDOWS_TLS_BACKEND = "schannel"
 
@@ -612,6 +612,33 @@ class HostFinalJeopardyWidget(FinalJeopardyWidget, HostQuestionWidget):
         )
         self.main_layout.replaceWidget(self.answer_label, self.hint_label)
         self.main_layout.setStretchFactor(self.hint_label, 1)
+        self.category_box = None
+        self.category_comment_label = None
+        if question.category_comment:
+            self.show_category_comment(question.category_comment)
+
+    def show_category_comment(self, comment: str) -> None:
+        """Show the category's host hint beneath the category name.
+
+        The name and hint share one box in the layout, so the reveal in
+        ``show_question`` can swap the clue back into the name's place.
+
+        Args:
+            comment: Host-only hint for the category.
+
+        Returns:
+            ``None``.
+        """
+        self.category_box = QWidget(self)
+        box_layout = QVBoxLayout(self.category_box)
+        box_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.replaceWidget(self.category_label, self.category_box)
+        self.category_comment_label = MyLabel(
+            comment, self.startFontSize, self.category_box
+        )
+        self.category_comment_label.setStyleSheet(CATEGORY_COMMENT_STYLE)
+        box_layout.addWidget(self.category_label, 3)
+        box_layout.addWidget(self.category_comment_label, 1)
 
     def hide_hint(self) -> None:
         """Show the host hint label.
@@ -627,6 +654,14 @@ class HostFinalJeopardyWidget(FinalJeopardyWidget, HostQuestionWidget):
         Returns:
             ``None``.
         """
+        if self.category_box is not None:
+            # Put the name back where the clue goes, so the base class can
+            # swap the clue in, then drop the box and its hint.
+            self.category_box.layout().removeWidget(self.category_label)
+            self.main_layout.replaceWidget(self.category_box, self.category_label)
+            self.category_box.deleteLater()
+            self.category_box = None
+            self.category_comment_label = None
         super().show_question()
         self.main_layout.replaceWidget(self.hint_label, self.answer_label)
         self.hint_label.deleteLater()
