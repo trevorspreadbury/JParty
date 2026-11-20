@@ -284,8 +284,8 @@ Tournament window. Everything for a tournament happens there:
   without saving anything. `Back to Tournaments` returns to the list.
 
 A created or loaded tournament opens with its name and logo at the top and
-three tabs: `Players`, `Bracket`, and `Games`. Everything stays editable. One
-`Save` button saves all three tabs. `Close` goes back to the tournament list.
+four tabs: `Players`, `Bracket`, `Games`, and `Rankings`. Everything but the
+rankings stays editable. One `Save` button saves the first three tabs. `Close` goes back to the tournament list.
 `Play Games` saves if needed and hands the tournament to the welcome screen;
 see [Playing tournament games](#playing-tournament-games).
 Closing the window or the tournament with unsaved changes asks before
@@ -441,6 +441,30 @@ its board shows `(played)`. A Bracket or Players change that would drop a
 played game warns you, and the tournament can't be saved that way: change
 it back, or delete that game's results with `Fix Results...` first.
 
+Before game day:
+
+- `Download All Games` loads every board, including the unassigned ones, and
+  saves their J-Archive games on this computer, so the tournament can be
+  played without the internet. It counts the boards that are ready and lists
+  any that couldn't load. Google Sheets games are checked, but they still
+  load from the sheet when played.
+- `Preview All Media...` loads every board the same way, then shows each
+  board's question media with its category, value, and correct response, so
+  you can check the images before anyone sees them. Boards with no question
+  media, or that couldn't load, say so.
+
+### Rankings tab
+
+The `Rankings` tab ranks every player from the saved results. The champion
+comes first, then players by the furthest round they've reached (playing in
+a round, advancing into it, or skipping to it with a bye all count). Within a
+round, players still in the tournament come before players who are out, and
+then the higher score in their latest round goes first. Players level on all
+of that share a place. Players who haven't played yet are listed last
+without a place. Each row also shows where the player stands, their games
+played, and their total, best, and Coryat scores. Players who are out are
+greyed out.
+
 ### Playing tournament games
 
 `Play Games` in a tournament puts the welcome screen into tournament mode.
@@ -479,9 +503,23 @@ When the game ends, after Final Jeopardy or a tiebreaker, its results are
 saved to the tournament's `results.csv`. A tie for first has to be settled
 by a tiebreaker before the results are saved. Back on the welcome screen, the
 game is greyed out, and `Players` shows where each of its players stands (see
-[Advancement](#advancement)). A tournament game you close part way
-through and resume with `Load Saved` still saves its results when it ends.
+[Advancement](#advancement)).
 
+A tournament game that stopped part way through (for example, the app
+closed) shows `(in progress)` in `Games`. Its tooltip names the players it
+started with. To pick it up where it stopped, select it and click `Resume
+Saved Game`: `Start!` becomes `Resume!`, and each player's phone claims their
+saved player as it would after `Load Saved`. `Resume!` turns on once every
+saved player is claimed, and skips the introduction. Selecting another game
+drops the resume. A resumed game still saves its results when it ends. You
+can also start an in-progress game again from the beginning by picking its
+players and clicking `Start!` as usual.
+
+`Rankings...` shows the same rankings as the Tournament window's
+[Rankings tab](#rankings-tab). `Edit Tournament...` opens this tournament in
+the Tournament window to change its players, bracket, or boards. Saving
+there updates the games and players here straight away, unless a game is
+being played; then they update when you return to the welcome screen.
 `Fix Results...` opens the saved results. You can change scores, Coryat
 scores, and who won (each game needs a winner), or use `Delete Game's
 Results` so a game can be played again. `Leave Tournament` returns to

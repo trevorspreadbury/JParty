@@ -610,12 +610,17 @@ def compose_game_from_resolved_board_selections(
     return GameData(composed_rounds, composite_date, composite_comments)
 
 
-def build_game_from_board_selection_configs(board_selections: object) -> object:
+def build_game_from_board_selection_configs(
+    board_selections: object, games: dict | None = None
+) -> object:
     """Build a composite ``GameData`` from saved or advanced board selections.
 
     Args:
         board_selections: Iterable of dictionaries describing source game ids,
             source round indices, and optional row-value overrides.
+        games: Source games already loaded, by game id. Games loaded here
+            are added to it, so building several boards loads each source
+            game once. ``None`` keeps them for this board only.
 
     Returns:
         A composed ``GameData`` when every requested board can be loaded;
@@ -625,7 +630,7 @@ def build_game_from_board_selection_configs(board_selections: object) -> object:
         return None
 
     resolved_boards = []
-    game_cache = {}
+    game_cache = games if games is not None else {}
     for selection in board_selections:
         game_id = str(selection.get("game_id", "")).strip()
         if not game_id:

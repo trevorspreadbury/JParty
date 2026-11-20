@@ -50,6 +50,8 @@ class TournamentWindow(QDialog):
 
     # The tournament folder, when the host clicks Play Games.
     play_requested = pyqtSignal(object)
+    # The tournament folder, after the host saves the open tournament.
+    tournament_saved = pyqtSignal(object)
 
     def __init__(
         self,
@@ -211,14 +213,30 @@ class TournamentWindow(QDialog):
         item = self.saved_list.currentItem()
         if item is None:
             return
-        name = item.text()
+        self.open_tournament(item.text())
+
+    def open_tournament(self, name: str) -> bool:
+        """Show the saved tournament ``name``, loading it if it isn't open.
+
+        Args:
+            name: The tournament's name.
+
+        Returns:
+            Whether the tournament is now open. It isn't if it can't be read
+            or the host keeps another tournament's unsaved changes.
+        """
+        if self.editing(name):
+            self.stack.setCurrentWidget(self.editor)
+            self._update_editor_title()
+            return True
         try:
             settings, slots = load_tournament(self.root / name)
         except TournamentFileError as exc:
             self._show_home_status(f"Couldn't load {name}: {exc}", problem=True)
-            return
+            return False
         logging.info("Loaded tournament %s", name)
         self._open_editor(settings, slots)
+        return self.editing(name)
 
     def reject(self) -> None:
         """Hide the window, asking first if a tournament has unsaved changes.
@@ -255,6 +273,7 @@ class TournamentWindow(QDialog):
         editor.close_requested.connect(self.show_home)
         editor.play_requested.connect(self._play)
         editor.saved.connect(lambda _folder: self._update_editor_title())
+        editor.saved.connect(self.tournament_saved)
         editor.name_edit.textChanged.connect(self._update_editor_title)
         self.editor = editor
         self.stack.addWidget(editor)
