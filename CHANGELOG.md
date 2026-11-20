@@ -7,6 +7,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- The host screen shows J-Archive's category hints, such as "(Ken: Each
+  response ends in -ing.)", in gold italics under the category name (#135).
+  They also show under the Final Jeopardy and tiebreaker category until the
+  clue is revealed. The audience screen and lecterns don't show them.
 - Lecterns can be set up from the keyboard, without the mouse (#46):
   - `/lectern` with no seat asks which lectern it is (press 1 to 6), and
     the browser remembers the answer. Every lectern laptop can open the same

@@ -625,3 +625,39 @@ def test_final_without_category_hint_keeps_plain_layout(qtbot: object) -> None:
     assert host_final.main_layout.indexOf(host_final.category_label) == 0
     host_final.show_question()
     assert host_final.main_layout.indexOf(host_final.question_label) == 0
+
+
+def test_tiebreaker_category_hint_shows_on_host_until_clue_is_revealed(
+    qtbot: object,
+) -> None:
+    """The host's tiebreaker category screen shows the hint, then the clue."""
+    from jparty.ui.widgets.question import HostTiebreakerWidget, TiebreakerWidget
+
+    game = _stub_game()
+    host_window = StubHostDisplayWindow(game)
+    qtbot.addWidget(host_window)
+    question = Question(
+        (0, 4),
+        "Tiebreaker clue",
+        "Tiebreaker response",
+        "Rivers",
+        2000,
+        category_comment="(Ken: Each response ends in -ing.)",
+    )
+
+    host_tiebreaker = HostTiebreakerWidget(question, host_window)
+    audience_tiebreaker = TiebreakerWidget(question, host_window)
+
+    assert host_tiebreaker.category_label.text() == "Rivers"
+    assert host_tiebreaker.category_comment_label.text() == (
+        "(Ken: Each response ends in -ing.)"
+    )
+    assert host_tiebreaker.category_comment_label.isVisibleTo(host_tiebreaker)
+    assert not hasattr(audience_tiebreaker, "category_comment_label")
+
+    host_tiebreaker.show_question()
+
+    assert host_tiebreaker.category_box is None
+    assert host_tiebreaker.category_comment_label is None
+    assert host_tiebreaker.main_layout.indexOf(host_tiebreaker.question_label) == 0
+    assert host_tiebreaker.question_label.isVisibleTo(host_tiebreaker)

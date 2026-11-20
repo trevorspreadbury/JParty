@@ -368,8 +368,7 @@ class BoardWidget(QWidget):
                 if y == 0:
                     card = gl.itemAtPosition(y, x).widget()
                     card.setText(round.categories[x])
-                    comments = getattr(round, "category_comments", [])
-                    card.setComment(comments[x] if x < len(comments) else "")
+                    card.setComment(round.category_comments[x])
                 else:
                     q = round.get_question(x, y - 1)
                     gl.itemAtPosition(y, x).widget().question = q
