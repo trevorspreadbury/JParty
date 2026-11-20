@@ -79,7 +79,11 @@ class HostPageTest(AsyncHTTPTestCase):
         assert "No game in progress: every player" in body
 
     def test_resumed_tournament_game_shows_only_its_players(self) -> None:
-        """With no tournament chosen, the game in progress's tournament is used."""
+        """With no tournament chosen, the game in progress's tournament is used.
+
+        This checks the page itself; the real resume flow, which restores the
+        players' tournament ids, is tested in test_tournament_results.py.
+        """
         player = Player("bob", None, 0)
         player.tournament_player = ("p1", "Bob")
         self.game.players = [player]
@@ -107,6 +111,16 @@ class HostPageTest(AsyncHTTPTestCase):
         assert load_used_prompts(self.folder) == [("p0", 2, "Plays the oboe")]
         assert 'data-prompt="2" checked' in self.fetch("/host").body.decode()
 
+        # Unticking takes it back off.
+        response = self.fetch(
+            "/host/prompt",
+            method="POST",
+            body=json.dumps({"player_id": "p0", "prompt": 2, "used": False}),
+        )
+        assert response.code == 200
+        assert load_used_prompts(self.folder) == []
+        assert 'data-prompt="2" checked' not in self.fetch("/host").body.decode()
+
     def test_bad_ticks_are_refused(self) -> None:
         """A malformed body, or a prompt that isn't there, gets a 400."""
         import json
@@ -121,3 +135,15 @@ class HostPageTest(AsyncHTTPTestCase):
         )
         assert missing.code == 400
         assert json.loads(missing.body) == {"error": "That player has no such prompt."}
+
+    def test_a_podium_with_no_tournament_player_keeps_seat_numbers(self) -> None:
+        """The controller passes empty podiums on, so the seats stay true."""
+        untracked = Player("guest", None, 0)
+        bob = Player("bob", None, 1)
+        bob.tournament_player = ("p1", "Bob")
+        self.game.players = [untracked, bob]
+        self.game.tournament_game = TournamentGameRef("Fun", "Semifinals: SF 1")
+        page = self.controller.host_page()
+        assert [(player.player_id, player.seat) for player in page.players] == [
+            ("p1", 2)
+        ]

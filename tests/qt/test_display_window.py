@@ -509,3 +509,13 @@ def test_host_code_replaces_the_board_until_hidden(qtbot: object) -> None:
     assert host_window.board_layout.indexOf(host_window.board_widget) == 1
     assert not host_window.board_widget.isHidden()
     host_window.hide_host_code()  # Nothing to hide; no error.
+
+
+def test_restart_puts_the_board_back_from_the_host_code(qtbot: object) -> None:
+    """Closing a game while the code shows leaves the board ready next game."""
+    host_window = StubHostDisplayWindow(_stub_game())
+    qtbot.addWidget(host_window)
+    host_window.load_host_code("192.168.1.20:8080")
+    host_window.restart()
+    assert host_window.host_code_widget is None
+    assert host_window.board_layout.indexOf(host_window.board_widget) == 1

@@ -60,6 +60,8 @@ from jparty.domain.state import (
 )
 from jparty.domain.tournament_advancement import TiebreakerSession
 from jparty.domain.tournament_play import (
+    SAVED_PLAYER_ID,
+    SAVED_PLAYER_NAME,
     PlayerOutcome,
     TournamentGameRef,
     already_recorded,
@@ -510,6 +512,33 @@ class Game(QObject):
             player.tournament_player = (
                 tuple(choices[index]) if index < len(choices) else None
             )
+
+    def _restore_tournament_players(self, raw_history: list[dict]) -> None:
+        """Give resumed players back their tournament player ids.
+
+        A resumed game's players are new objects from the phones, so they
+        don't carry the ids :meth:`set_tournament_game` gave them. The saved
+        roster has them, under the seat each player had when the game
+        started; seat changes in the history move them to the current seat.
+
+        Args:
+            raw_history: The saved game's history, in file order.
+
+        Returns:
+            ``None``.
+        """
+        if self.tournament_game is None:
+            return
+        by_seat = {}
+        for saved in current_saved_players(self._starting_roster or [], raw_history):
+            player_id = saved.get(SAVED_PLAYER_ID)
+            if player_id:
+                by_seat[saved.get("player_number")] = (
+                    str(player_id),
+                    str(saved.get(SAVED_PLAYER_NAME) or ""),
+                )
+        for player in self.players:
+            player.tournament_player = by_seat.get(player.player_number)
 
     def record_tournament_results(self) -> None:
         """Log a finished tournament game's results to its results.csv.
@@ -1036,6 +1065,7 @@ class Game(QObject):
         )
         self._mark_completed_questions(question_history)
         self._restore_player_scores(raw_history)
+        self._restore_tournament_players(raw_history)
         # Tiebreaker clues use question numbers too, so continue after them.
         numbered_entries = question_history + [
             entry for entry in raw_history if is_tiebreaker_clue(entry)

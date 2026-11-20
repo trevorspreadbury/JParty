@@ -139,6 +139,8 @@ def test_resumed_tournament_game_still_logs_results(
     # The phones rejoin with other names; the saved roster decides who's who.
     _seat_phones(game, ["X", "Y", "Z"])
     game.start_game()
+    # The resumed players get their tournament ids back, for the host page.
+    assert [player.tournament_player for player in game.players] == SEATS
     _finish_final(game, [900, 100, 200], [True, True, True])
 
     results = load_results(folders)
@@ -302,6 +304,25 @@ def test_results_follow_players_who_change_seats_on_resume(
     game.move_player_up(claimed[2])
     assert [player.player_number for player in claimed] == [1, 2, 0]
     game.start_game()
+    # Each resumed player keeps their own id at their new seat, so the host
+    # page steps through them last podium first: Bob, Ann, Cy.
+    assert [player.tournament_player for player in claimed] == SEATS
+    from jparty.domain.roster import PlayerSlot
+    from jparty.domain.tournament_store import TournamentSettings, save_tournament
+
+    save_tournament(
+        folders.parent,
+        TournamentSettings("Fun"),
+        [PlayerSlot(name, player_id=player_id) for player_id, name in SEATS],
+    )
+    controller.tournaments_dir = folders.parent
+    page = controller.host_page()
+    assert page.in_game
+    assert [(p.player_id, p.seat) for p in page.players] == [
+        ("bob-id", 3),
+        ("ann-id", 2),
+        ("cy-id", 1),
+    ]
 
     # Seats in order: Cy 900, Ann 100, Bob 200.
     _finish_final(game, [900, 100, 200], [True, True, True])

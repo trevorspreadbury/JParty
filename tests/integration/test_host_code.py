@@ -79,3 +79,40 @@ def test_no_network_address_skips_the_code(finished_first_board: object) -> None
     _space(game)
     assert game.host_display.codes == []
     assert game.current_round is game.data.rounds[1]
+
+
+def test_host_code_shows_only_after_the_first_board(
+    finished_first_board: object,
+) -> None:
+    """Finishing a later board goes straight on, even if no code was shown."""
+    game = finished_first_board
+    game.tournament_game = TournamentGameRef("Fun", "Semifinals: SF 1")
+    game.current_round = game.data.rounds[1]
+    for question in game.current_round.questions:
+        question.complete = True
+    assert not game._show_host_code()
+    assert game.host_display.codes == []
+
+
+def test_host_code_needs_a_later_round(
+    finished_first_board: object, monkeypatch: object
+) -> None:
+    """A first board with nothing after it doesn't show the code."""
+    game = finished_first_board
+    game.tournament_game = TournamentGameRef("Fun", "Semifinals: SF 1")
+    monkeypatch.setattr(game, "has_later_round", lambda: False)
+    assert not game._show_host_code()
+    assert game.host_display.codes == []
+
+
+@pytest.mark.parametrize("reset", ["clear_resume_state", "close_game"])
+def test_next_game_can_show_the_host_code_again(
+    finished_first_board: object, reset: str
+) -> None:
+    """Leaving a game clears the shown-once flag, so the next game shows it."""
+    game = finished_first_board
+    game.tournament_game = TournamentGameRef("Fun", "Semifinals: SF 1")
+    _space(game)
+    assert (game.host_code_done, game.host_code_shown) == (True, True)
+    getattr(game, reset)()
+    assert (game.host_code_done, game.host_code_shown) == (False, False)
