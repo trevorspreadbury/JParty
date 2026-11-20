@@ -520,6 +520,15 @@ with new players, or undo the drop. A resumed game still saves its results
 when it ends. You can also start an in-progress game again from the
 beginning by picking its players and clicking `Start!` as usual.
 
+The regular `Load Saved` button checks a tournament game's save the same
+way, and also checks whether the game already has results from another
+save (for example, an abandoned start of a game that was then replayed).
+A save that fails a check still resumes, but as a regular game: a warning
+says why, and its results aren't saved to the tournament. When any
+tournament game ends, its results are also not saved over another save's
+results for that game, or for a player who has dropped out; a warning says
+so instead. Use `Fix Results` if those results should count.
+
 `Rankings...` shows the same rankings as the Tournament window's
 [Rankings tab](#rankings-tab). `Edit Tournament...` opens this tournament in
 the Tournament window to change its players, bracket, or boards. Saving
@@ -579,7 +588,10 @@ If a fixed result means someone who already played a later game no longer
 advanced into it, or a chase game was played by someone who shouldn't have
 chased, a red warning above `Games` lists them. Fix that game's results too,
 or delete them and play it again. A chase game whose chaser already chased
-in the other chase game waits until the results are sorted out.
+in the other chase game waits until the results are sorted out. A chase
+game played before all of its round's regular games (for example after a
+regular game's results were deleted) is listed too: delete it, and play it
+again once the regular games are played.
 
 ### Dropouts
 
@@ -601,7 +613,8 @@ out)` and can't be picked again. What happens depends on how far they got:
   beneath them in the last round they played moves up a place. If they won
   their game, that round gets one more wildcard. A chaser who hasn't played
   their chase game yet is worked out again, so the next player out may chase
-  instead. A chase game that was already played keeps its chaser.
+  instead. A chase game that was already played keeps its chaser, and
+  someone who already chased isn't asked to chase again.
 - **A Semifinal winner** who drops out has their Semifinal voided: its
   results move to `voided_results.csv`, its board is retired so it isn't
   played again, and the game is played again with a new board. Set the new
@@ -609,7 +622,8 @@ out)` and can't be picked again. What happens depends on how far they got:
   Semifinals (the Second Round, if there is one) takes the dropped player's
   seat. When the Semifinals are the first round, the best player from the
   other Semifinals who didn't win takes it, marked `(replacement)` on the
-  podiums. They can't drop out once the Final has been played. This case
+  podiums; the replay waits until the other Semifinals have been played, so
+  that player is known. They can't drop out once the Final has been played. This case
   isn't fully worked out yet: the dropout rules are meant for brackets with
   three or more rounds, and with only the Semifinals and the Final (4 to 9
   players) the replacement has played two Semifinals. With 4 to 8 players,
@@ -630,6 +644,20 @@ out)` and can't be picked again. What happens depends on how far they got:
 
 Ties for these spots, such as two players level for a dropped player's
 seat, are settled with a tiebreaker like any other.
+
+Some brackets (such as 11 or 13 players) have no spare players: every
+regular-game player who doesn't win is a wildcard or a chaser. If one of them
+drops out before the chase game, everyone moves up and there's no one left
+to chase. The chase game is then played by its two new players alone, for
+its one spot: pick them, leave the third podium empty, and start with two
+phones.
+
+A choice is greyed out, with the reason, if it would leave a seat that
+nobody can fill: for example a play-in game with fewer than three players
+left to play it, or more players dropping out of a round than it knocks out,
+so no one is left to move up. This is checked as soon as the player drops
+out, even if the round isn't finished. `Undo Drop...` is refused for the
+same reason.
 
 `Undo Drop...` takes a dropout back, for example if it was a mistake. A
 voided Semifinal gets its results back, and its board if it has no new one,

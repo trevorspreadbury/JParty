@@ -1064,3 +1064,59 @@ def test_tournament_mode_points_the_host_page_at_the_tournament(
     assert game.buzzer_controller.host_tournament == folder
     widget.tournament_panel.leave_button.click()
     assert game.buzzer_controller.host_tournament is None
+
+
+def test_chase_game_with_no_one_to_chase_starts_with_two_phones(
+    qtbot: object, temp_dir: object, monkeypatch: object
+) -> None:
+    """In 11 players, the chaser dropping out leaves Chase 1 to its two new players."""
+    from jparty.domain.tournament_dropouts import DROP_SLIDE, Dropout
+    from jparty.domain.tournament_store import DROPOUTS_FILE, dropouts_csv_text
+
+    quarterfinals = "Quarterfinals"
+    chase = f"{quarterfinals}: Chase 1"
+    slots = [PlayerSlot(f"P{index}", player_id=f"p{index}") for index in range(11)]
+    folder = save_tournament(
+        temp_dir, TournamentSettings("Fun", boards={chase: board("3333")}), slots
+    )
+    results = []
+    for game in range(3):
+        key = f"{quarterfinals}: QF {game + 1}"
+        for seat, (score, outcome) in enumerate(
+            ((9000, "win"), (5000 - 1000 * game, "loss"), (400 - 100 * game, "loss"))
+        ):
+            player_id = f"p{3 * game + seat}"
+            results.append(
+                GameResult(key, player_id, player_id.upper(), score, None, "g", outcome)
+            )
+    save_results(folder, results)
+    # p8 scored lowest, so they were the chaser.
+    (folder / DROPOUTS_FILE).write_text(
+        dropouts_csv_text([Dropout("p8", quarterfinals, DROP_SLIDE)]), encoding="utf-8"
+    )
+
+    game = TournamentGame(phones=2)
+    monkeypatch.setattr(
+        welcome_module,
+        "build_game_from_board_selection_configs",
+        lambda selections: deepcopy(game.source_data),
+    )
+    parent = IntroParent()
+    qtbot.addWidget(parent)
+    widget = Welcome(game, parent)
+    widget.loader = ImmediateLoader()
+    assert widget.enter_tournament_mode(folder)
+    panel = widget.tournament_panel
+    panel.select_game(chase)
+    assert combo_ids(panel.podium_combos[0]) == ["p9", "p10"]
+    panel.choose(0, "p9")
+    assert "leave one podium empty" in panel.status_label.text()
+    panel.choose(1, "p10")
+    assert widget.tournament_start_button.isEnabled()
+
+    widget.tournament_start_button.click()
+    parent.intro.start_button.click()
+    assert game.tournament_calls[-1] == (
+        TournamentGameRef("Fun", chase),
+        [("p9", "P9"), ("p10", "P10")],
+    )

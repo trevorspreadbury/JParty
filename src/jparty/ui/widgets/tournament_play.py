@@ -92,7 +92,11 @@ from jparty.domain.tournament_play import (
     slots_by_id,
 )
 from jparty.domain.tournament_rankings import PlayerRanking, tournament_rankings
-from jparty.domain.tournament_saves import TournamentSave, find_tournament_saves
+from jparty.domain.tournament_saves import (
+    TournamentSave,
+    find_tournament_saves,
+    resume_problem,
+)
 from jparty.domain.tournament_setup import TournamentBoard, plan_games
 from jparty.domain.tournament_store import (
     TournamentFileError,
@@ -402,9 +406,8 @@ class TournamentPlayPanel(QWidget):
     def resume_problem(self) -> str | None:
         """Return why the selected game's save can't be resumed, or ``None``.
 
-        A save can't be resumed once one of its players has dropped out or
-        can no longer play the game, since its results would be logged for
-        them. Starting the game again with new players still works.
+        See :func:`jparty.domain.tournament_saves.resume_problem`. Starting
+        the game again with new players still works.
 
         Returns:
             A message for the host, or ``None``.
@@ -414,30 +417,24 @@ class TournamentPlayPanel(QWidget):
             return "This game has no saved game to resume."
         if self.load_error:
             return self.load_error
-        names = self._names()
-        players = [
-            (player_id, names.get(player_id) or name)
-            for player_id, name in zip(save.player_ids, save.players, strict=False)
-        ]
-        if len(players) != len(save.players) or not all(p for p, _ in players):
-            return "This save doesn't say which tournament players it has."
-        dropped = dropped_ids(self.dropouts)
-        gone = [name for player_id, name in players if player_id in dropped]
-        if gone:
-            return (
-                f"{', '.join(gone)} dropped out, so this game can't be resumed. "
-                "Start it again with new players, or undo the drop."
-            )
-        if self._eligibility.waiting:
-            return self._eligibility.waiting
-        allowed = set(self._eligibility.player_ids)
-        barred = [name for player_id, name in players if player_id not in allowed]
-        if barred:
-            return (
-                f"{', '.join(barred)} can no longer play {save.game_key}, so this "
-                "game can't be resumed. Start it again with new players."
-            )
-        return None
+        return resume_problem(
+            save, self._eligibility, self.dropouts, self._names(), self.results
+        )
+
+    def with_resume_note(self, message: str) -> str:
+        """Return ``message``, plus why the selected save can't be resumed.
+
+        Args:
+            message: The status for starting the game.
+
+        Returns:
+            ``message``, with a "Can't resume" line when the selected game
+            has a save that can't be resumed.
+        """
+        if self.selected_save() is None:
+            return message
+        problem = self.resume_problem()
+        return f"{message}\nCan't resume: {problem}" if problem else message
 
     def resume_selected(self) -> None:
         """Ask the welcome screen to resume the selected game's save.
@@ -619,11 +616,9 @@ class TournamentPlayPanel(QWidget):
         problem = seating_problem(self._eligibility, self.chosen_ids())
         if problem:
             return problem
-        if connected_players != PLAYERS_PER_GAME:
-            return (
-                f"Wait for {PLAYERS_PER_GAME} phones to join "
-                f"({connected_players} so far)."
-            )
+        seats = self._eligibility.seats
+        if connected_players != seats:
+            return f"Wait for {seats} phones to join ({connected_players} so far)."
         return None
 
     def set_phones(self, names: list[object]) -> None:

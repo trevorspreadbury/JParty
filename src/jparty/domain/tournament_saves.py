@@ -10,6 +10,10 @@ the tournament.
 
 Only folders named for a board's game id are read, so looking is quick even
 with many saved games.
+
+:func:`resume_problem` says whether a save can still be resumed as a
+tournament game, whether it is resumed from the tournament or with the
+regular Load Saved button.
 """
 
 from __future__ import annotations
@@ -17,15 +21,19 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from jparty.domain.tournament_advancement import Eligibility, eligible_players
+from jparty.domain.tournament_dropouts import Dropout, dropped_ids
 from jparty.domain.tournament_play import (
     SAVED_PLAYER_ID,
     SAVED_PLAYER_NAME,
+    GameResult,
     TournamentGameRef,
 )
+from jparty.domain.tournament_store import TournamentFileError, load_tournament_data
 
 GENERAL_FILE = "general.json"
 # A saved game's folder name: its game id, then when it started.
@@ -113,14 +121,9 @@ def find_tournament_saves(
             continue
         if ref.game_key not in wanted[game_id]:
             continue
-        players, player_ids = _saved_players(state)
-        if not players:
+        save = tournament_save(folder, state)
+        if save is None or not save.players:
             continue
-        try:
-            last_updated = float(state.get("last_updated") or 0)
-        except (TypeError, ValueError):
-            last_updated = 0.0
-        save = TournamentSave(ref.game_key, folder, last_updated, players, player_ids)
         current = saves.get(ref.game_key)
         if current is None or (save.last_updated, save.path.name) > (
             current.last_updated,
@@ -128,3 +131,114 @@ def find_tournament_saves(
         ):
             saves[ref.game_key] = save
     return saves
+
+
+def tournament_save(folder: Path, state: Mapping) -> TournamentSave | None:
+    """Return the save in ``folder`` as a :class:`TournamentSave`.
+
+    Args:
+        folder: The saved game's folder.
+        state: Its decoded ``general.json``.
+
+    Returns:
+        The save, or ``None`` if it isn't a tournament game.
+    """
+    ref = TournamentGameRef.from_json(state.get("tournament"))
+    if ref is None:
+        return None
+    players, player_ids = _saved_players(state)
+    try:
+        last_updated = float(state.get("last_updated") or 0)
+    except (TypeError, ValueError):
+        last_updated = 0.0
+    return TournamentSave(ref.game_key, Path(folder), last_updated, players, player_ids)
+
+
+def resume_problem(
+    save: TournamentSave,
+    eligibility: Eligibility,
+    dropouts: Sequence[Dropout],
+    names: Mapping[str, str],
+    results: Sequence[GameResult] = (),
+) -> str | None:
+    """Return why ``save`` can't be resumed as a tournament game, or ``None``.
+
+    A save can't be resumed once one of its players has dropped out or can
+    no longer play the game, or once the game has results from a different
+    save, since resuming would log results over them. A save whose own
+    results are already logged can be resumed: it ends again and leaves
+    them alone.
+
+    Args:
+        save: The save.
+        eligibility: Who may sit in the save's game now.
+        dropouts: Every dropout.
+        names: Display names by player id.
+        results: Every saved result.
+
+    Returns:
+        A message for the host, or ``None``.
+    """
+    sources = {r.saved_game for r in results if r.game_key == save.game_key}
+    if save.path.name in sources:
+        return None
+    if sources:
+        return (
+            f"{save.game_key} already has results from another saved game "
+            f"({', '.join(sorted(sources))}), so this save can't be resumed. "
+            "Delete those results with Fix Results first to replay it."
+        )
+    players = [
+        (player_id, names.get(player_id) or name)
+        for player_id, name in zip(save.player_ids, save.players, strict=False)
+    ]
+    if len(players) != len(save.players) or not all(p for p, _ in players):
+        return "This save doesn't say which tournament players it has."
+    dropped = dropped_ids(dropouts)
+    gone = [name for player_id, name in players if player_id in dropped]
+    if gone:
+        return (
+            f"{', '.join(gone)} dropped out, so this game can't be resumed. "
+            "Start it again with new players, or undo the drop."
+        )
+    if eligibility.waiting:
+        return eligibility.waiting
+    allowed = set(eligibility.player_ids)
+    barred = [name for player_id, name in players if player_id not in allowed]
+    if barred:
+        return (
+            f"{', '.join(barred)} can no longer play {save.game_key}, so this "
+            "game can't be resumed. Start it again with new players."
+        )
+    return None
+
+
+def saved_game_problem(folder: Path, save: TournamentSave) -> str | None:
+    """Check ``save`` against its tournament's files, as :func:`resume_problem`.
+
+    This is for the regular Load Saved button, which doesn't have the
+    tournament open. A tournament whose files can't be read isn't checked:
+    logging its results fails later with a warning anyway.
+
+    Args:
+        folder: The save's tournament's folder.
+        save: The save.
+
+    Returns:
+        A message for the host, or ``None``.
+    """
+    try:
+        settings, data = load_tournament_data(Path(folder))
+    except TournamentFileError as exc:
+        logging.warning("Couldn't check %s against its tournament: %s", save.path, exc)
+        return None
+    eligibility = eligible_players(
+        data.plan,
+        save.game_key,
+        data.slots,
+        data.results,
+        settings.boards.get(save.game_key),
+        data.tiebreaks,
+        data.dropouts,
+    )
+    return resume_problem(save, eligibility, data.dropouts, data.names(), data.results)

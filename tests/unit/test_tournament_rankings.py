@@ -154,6 +154,16 @@ def test_a_play_in_winner_ranks_with_the_semifinalists() -> None:
     seated = {row.player_id: row for row in rank_data(after)}
     assert not seated["l5-2"].out
     assert seated["l5-2"].status == f"play-in, in the {R2}"
+    # A play-in seat reaches the Second Round before the play-in is played,
+    # so its players rank above everyone who only reached the Preliminaries.
+    play_in = rank_data(after)
+    position = {row.player_id: index for index, row in enumerate(play_in)}
+    assert seated["l5-2"].reached == R2
+    prelims_only = [
+        row for row in play_in if row.rank and row.reached == "Preliminaries"
+    ]
+    assert prelims_only
+    assert all(position["l5-2"] < position[row.player_id] for row in prelims_only)
 
     entrants = round_entrants(after.plan, after.standings(), 1).players
     rest = [p for p in entrants if p not in {"w6", "l9-2", "l9-1"}]

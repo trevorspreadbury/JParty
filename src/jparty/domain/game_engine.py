@@ -59,16 +59,20 @@ from jparty.domain.state import (
     tiebreaker_winner_number,
 )
 from jparty.domain.tournament_advancement import TiebreakerSession
+from jparty.domain.tournament_dropouts import Dropout, dropped_ids
 from jparty.domain.tournament_play import (
     SAVED_PLAYER_ID,
     SAVED_PLAYER_NAME,
+    GameResult,
     PlayerOutcome,
     TournamentGameRef,
     already_recorded,
     game_results,
 )
+from jparty.domain.tournament_saves import saved_game_problem, tournament_save
 from jparty.domain.tournament_store import (
     TournamentFileError,
+    load_dropouts,
     load_results,
     record_game_results,
     record_tiebreak,
@@ -140,6 +144,64 @@ def _ends_with_newline(path: Path) -> bool:
     with path.open("rb") as file_obj:
         file_obj.seek(-1, os.SEEK_END)
         return file_obj.read(1) == b"\n"
+
+
+def _tournament_save_problem(path: Path, general_state: dict) -> str | None:
+    """Return why a tournament game's save can't resume as one, or ``None``.
+
+    ``None`` for a regular game's save. This reads the tournament's files,
+    so it runs with the rest of :meth:`Game.read_saved_game`.
+
+    Args:
+        path: The saved game's folder.
+        general_state: Its decoded ``general.json``.
+
+    Returns:
+        A message for the host, or ``None``.
+    """
+    save = tournament_save(path, general_state)
+    ref = TournamentGameRef.from_json(general_state.get("tournament"))
+    if save is None or ref is None:
+        return None
+    return saved_game_problem(TOURNAMENTS_DIR / ref.tournament, save)
+
+
+def _results_problem(
+    ref: TournamentGameRef,
+    saved: list[GameResult],
+    dropouts: list[Dropout],
+    results: list[GameResult],
+    saved_game: str,
+) -> str | None:
+    """Return why a finished game's results mustn't be logged, or ``None``.
+
+    Args:
+        ref: The tournament game.
+        saved: Every result already in results.csv.
+        dropouts: Every dropout.
+        results: The game's new rows.
+        saved_game: The game's save folder name.
+
+    Returns:
+        A message for the host, or ``None``.
+    """
+    others = sorted(
+        {r.saved_game for r in saved if r.game_key == ref.game_key} - {saved_game}
+    )
+    if others:
+        return (
+            f"{ref.game_key} already has results from another saved game "
+            f"({', '.join(others)}), so this game's results weren't saved over "
+            "them. Use Fix Results in the tournament if this game should count."
+        )
+    dropped = dropped_ids(dropouts)
+    gone = [r.player for r in results if r.player_id in dropped]
+    if gone:
+        return (
+            f"{', '.join(gone)} dropped out of the {ref.tournament} tournament, "
+            f"so the results of {ref.game_key} weren't saved."
+        )
+    return None
 
 
 class Game(QObject):
@@ -329,6 +391,16 @@ class Game(QObject):
         # Player who won a tiebreaker, or None. The scores stay tied; the
         # saved tiebreaker_clue line is what records the win.
         self.tiebreaker_winner = None
+        self._reset_tournament_state()
+        # Replaced in tests so loading runs without a thread or network.
+        self.load_tiebreaker_clues = load_tiebreaker_clues
+
+    def _reset_tournament_state(self) -> None:
+        """Forget the tournament game, tiebreaker session, and /host code.
+
+        Returns:
+            ``None``.
+        """
         # The tournament game being played, or None for a regular game. Its
         # results go to the tournament's results.csv when the game ends.
         self.tournament_game = None
@@ -340,8 +412,6 @@ class Game(QObject):
         self.host_code_done = False
         self.host_code_shown = False
         self._session_player_ids = {}
-        # Replaced in tests so loading runs without a thread or network.
-        self.load_tiebreaker_clues = load_tiebreaker_clues
 
     def startable(self) -> bool:
         """Determine whether the game can start with the current connections.
@@ -383,11 +453,7 @@ class Game(QObject):
         self._composed_board_selection_configs = None
         self._composed_game_data = None
         self._session_game_id = ""
-        self.tournament_game = None
-        self.tiebreaker_session = None
-        self.host_code_done = False
-        self.host_code_shown = False
-        self._session_player_ids = {}
+        self._reset_tournament_state()
         if self.buzzer_controller:
             self.buzzer_controller.clear_saved_player_reclaim()
 
@@ -546,7 +612,9 @@ class Game(QObject):
         Called once the winner is known: after Final Jeopardy, or after a
         tiebreaker. Does nothing for a regular game. A resumed game that
         already logged its results leaves them alone, since the host may
-        have fixed them.
+        have fixed them. Results that would replace another save's rows for
+        the game, or that name a player who dropped out, aren't saved; the
+        host is warned instead.
 
         Returns:
             ``None``.
@@ -577,8 +645,16 @@ class Game(QObject):
             saved_game,
         )
         try:
-            if already_recorded(load_results(folder), ref.game_key, saved_game):
+            saved = load_results(folder)
+            if already_recorded(saved, ref.game_key, saved_game):
                 logging.info("Results for %s are already saved", ref.game_key)
+                return
+            problem = _results_problem(
+                ref, saved, load_dropouts(folder), results, saved_game
+            )
+            if problem:
+                logging.error("Not saving results for %s: %s", ref.game_key, problem)
+                self.show_host_warning("Results Not Saved", problem)
                 return
             record_game_results(folder, results)
         except TournamentFileError as error:
@@ -767,6 +843,7 @@ class Game(QObject):
             general_state=general_state,
             saved_game=saved_game,
             current_players=current_players,
+            tournament_problem=_tournament_save_problem(saved_game_path, general_state),
         )
 
     def apply_saved_game(self, loaded: LoadedSave) -> object:
@@ -790,9 +867,12 @@ class Game(QObject):
         )
         self.set_session_game_id(general_state.get("game_id", loaded.game_id))
         # A tournament game keeps logging its results when resumed; the
-        # player ids are on the saved players list.
-        self.tournament_game = TournamentGameRef.from_json(
-            general_state.get("tournament")
+        # player ids are on the saved players list. A save that can no
+        # longer be resumed as one resumes as a regular game instead.
+        self.tournament_game = (
+            None
+            if loaded.tournament_problem
+            else TournamentGameRef.from_json(general_state.get("tournament"))
         )
         self._resume_state = {
             "path": loaded.path,
@@ -2184,11 +2264,7 @@ class Game(QObject):
         self._starting_roster = None
         self.tiebreaker_flow.reset()
         self.tiebreaker_winner = None
-        self.tournament_game = None
-        self.tiebreaker_session = None
-        self.host_code_done = False
-        self.host_code_shown = False
-        self._session_player_ids = {}
+        self._reset_tournament_state()
         self.previous_answerers = set()
         self.dc.restart()
         self.begin()

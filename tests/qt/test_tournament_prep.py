@@ -591,3 +591,20 @@ def test_choosing_another_game_while_the_save_loads_drops_it(
     read()
     assert game.applied == []
     assert widget.tournament_start_button.text() == "Start!"
+
+
+def test_welcome_status_says_why_a_save_cant_resume(
+    tournament_welcome: tuple, temp_dir: Path
+) -> None:
+    """The welcome screen keeps the panel's "Can't resume" line (HOST.md)."""
+    widget, game, _parent = tournament_welcome
+    panel = widget.tournament_panel
+    panel.states_dir = temp_dir / "states"
+    write_save(panel.states_dir, "2222", SF2)
+    panel.reload()
+    panel.dropouts = [Dropout("p4", "Semifinals", DROP_REPLACE, other_id="p9")]
+    panel.select_game(SF2)
+    widget.check_start()
+    status = panel.status_label.text()
+    assert "Can't resume: P4 dropped out" in status
+    assert not panel.resume_button.isEnabled()

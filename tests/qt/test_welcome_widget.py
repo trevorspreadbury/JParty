@@ -2044,6 +2044,33 @@ def test_failed_load_saved_refreshes_the_screen(
     assert widget.start_button.isEnabled() is True
 
 
+def test_load_saved_warns_when_a_tournament_save_resumes_untracked(
+    qtbot: object, monkeypatch: object
+) -> None:
+    """A tournament save that fails its checks resumes, but the host is told."""
+    widget, game = _loading_widget(
+        qtbot, monkeypatch, ImmediateLoader(), {"111": _fixture_source_game("111")}
+    )
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: "C:/saved"
+    )
+    problem = "Bob dropped out, so this game can't be resumed."
+    game.read_saved_game = lambda selected_dir: SimpleNamespace(
+        tournament_problem=problem
+    )
+    _type_game_id(widget, "111")
+
+    widget.load_saved_game()
+
+    assert widget.start_button.text() == "Resume!"
+    assert len(warnings) == 1
+    assert warnings[0][1] == "Tournament Results Won't Be Saved"
+    assert problem in warnings[0][2]
+    assert "results won't be saved: " + problem in widget.summary_label.text()
+
+
 def test_failed_load_saved_during_a_load_does_not_stay_loading(
     qtbot: object, monkeypatch: object
 ) -> None:

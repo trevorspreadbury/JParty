@@ -332,3 +332,159 @@ def test_results_follow_players_who_change_seats_on_resume(
         "ann-id": (100, "loss"),
         "bob-id": (200, "loss"),
     }
+
+
+SF_REF = TournamentGameRef("Fun", "Semifinals: SF 1")
+
+
+def _write_tournament(folder: object, dropouts: tuple = ()) -> None:
+    """Save a nine-player "Fun" tournament whose roster includes SEATS."""
+    from jparty.domain.roster import PlayerSlot
+    from jparty.domain.tournament_store import (
+        DROPOUTS_FILE,
+        TournamentSettings,
+        dropouts_csv_text,
+        save_tournament,
+    )
+
+    slots = [PlayerSlot(name, player_id=player_id) for player_id, name in SEATS]
+    slots += [PlayerSlot(f"P{index}", player_id=f"p{index}") for index in range(6)]
+    save_tournament(folder.parent, TournamentSettings("Fun"), slots)
+    if dropouts:
+        (folder / DROPOUTS_FILE).write_text(
+            dropouts_csv_text(list(dropouts)), encoding="utf-8"
+        )
+
+
+def _start_semifinal(game: object) -> None:
+    """Start SF 1 at its Final, as a tournament game."""
+    game.set_session_game_id("4453")
+    game.set_selected_round_indices([len(game.data.rounds) - 1])
+    game.set_tournament_game(SF_REF, SEATS)
+    game.start_game()
+
+
+def _warnings(game: object, monkeypatch: object) -> list[str]:
+    """Collect the host warnings ``game`` shows."""
+    shown = []
+    monkeypatch.setattr(
+        game, "show_host_warning", lambda title, text: shown.append(text)
+    )
+    return shown
+
+
+def test_a_stale_save_doesnt_replace_another_saves_results(
+    game: object, folders: object, monkeypatch: object
+) -> None:
+    """Finishing an abandoned save of a played game keeps the played rows."""
+    warnings = _warnings(game, monkeypatch)
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    data = game.data
+    _start_final_only(game)
+    abandoned = game._game_state_dir
+    game.close_game()
+    # The game is started again from the beginning and finished.
+    game.data = data
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    _start_final_only(game)
+    assert game._game_state_dir != abandoned
+    _finish_final(game, [500, 1200, 300], [True, True, True])
+    played = load_results(folders)
+    game.close_game()
+
+    # The tournament's files can't be read here, so only the end checks.
+    game.prepare_resume_from_dir(abandoned)
+    assert game.tournament_game == REF
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    game.start_game()
+    _finish_final(game, [900, 100, 200], [True, True, True])
+
+    assert load_results(folders) == played
+    assert warnings and "already has results from another saved game" in warnings[0]
+
+
+def test_load_saved_of_a_played_game_resumes_as_a_regular_game(
+    game: object, folders: object
+) -> None:
+    """Load Saved checks the tournament, so the stale save logs nothing."""
+    _write_tournament(folders)
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    data = game.data
+    _start_semifinal(game)
+    abandoned = game._game_state_dir
+    game.close_game()
+    game.data = data
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    _start_semifinal(game)
+    _finish_final(game, [500, 1200, 300], [True, True, True])
+    played = load_results(folders)
+    game.close_game()
+
+    loaded = game.read_saved_game(abandoned)
+    assert "already has results from another saved game" in loaded.tournament_problem
+    game.apply_saved_game(loaded)
+    assert game.tournament_game is None
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    game.start_game()
+    _finish_final(game, [900, 100, 200], [True, True, True])
+    assert load_results(folders) == played
+
+
+def test_load_saved_with_a_dropped_player_logs_no_results(
+    game: object, folders: object
+) -> None:
+    """A save whose player dropped out resumes untracked, so no rows for them."""
+    from jparty.domain.tournament_dropouts import DROP_REPLACE, Dropout
+
+    _write_tournament(folders)
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    _start_semifinal(game)
+    saved_dir = game._game_state_dir
+    game.close_game()
+    _write_tournament(
+        folders, (Dropout("bob-id", "Semifinals", DROP_REPLACE, other_id="p0"),)
+    )
+
+    loaded = game.read_saved_game(saved_dir)
+    assert loaded.tournament_problem.startswith("Bob dropped out")
+    game.apply_saved_game(loaded)
+    assert game.tournament_game is None
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    game.start_game()
+    _finish_final(game, [900, 100, 200], [True, True, True])
+    assert load_results(folders) == []
+
+
+def test_load_saved_of_a_good_save_still_logs_results(
+    game: object, folders: object
+) -> None:
+    """A save that passes the checks resumes as a tournament game."""
+    _write_tournament(folders)
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    _start_semifinal(game)
+    saved_dir = game._game_state_dir
+    game.close_game()
+
+    loaded = game.read_saved_game(saved_dir)
+    assert loaded.tournament_problem is None
+    game.apply_saved_game(loaded)
+    assert game.tournament_game == SF_REF
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    game.start_game()
+    _finish_final(game, [900, 100, 200], [True, True, True])
+    assert [r.player_id for r in load_results(folders)] == [p for p, _ in SEATS]
+
+
+def test_results_naming_a_dropped_player_arent_saved(
+    game: object, folders: object, monkeypatch: object
+) -> None:
+    """The end of the game checks dropouts too, and warns instead."""
+    from jparty.domain.tournament_dropouts import DROP_SLIDE, Dropout
+
+    warnings = _warnings(game, monkeypatch)
+    _seat_phones(game, ["Phone A", "Phone B", "Phone C"])
+    _start_final_only(game)
+    _write_tournament(folders, (Dropout("cy-id", "Quarterfinals", DROP_SLIDE),))
+    _finish_final(game, [500, 1200, 300], [True, True, True])
+    assert load_results(folders) == []
+    assert warnings and warnings[0].startswith("Cy dropped out")

@@ -18,6 +18,8 @@ designer's rules to them:
   rest.
 - When a round gives byes, its top-scoring winners skip the next round. If
   there are more byes than winners, the top wildcards get the rest.
+- When dropouts leave no one to chase, a chase game is played by its two
+  new players alone, and its winner advances.
 
 Players tied on score at a cutoff (the last wildcard, the chaser, or the
 last bye) are separated by a tiebreaker (:class:`Tiebreak`). Until one is
@@ -42,7 +44,12 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 
 from jparty.domain.roster import PlayerSlot
-from jparty.domain.tournament import PLAYERS_PER_GAME, BracketRound, TournamentPlan
+from jparty.domain.tournament import (
+    CHASE_GAME_NEW_PLAYERS,
+    PLAYERS_PER_GAME,
+    BracketRound,
+    TournamentPlan,
+)
 from jparty.domain.tournament_dropouts import (
     Dropout,
     RoundDrops,
@@ -119,14 +126,18 @@ class RoundStanding:
         planned_chasers: Who should chase in each chase game, by game key,
             worked out from the regular games alone. It differs from
             :attr:`chasers` for a played game when a fixed result changed
-            who should have chased.
+            who should have chased. When every played chase game's chaser
+            is in :attr:`accepted_chasers`, those chasers stand, and the
+            unplayed chase games are planned around them.
         chaser_clashes: Unplayed chase games whose planned chaser already
             chased in another chase game, as ``(chaser id, other game
             key)`` by game key. A fixed result can cause this; the game
             can't be seated until it's sorted out.
-        original_chasers: :attr:`planned_chasers` as they were before
-            anyone dropped out. A chase game played before a dropout keeps
-            the chaser it had then.
+        accepted_chasers: For each played chase game, every chaser the
+            regular games gave it at some point as players dropped out (and
+            before or after any voided Semifinal added wildcards). A chase
+            game played between two dropouts keeps the chaser it had then,
+            so only a fixed result makes its chaser wrong.
         play_in_players: The next players after the advancers, who play
             the play-in games added when players with a bye drop out (see
             :mod:`jparty.domain.tournament_dropouts`), best first.
@@ -149,7 +160,7 @@ class RoundStanding:
     chasers: dict[str, str] = field(default_factory=dict)
     planned_chasers: dict[str, str] = field(default_factory=dict)
     chaser_clashes: dict[str, tuple[str, str]] = field(default_factory=dict)
-    original_chasers: dict[str, str] = field(default_factory=dict)
+    accepted_chasers: dict[str, frozenset[str]] = field(default_factory=dict)
     play_in_players: tuple[str, ...] = ()
     play_in_ties: tuple[TieForSpot, ...] = ()
     replacements: dict[str, str] = field(default_factory=dict)
@@ -348,7 +359,7 @@ def round_standing(
     layout = bracket_round.layout
     if layout is None:
         return _winners_only_standing(
-            name, keys, games_left, played, first_seen, scores, drops, tiebreaks
+            bracket_round, games_left, played, first_seen, scores, drops, tiebreaks
         )
 
     winners: list[str] = []
@@ -367,37 +378,47 @@ def round_standing(
     regular_left = any(
         key in games_left for key, game in games if not game.chase and not game.play_in
     )
+    # A chase game's chaser is whoever in it already played a regular
+    # game this round; the other two are new players.
+    regular_losers = set(pool)
+    regular_ranking = [p for p in pool if p not in drops.slide]
+    regular_players = regular_losers | set(winners)
+    played_chasers: dict[str, str] = {}
+    for key in chase_keys:
+        rows = by_game.get(key)
+        chaser_rows = [row for row in rows or () if row.player_id in regular_players]
+        if chaser_rows:
+            played_chasers[key] = chaser_rows[0].player_id
     # Both chasers are set once the regular games are done: the first
     # players out of the wildcards, with the last chase game going to the
     # first player out (see chaser_place). Players who dropped out slide
     # out of the ranking.
     planned: dict[str, str] = {}
-    original: dict[str, str] = {}
+    accepted: dict[str, frozenset[str]] = {}
     if chase_keys and not regular_left:
-        ranking = [player_id for player_id in pool if player_id not in drops.slide]
-        planned, chaser_ties = _plan_chasers(
-            ranking, scores, wildcard_spots, chase_keys, tiebreaks, name, coryats
+        planned, chaser_ties, accepted = _chaser_plan(
+            pool,
+            winners,
+            scores,
+            layout.wildcards,
+            drops,
+            chase_keys,
+            played_chasers,
+            tiebreaks,
+            name,
+            coryats,
         )
         ties.extend(chaser_ties)
-        original = planned
-        if drops != RoundDrops():
-            original, _ties = _plan_chasers(
-                pool, scores, layout.wildcards, chase_keys, tiebreaks, name, coryats
-            )
-    # A chase game's chaser is whoever in it already played a regular
-    # game this round; the other two are new players. Only a chaser who
-    # lost their regular game can open a wildcard spot. (One who won it,
-    # after a fixed result, is already a winner and is counted once.)
-    regular_losers = set(pool)
-    regular_players = regular_losers | set(winners)
+    # Only a chaser who lost their regular game can open a wildcard spot.
+    # (One who won it, after a fixed result, is already a winner and is
+    # counted once.)
     chased_in: dict[str, str] = {}
     for key in chase_keys:
         rows = by_game.get(key)
         if rows is None:
             continue
-        chaser_rows = [row for row in rows if row.player_id in regular_players]
-        if chaser_rows:
-            chaser = chaser_rows[0]
+        if key in played_chasers:
+            chaser = next(row for row in rows if row.player_id == played_chasers[key])
             chasers[key] = chaser.player_id
             chased_in[chaser.player_id] = key
             if chaser.won and chaser.player_id in regular_losers:
@@ -426,9 +447,11 @@ def round_standing(
     ]
     ranking = [player_id for player_id in pool if player_id not in drops.slide]
     replacements: dict[str, str] = {}
-    if drops.replacement_games:
+    if drops.replacement_games and not _others_left(bracket_round, games_left, drops):
+        # Only the regular games' non-winners: a chase game may need the
+        # replay's result first, so its players can't decide the seat.
         replacements, replacement_ties = _replacements(
-            ranking, scores, drops.replacement_games, tiebreaks, name
+            regular_ranking, scores, drops.replacement_games, tiebreaks, name
         )
         ties.extend(replacement_ties)
     unfinished = RoundStanding(
@@ -438,7 +461,7 @@ def round_standing(
         chasers=chasers,
         planned_chasers=planned,
         chaser_clashes=clashes,
-        original_chasers=original,
+        accepted_chasers=accepted,
         replacements=replacements,
         ties=tuple(ties),
         scores=scores,
@@ -518,6 +541,82 @@ def round_standing(
     )
 
 
+def _chaser_plan(
+    pool: Sequence[str],
+    winners: Sequence[str],
+    scores: dict[str, int],
+    wildcards: int,
+    drops: RoundDrops,
+    chase_keys: Sequence[str],
+    played_chasers: dict[str, str],
+    tiebreaks: Sequence[Tiebreak],
+    round_name: str,
+    coryats: dict[str, int | None],
+) -> tuple[dict[str, str], list[TieForSpot], dict[str, frozenset[str]]]:
+    """Return the planned chasers, any ties, and each played game's accepted chasers.
+
+    A played chase game's chaser is accepted if the regular games gave it
+    to them at some point: before any dropout, after each one in turn, and
+    with or without the wildcards a voided Semifinal adds. Earlier chase
+    games' accepted chasers are held fixed while later ones are checked.
+    When every played chaser is accepted, they stand, and the unplayed
+    chase games go to the next players out who haven't chased. Otherwise
+    a fixed result changed who should have chased, and every chase game is
+    planned afresh, so the clash or conflict shows.
+
+    Args:
+        pool: The round's regular-game losers, in the order they played.
+        winners: The round's regular-game winners.
+        scores: Each player's score.
+        wildcards: The layout's wildcard count.
+        drops: How dropouts change the round.
+        chase_keys: The round's chase games, in order.
+        played_chasers: The chaser of each played chase game, by key.
+        tiebreaks: Every tiebreaker played.
+        round_name: The round.
+        coryats: Each player's Coryat score.
+
+    Returns:
+        ``(planned, ties, accepted)``: see :class:`RoundStanding`.
+    """
+
+    def plan(
+        slid: frozenset[str], extra: int, fixed: dict[str, str]
+    ) -> tuple[dict[str, str], list[TieForSpot]]:
+        ranking = [player_id for player_id in pool if player_id not in slid]
+        spots = wildcards + extra + sum(1 for p in winners if p in slid)
+        return _plan_chasers(
+            ranking, scores, spots, chase_keys, tiebreaks, round_name, coryats, fixed
+        )
+
+    order = drops.slide_order
+    if set(order) != drops.slide:
+        order = tuple(sorted(drops.slide))
+    moments = [
+        (frozenset(order[:count]), extra)
+        for count in range(len(order) + 1)
+        for extra in dict.fromkeys((0, drops.extra_wildcards))
+    ]
+    accepted: dict[str, frozenset[str]] = {}
+    fixed: dict[str, str] = {}
+    for key in chase_keys:
+        if key not in played_chasers:
+            continue
+        options = {
+            planned[key]
+            for slid, extra in moments
+            if key in (planned := plan(slid, extra, fixed)[0])
+        }
+        accepted[key] = frozenset(options)
+        if played_chasers[key] in options:
+            fixed[key] = played_chasers[key]
+    if played_chasers and fixed == played_chasers:
+        planned, ties = plan(drops.slide, drops.extra_wildcards, fixed)
+        return {**planned, **fixed}, ties, accepted
+    planned, ties = plan(drops.slide, drops.extra_wildcards, {})
+    return planned, ties, accepted
+
+
 def _plan_chasers(
     ranking: Sequence[str],
     scores: dict[str, int],
@@ -526,22 +625,86 @@ def _plan_chasers(
     tiebreaks: Sequence[Tiebreak],
     round_name: str,
     coryats: dict[str, int | None] | None = None,
+    fixed: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], list[TieForSpot]]:
     """Return who should chase in each chase game, by key, and any ties.
 
     The cutoffs between chasers only decide which chase game each plays, so
     a tie there goes to the higher Coryat score first.
+
+    Chase games in ``fixed`` already have their chaser. The others go to the
+    first players out of the wildcards who aren't in ``fixed``, the last
+    open game to the first of them. When dropouts leave too few players to
+    chase, the first chase games go without: they're played by their two
+    new players alone (see :attr:`Eligibility.seats`).
     """
-    cutoffs = range(wildcard_spots, wildcard_spots + len(chase_keys) + 1)
-    seeding = range(wildcard_spots + 1, wildcard_spots + len(chase_keys))
+    if not fixed:
+        cutoffs = range(wildcard_spots, wildcard_spots + len(chase_keys) + 1)
+        seeding = range(wildcard_spots + 1, wildcard_spots + len(chase_keys))
+        order, ties = _ranked(
+            ranking,
+            scores,
+            cutoffs,
+            tiebreaks,
+            round_name,
+            TIE_CHASER,
+            coryats,
+            seeding,
+        )
+        planned: dict[str, str] = {}
+        if not ties:
+            for index, key in enumerate(chase_keys):
+                position = wildcard_spots + len(chase_keys) - 1 - index
+                if position < len(order):
+                    planned[key] = order[position]
+        return planned, ties
+    open_keys = [key for key in chase_keys if key not in fixed]
+    if not open_keys:
+        return {}, []
     order, ties = _ranked(
-        ranking, scores, cutoffs, tiebreaks, round_name, TIE_CHASER, coryats, seeding
+        ranking, scores, (wildcard_spots,), tiebreaks, round_name, TIE_CHASER
     )
-    planned: dict[str, str] = {}
-    if not ties and len(order) >= wildcard_spots + len(chase_keys):
-        for index, key in enumerate(chase_keys):
-            planned[key] = order[wildcard_spots + len(chase_keys) - 1 - index]
-    return planned, ties
+    if ties:
+        return {}, ties
+    chased = set(fixed.values())
+    below = [
+        player_id for player_id in order[wildcard_spots:] if player_id not in chased
+    ]
+    count = len(open_keys)
+    order, ties = _ranked(
+        below,
+        scores,
+        range(1, count + 1),
+        tiebreaks,
+        round_name,
+        TIE_CHASER,
+        coryats,
+        range(1, count),
+    )
+    if ties:
+        return {}, ties
+    return {
+        key: order[count - 1 - index]
+        for index, key in enumerate(open_keys)
+        if count - 1 - index < len(order)
+    }, []
+
+
+def _others_left(
+    bracket_round: BracketRound, games_left: Sequence[str], drops: RoundDrops
+) -> bool:
+    """Return whether regular games other than the voided ones are still to play.
+
+    A voided game's replacement is the best non-winner of the round's other
+    regular games, so it's known only once they're all played. Chase games
+    don't count: their chaser can come from the voided game's replay.
+    """
+    return any(
+        key in games_left and key not in drops.replacement_games
+        for game in bracket_round.games
+        if not game.chase and not game.play_in
+        for key in (game_key(bracket_round, game),)
+    )
 
 
 def _replacements(
@@ -565,8 +728,7 @@ def _replacements(
 
 
 def _winners_only_standing(
-    name: str,
-    keys: Sequence[str],
+    bracket_round: BracketRound,
     games_left: tuple[str, ...],
     played: Sequence[tuple[str, bool, list[GameResult]]],
     first_seen: Sequence[str],
@@ -575,12 +737,13 @@ def _winners_only_standing(
     tiebreaks: Sequence[Tiebreak],
 ) -> RoundStanding:
     """Return the standing of a round where only game winners advance."""
+    name = bracket_round.name
     winners = [
         row.player_id for _key, _chase, rows in played for row in rows if row.won
     ]
     replacements: dict[str, str] = {}
     ties: list[TieForSpot] = []
-    if drops.replacement_games:
+    if drops.replacement_games and not _others_left(bracket_round, games_left, drops):
         ranking = [player_id for player_id in first_seen if player_id not in winners]
         replacements, ties = _replacements(
             ranking, scores, drops.replacement_games, tiebreaks, name
@@ -823,12 +986,15 @@ class Eligibility:
         waiting: Why the game can't be seated yet, or ``""``: an earlier
             round that isn't finished, a tie that needs a tiebreaker, or a
             chaser who isn't known yet.
+        seats: How many podiums the game needs. A chase game has only its
+            two new players when dropouts left no one to chase in it.
     """
 
     entrants: tuple[str, ...] = ()
     chasers: tuple[str, ...] = ()
     chase: bool = False
     waiting: str = ""
+    seats: int = PLAYERS_PER_GAME
 
     @property
     def player_ids(self) -> tuple[str, ...]:
@@ -920,6 +1086,14 @@ def eligible_players(
     replacement = standing.replacements.get(key)
     if replacement is not None and replacement in named:
         return Eligibility(open_seats, (replacement,), chase=game.chase)
+    if key in round_drops(plan, dropouts)[round_index].replacement_games:
+        waiting = (
+            tie_text(standing.ties[0], names)
+            if standing.ties
+            else "The player taking the dropped seat is known once the rest of "
+            f"the {standing.name} are played."
+        )
+        return Eligibility(open_seats, chase=game.chase, waiting=waiting)
     if not game.chase:
         return Eligibility(open_seats)
     if key in standing.chaser_clashes:
@@ -932,11 +1106,20 @@ def eligible_players(
         )
     chaser = standing.chasers.get(key)
     if chaser is None:
-        waiting = (
-            tie_text(standing.ties[0], names)
-            if standing.ties
-            else "The chaser is known once this round's regular games are played."
+        bracket_round = plan.rounds[round_index]
+        regular_left = any(
+            game_key(bracket_round, other) in standing.games_left
+            for other in bracket_round.games
+            if not other.chase and not other.play_in
         )
+        if standing.ties:
+            waiting = tie_text(standing.ties[0], names)
+        elif regular_left:
+            waiting = "The chaser is known once this round's regular games are played."
+        else:
+            # Dropouts left no one to chase: the two new players play for
+            # the game's spot on their own.
+            return Eligibility(open_seats, chase=True, seats=CHASE_GAME_NEW_PLAYERS)
         return Eligibility(open_seats, chase=True, waiting=waiting)
     if chaser not in named:
         return Eligibility(
@@ -968,6 +1151,138 @@ def _play_in_eligibility(
     return Eligibility(tuple(player_id for player_id in named if player_id in seats))
 
 
+def seating_gaps(
+    plan: TournamentPlan,
+    slots: Sequence[PlayerSlot],
+    results: Sequence[GameResult],
+    tiebreaks: Sequence[Tiebreak] = (),
+    dropouts: Sequence[Dropout] = (),
+) -> list[str]:
+    """Return seats that nobody is left to fill.
+
+    Dropouts can cause these, so :mod:`jparty.domain.tournament_drop_choices`
+    refuses a choice that would. Three things are checked:
+
+    - Each qualifying round knocks out a set number of players: its field
+      less the spots it fills. Every dropout that someone moves up for uses
+      one of them up, as does each wildcard added for a voided game and
+      each promotion to a dropped bye; a play-in game not yet played needs
+      three. This is counted ahead, before the round is played, so a gap
+      shows as soon as the dropout that causes it.
+    - In a round whose players are known, fewer players waiting to play
+      than its unplayed games have new seats.
+    - A play-in game with too few players.
+
+    A chase game with no one left to chase in it isn't a gap: its two new
+    players play it (see :attr:`Eligibility.seats`).
+
+    Args:
+        plan: The tournament's bracket, with any play-in games.
+        slots: The roster.
+        results: Every saved result.
+        tiebreaks: Every tiebreaker played.
+        dropouts: Every player who dropped out.
+
+    Returns:
+        One message per gap, or an empty list.
+    """
+    gone = dropped_ids(dropouts)
+    names = {slot.player_id: slot.actual_name.strip() for slot in slots}
+    named = [
+        slot.player_id
+        for slot in slots
+        if slot.actual_name.strip() and slot.player_id not in gone
+    ]
+    standings = tournament_standings(plan, results, tiebreaks, dropouts)
+    drops = round_drops(plan, dropouts)
+    by_game = results_by_game(results)
+    gaps: list[str] = []
+    for index, bracket_round in enumerate(plan.rounds):
+        later = plan.rounds[index + 1] if index + 1 < len(plan.rounds) else None
+        short = _knocked_out_short(bracket_round, later, drops[index], by_game)
+        if short:
+            gaps.append(
+                f"The {bracket_round.name} would have {short} too few players left "
+                "to move up into dropped players' spots."
+            )
+        unplayed = [
+            (game_key(bracket_round, game), game)
+            for game in bracket_round.games
+            if game_key(bracket_round, game) not in by_game
+        ]
+        if not unplayed:
+            continue
+        standing = standings[index]
+        play_ins = [key for key, game in unplayed if game.play_in]
+        if play_ins:
+            seats = _play_in_eligibility(standings[index - 1], named, names, standing)
+            needed = PLAYERS_PER_GAME * len(play_ins)
+            if not seats.waiting and len(seats.entrants) < needed:
+                gaps.append(
+                    f"{_game_name(play_ins[0])} would have only "
+                    f"{len(seats.entrants)} of its {needed} players."
+                )
+        entrants = round_entrants(plan, standings, index, names, gone)
+        if entrants.waiting:
+            continue
+        allowed = None if entrants.players is None else set(entrants.players)
+        waiting = [
+            player_id
+            for player_id in named
+            if player_id not in standing.scores
+            and (allowed is None or player_id in allowed)
+        ]
+        new_seats = 0
+        for key, game in unplayed:
+            if game.play_in:
+                continue
+            if game.chase:
+                new_seats += CHASE_GAME_NEW_PLAYERS
+            elif key in drops[index].replacement_games:
+                new_seats += PLAYERS_PER_GAME - 1
+            else:
+                new_seats += PLAYERS_PER_GAME
+        if len(waiting) < new_seats:
+            gaps.append(
+                f"The {bracket_round.name} would have {len(waiting)} players for "
+                f"{new_seats} open seats."
+            )
+    return gaps
+
+
+def _knocked_out_short(
+    bracket_round: BracketRound,
+    later: BracketRound | None,
+    drops: RoundDrops,
+    by_game: dict[str, list[GameResult]],
+) -> int:
+    """Return how many more players a qualifying round's dropouts need than it knocks out.
+
+    Args:
+        bracket_round: The round.
+        later: The round after it, which holds any play-in games.
+        drops: How dropouts change the round.
+        by_game: Every saved result, by game key.
+
+    Returns:
+        The shortfall, or 0.
+    """
+    layout = bracket_round.layout
+    if layout is None:
+        return 0
+    play_ins = [
+        game_key(later, game) for game in (later.games if later else ()) if game.play_in
+    ]
+    used = (
+        len(drops.slide)
+        + drops.extra_wildcards
+        + drops.promotions
+        + len(drops.replacement_games)
+        + sum(1 if key in by_game else PLAYERS_PER_GAME for key in play_ins)
+    )
+    return max(0, used - (layout.players - layout.spots))
+
+
 def seating_problem(
     eligibility: Eligibility, chosen: Sequence[str | None]
 ) -> str | None:
@@ -984,13 +1299,18 @@ def seating_problem(
     if eligibility.waiting:
         return eligibility.waiting
     picked = [player_id for player_id in chosen if player_id]
-    if len(picked) < PLAYERS_PER_GAME:
-        return f"Choose a player for each of the {PLAYERS_PER_GAME} podiums."
+    if len(picked) != eligibility.seats:
+        if eligibility.seats < PLAYERS_PER_GAME:
+            return (
+                f"No one is left to chase in this game: choose its "
+                f"{eligibility.seats} new players and leave one podium empty."
+            )
+        return f"Choose a player for each of the {eligibility.seats} podiums."
     if len(set(picked)) != len(picked):
         return "Choose a different player for each podium."
     if any(player_id not in eligibility.player_ids for player_id in picked):
         return "One of the chosen players can't play this game."
-    if eligibility.chase:
+    if eligibility.chase and eligibility.seats == PLAYERS_PER_GAME:
         chasers = [
             player_id for player_id in picked if player_id in eligibility.chasers
         ]
@@ -1100,7 +1420,7 @@ def advancement_conflicts(
         entrants = round_entrants(plan, standings, index, names)
         # Entrants here include players who dropped out later, since their
         # games stay as played. Play-in players come from the round before
-        # without advancing out of it.
+        # without advancing out of it, so they may only sit in play-in games.
         extra = set(standings[index - 1].play_in_players) if index > 0 else set()
         if entrants.waiting:
             feeders = [index - 1]
@@ -1110,17 +1430,38 @@ def advancement_conflicts(
             allowed = {p for feeder in feeders for p in standings[feeder].scores}
         else:
             allowed = None if entrants.players is None else set(entrants.players)
-        if allowed is not None:
-            allowed |= extra
+        regular_left = [
+            game_key(bracket_round, game)
+            for game in bracket_round.games
+            if not game.chase
+            and not game.play_in
+            and game_key(bracket_round, game) not in by_game
+        ]
         for game in bracket_round.games:
             key = game_key(bracket_round, game)
             rows = by_game.get(key, [])
             if not rows:
                 continue
+            if game.chase and regular_left and bracket_round.layout is not None:
+                # The chaser comes from the regular games, so a chase game
+                # can't stand before they're all played (for example after
+                # a regular game's results were deleted).
+                left = ", ".join(_game_name(other) for other in regular_left)
+                were, are = ("was", "is") if len(regular_left) == 1 else ("were", "are")
+                players = ", ".join(name(row.player_id, row) for row in rows)
+                problems.append(
+                    f"{_game_name(key)}: {players} played it before {left} {were} "
+                    f"played. Delete its results too, and replay it once {left} "
+                    f"{are} played."
+                )
+                continue
             chaser = standing.chasers.get(key) if game.chase else None
-            if allowed is not None:
+            seat_ok = allowed
+            if allowed is not None and game.play_in:
+                seat_ok = allowed | extra
+            if seat_ok is not None:
                 for row in rows:
-                    if row.player_id != chaser and row.player_id not in allowed:
+                    if row.player_id != chaser and row.player_id not in seat_ok:
                         problems.append(
                             f"{_game_name(key)}: {name(row.player_id, row)} played, "
                             f"but they didn't advance into the {bracket_round.name}."
@@ -1129,12 +1470,13 @@ def advancement_conflicts(
             if (
                 planned is not None
                 and chaser != planned
-                and chaser != standing.original_chasers.get(key)
+                and chaser not in standing.accepted_chasers.get(key, frozenset())
             ):
                 played = (
                     f"{name(chaser)} chased"
                     if chaser
-                    else "No one from the regular games chased"
+                    else ", ".join(name(row.player_id, row) for row in rows)
+                    + " played it with no chaser"
                 )
                 problems.append(
                     f"{_game_name(key)}: {played}, but the chaser should be "

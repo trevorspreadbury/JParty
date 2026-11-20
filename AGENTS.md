@@ -109,6 +109,57 @@ them and keeps each row's chosen coordinates stable across reloads.
 If you touch DD logic, run `tests/unit/test_game_loading.py` and the relevant
 Qt tests in `tests/qt/test_welcome_widget.py` and `tests/qt/test_board_picker.py`.
 
+### Tournament mode
+
+Tournament PRs target the `tournament` integration branch, not `dev`.
+
+Tournament rules are pure functions over plain data in
+`src/jparty/domain/tournament*.py`. Widgets call them; they don't decide who
+plays, advances, or may resume. Put a new rule in the domain, with a unit
+test, even if only one widget needs it today.
+
+Domain modules:
+
+- `roster.py`: player slots and the Google Form sign-ups linked to them
+- `tournament.py`: bracket planning (qualifying rounds, wildcards, chase
+  games, the optional second round and its byes)
+- `tournament_setup.py`: bracket settings, each game's board, and
+  `game_key`, which builds every game key
+- `tournament_advancement.py`: who advances, chasers, byes, tiebreaker
+  ties, who may sit in a game, and conflicts after a fixed result
+- `tournament_dropouts.py`: dropout records and how they change each round;
+  `tournament_drop_choices.py`: the host's choices for a dropout, and
+  applying or undoing one
+- `tournament_play.py`: result rows and player introductions;
+  `tournament_rankings.py`: rankings; `tournament_saves.py`: finding the
+  saved games of half-played tournament games; `tournament_host.py`: the
+  `/host` phone page's data
+- `tournament_store.py`: reading and writing the tournament folder
+
+Elsewhere: `services/board_prep.py` builds and caches every board ahead of
+time; `ui/widgets/tournament_window.py` (with `tournament_editor.py`,
+`tournament_roster.py`, `tournament.py`, `tournament_games.py`,
+`board_setup.py`, `tournament_prep.py`, and `tournament_rankings.py`) is the
+setup window; `ui/widgets/tournament_play.py` and `tournament_dropouts.py`
+are the welcome screen's play panel and dropout dialogs; and
+`web/handlers.py` with `assets/buzzer/templates/host.html` serves `/host`.
+`Game` in `domain/game_engine.py` records a tournament game's results when it
+ends.
+
+Each tournament's folder, `<data dir>/tournaments/<name>/`, is a
+compatibility contract, like `general.json`. That covers `tournament.json`,
+`players.csv`, `results.csv`, `tiebreaks.csv`, `dropouts.csv`,
+`voided_results.csv`, and `used_prompts.csv`. The game key format
+`"<Round>: <Game>"` (for example `"Quarterfinals: Chase 1"`) is stored in
+several of those files and in tournament games' `general.json`. Don't change
+file columns or the key format without loading older files, and update
+`HOST.md`, which documents the files for hosts.
+
+If you touch tournament rules, run `tests/unit/test_tournament*.py`. For the
+play panel and welcome-screen flow, also run `tests/qt/test_welcome_tournament.py`,
+`tests/qt/test_tournament_prep.py`, `tests/qt/test_drop_player.py`, and
+`tests/integration/test_tournament_results.py`.
+
 ### Saved game state
 
 Saved game metadata lives in `general.json`; clue history lives in

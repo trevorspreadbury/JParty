@@ -266,6 +266,11 @@ def save_tournament(
 def load_tournament(folder: Path) -> tuple[TournamentSettings, list[PlayerSlot]]:
     """Read a tournament's settings and roster from its folder.
 
+    A roster row with no ``player_id``, or one already used above it, gets a
+    new id (see :func:`parse_players_csv`). ``players.csv`` is written back
+    straight away, so the id is the same on every later load and results
+    saved under it keep matching the player.
+
     Args:
         folder: The tournament's folder.
 
@@ -273,7 +278,8 @@ def load_tournament(folder: Path) -> tuple[TournamentSettings, list[PlayerSlot]]
         The settings and the roster.
 
     Raises:
-        TournamentFileError: If a file is missing or can't be read.
+        TournamentFileError: If a file is missing, can't be read, or needs
+            new player ids and can't be written.
     """
     settings_path = folder / TOURNAMENT_FILE
     players_path = folder / PLAYERS_FILE
@@ -326,7 +332,15 @@ def load_tournament(folder: Path) -> tuple[TournamentSettings, list[PlayerSlot]]
         logo_file=logo_file,
         retired_boards=retired,
     )
-    return settings, parse_players_csv(players_text)
+    slots, new_ids = _parse_players(players_text)
+    if new_ids:
+        try:
+            write_text_atomic(players_path, players_csv_text(slots))
+        except OSError as exc:
+            raise TournamentFileError(
+                f"Couldn't save new player ids to {PLAYERS_FILE}: {exc}"
+            ) from exc
+    return settings, slots
 
 
 def _copy_file_atomic(source: Path, destination: Path) -> None:
@@ -386,7 +400,7 @@ def parse_players_csv(text: str) -> list[PlayerSlot]:
     A row with a timestamp is linked to a sign-up. Missing columns read as
     blank, so a hand-made file with only ``actual_name`` works. A row with no
     ``player_id`` (or one already used above it, as in a copied row) gets a
-    new id, which is saved on the next save.
+    new id. :func:`load_tournament` saves such ids straight away.
 
     Args:
         text: CSV text.
@@ -397,13 +411,22 @@ def parse_players_csv(text: str) -> list[PlayerSlot]:
     Raises:
         TournamentFileError: If the file has no ``actual_name`` column.
     """
+    return _parse_players(text)[0]
+
+
+def _parse_players(text: str) -> tuple[list[PlayerSlot], bool]:
+    """Return the roster in ``text`` and whether any row got a new id.
+
+    See :func:`parse_players_csv`.
+    """
     reader = csv.DictReader(io.StringIO(text, newline=""))
     if reader.fieldnames is None:
-        return []
+        return [], False
     if "actual_name" not in reader.fieldnames:
         raise TournamentFileError(f"{PLAYERS_FILE} has no actual_name column.")
     slots = []
     seen_ids: set[str] = set()
+    new_ids = False
     for row in reader:
 
         def value(column: str, row: dict = row) -> str:
@@ -426,6 +449,7 @@ def parse_players_csv(text: str) -> list[PlayerSlot]:
         player_id = value("player_id")
         if not player_id or player_id in seen_ids:
             player_id = new_player_id()
+            new_ids = True
         seen_ids.add(player_id)
         slots.append(
             PlayerSlot(
@@ -434,7 +458,7 @@ def parse_players_csv(text: str) -> list[PlayerSlot]:
                 player_id=player_id,
             )
         )
-    return slots
+    return slots, new_ids
 
 
 def results_csv_text(results: Sequence[GameResult]) -> str:
@@ -884,32 +908,106 @@ def save_tournament_data(
 ) -> None:
     """Write a dropout's changes: voided results, dropouts, results, and setup.
 
-    Voided results are written first, so a game's results are never lost if
-    a later write fails.
+    The old contents of each file are kept before anything is written. If
+    any write fails, every file is put back as it was, so a dropout is never
+    left half saved (for example when ``results.csv`` is open in a
+    spreadsheet that locks it).
 
     Args:
         folder: The tournament's folder.
         settings: The tournament's settings; its boards are updated from
-            ``data``.
+            ``data``, and put back if the save fails.
         data: The changed tournament.
 
     Raises:
-        TournamentFileError: If a file can't be written.
+        TournamentFileError: If a file can't be written. The files are then
+            as they were, unless putting one back failed too, which the
+            message names.
     """
     folder = Path(folder)
+    names = (
+        VOIDED_RESULTS_FILE,
+        DROPOUTS_FILE,
+        RESULTS_FILE,
+        PLAYERS_FILE,
+        TOURNAMENT_FILE,
+    )
+    try:
+        before = {name: _read_bytes(folder / name) for name in names}
+    except OSError as exc:
+        raise TournamentFileError(f"Couldn't save the dropout: {exc}") from exc
+    old_boards = (
+        settings.boards,
+        settings.unassigned_boards,
+        settings.retired_boards,
+    )
     try:
         write_text_atomic(folder / VOIDED_RESULTS_FILE, results_csv_text(data.voided))
         write_text_atomic(folder / DROPOUTS_FILE, dropouts_csv_text(data.dropouts))
-    except OSError as exc:
-        raise TournamentFileError(f"Couldn't save the dropout: {exc}") from exc
-    save_results(folder, data.results)
-    settings.boards = dict(data.boards)
-    settings.unassigned_boards = list(data.unassigned)
-    settings.retired_boards = list(data.retired)
-    try:
+        save_results(folder, data.results)
+        settings.boards = dict(data.boards)
+        settings.unassigned_boards = list(data.unassigned)
+        settings.retired_boards = list(data.retired)
         save_tournament(folder.parent, settings, data.slots)
-    except OSError as exc:
-        raise TournamentFileError(f"Couldn't save the tournament: {exc}") from exc
+    except (OSError, TournamentFileError) as exc:
+        settings.boards, settings.unassigned_boards, settings.retired_boards = (
+            old_boards
+        )
+        unrestored = _restore_files(folder, before)
+        if unrestored:
+            message = (
+                f"Couldn't save the dropout: {exc}. Couldn't put back "
+                f"{', '.join(unrestored)} either; check them before going on."
+            )
+        else:
+            message = f"Couldn't save the dropout, so nothing changed: {exc}"
+        raise TournamentFileError(message) from exc
+
+
+def _read_bytes(path: Path) -> bytes | None:
+    """Return a file's contents, or ``None`` if it doesn't exist."""
+    try:
+        return path.read_bytes()
+    except FileNotFoundError:
+        return None
+
+
+def _restore_files(folder: Path, contents: dict[str, bytes | None]) -> list[str]:
+    """Put files back as they were, and return the names that couldn't be.
+
+    Args:
+        folder: The tournament's folder.
+        contents: Each file's old contents by name, or ``None`` for a file
+            that didn't exist, which is removed.
+
+    Returns:
+        Names of the files that couldn't be put back.
+    """
+    failed = []
+    for name, old in contents.items():
+        path = folder / name
+        try:
+            if old is None:
+                path.unlink(missing_ok=True)
+            elif _read_bytes(path) != old:
+                _write_bytes_atomic(path, old)
+        except OSError:
+            failed.append(name)
+    return failed
+
+
+def _write_bytes_atomic(path: Path, contents: bytes) -> None:
+    """Write ``contents`` to ``path`` so readers never see a partial file."""
+    fd, temp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "wb") as temp_file:
+            temp_file.write(contents)
+        Path(temp_name).replace(path)
+    except BaseException:
+        Path(temp_name).unlink(missing_ok=True)
+        raise
 
 
 def used_prompts_csv_text(used: Sequence[tuple[str, int, str]]) -> str:

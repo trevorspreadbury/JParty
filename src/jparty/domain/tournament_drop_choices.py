@@ -22,6 +22,7 @@ from jparty.domain.tournament_advancement import (
     advancement_conflicts,
     promotion_choice,
     round_entrants,
+    seating_gaps,
     tournament_standings,
 )
 from jparty.domain.tournament_dropouts import (
@@ -375,12 +376,52 @@ def _option(
     detail: str,
     problem: str = "",
 ) -> DropOption:
-    """Return an option, warning about played games it would no longer match."""
+    """Return an option, warning about played games it would no longer match.
+
+    An option that would leave seats nobody can fill (see
+    :func:`seating_gaps`) gets a problem instead, so the bracket never ends
+    up stuck. A replacement isn't checked, since the new player fills the
+    seat.
+    """
     if not problem:
-        new = conflicts_added(data, apply_drop(data, dropout))
+        after = apply_drop(data, dropout)
+        if dropout.choice != DROP_REPLACE:
+            gaps = gaps_added(data, after)
+            if gaps:
+                return DropOption(dropout, label, detail, _gap_problem(gaps))
+        new = conflicts_added(data, after)
         if new:
             detail += " Warning: " + " ".join(new)
     return DropOption(dropout, label, detail, problem)
+
+
+def _gap_problem(gaps: list[str]) -> str:
+    """Return why an option is refused, from the gaps it would leave."""
+    return "Nobody would be left to take their seat: " + " ".join(gaps)
+
+
+def gaps_added(before: TournamentData, after: TournamentData) -> list[str]:
+    """Return seats nobody can fill in ``after`` that ``before`` didn't have.
+
+    Args:
+        before: The tournament now.
+        after: The tournament after a change.
+
+    Returns:
+        The new gap messages.
+    """
+
+    def gaps(data: TournamentData) -> list[str]:
+        """Return a tournament's gaps, or none if its bracket doesn't work."""
+        plan = data.plan
+        if not plan.valid:
+            return []
+        return seating_gaps(
+            plan, data.slots, data.results, data.tiebreaks, data.dropouts
+        )
+
+    old = set(gaps(before))
+    return [message for message in gaps(after) if message not in old]
 
 
 def conflicts_added(before: TournamentData, after: TournamentData) -> list[str]:
@@ -457,8 +498,9 @@ def apply_drop(
 def undo_problem(data: TournamentData, dropout: Dropout) -> str:
     """Return why ``dropout`` can't be taken back, or ``""``.
 
-    A voided game that has been replayed can't be restored, and taking
-    back a reduced field must still fit the games already played.
+    A voided game that has been replayed can't be restored, taking back a
+    reduced field must still fit the games already played, and the undo
+    mustn't leave seats nobody can fill (see :func:`gaps_added`).
 
     Args:
         data: The tournament.
@@ -486,6 +528,9 @@ def undo_problem(data: TournamentData, dropout: Dropout) -> str:
     if missing:
         games = ", ".join(key.split(": ", 1)[-1] for key in missing)
         return f"The bracket wouldn't have the games already played ({games})."
+    gaps = gaps_added(data, after)
+    if gaps:
+        return "Nobody would be left for every seat: " + " ".join(gaps)
     return ""
 
 

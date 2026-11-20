@@ -140,8 +140,10 @@ Field notes:
 - `tournament` (tournament games only): `{"name": ..., "game_key": ...}`,
   the tournament (its folder under `tournaments/`) and the bracket game,
   such as `"Quarterfinals: QF 1"`. When the game ends, its results go to
-  that tournament's `results.csv`, including after a resume. Saves without
-  it are regular games.
+  that tournament's `results.csv`, including after a resume. A save that
+  can no longer be resumed as a tournament game (a player dropped out or
+  can't play the game, or the game has results from another save) resumes
+  as a regular game and logs nothing. Saves without it are regular games.
 - `jparty_version`: the JParty version that started the session, kept as-is
   when the game is resumed. This is for diagnosing saves only; between
   releases, dev builds all report the same number.

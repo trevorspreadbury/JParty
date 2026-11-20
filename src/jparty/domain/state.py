@@ -1082,6 +1082,11 @@ class LoadedSave:
             ``data`` is always a playable game.
         current_players: Saved players with their current names, for the
             lobby's reclaim flow.
+        tournament_problem: For a tournament game's save, why it can't be
+            resumed as one (see
+            :func:`jparty.domain.tournament_saves.resume_problem`), or
+            ``None``. Such a save resumes as a regular game, so it logs no
+            results.
     """
 
     path: Path
@@ -1089,6 +1094,7 @@ class LoadedSave:
     general_state: dict
     saved_game: SavedGameData
     current_players: list[dict]
+    tournament_problem: str | None = None
 
 
 def load_saved_game_data(general_state: dict) -> SavedGameData:

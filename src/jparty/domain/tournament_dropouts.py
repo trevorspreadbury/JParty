@@ -117,6 +117,9 @@ class RoundDrops:
             goes to the best non-winner of the round's other games, in the
             order they were voided. Only used when the voided round is the
             first round, so there's no earlier round to take a player from.
+        slide_order: :attr:`slide`, in the order the players dropped out.
+            A chase game played between two dropouts keeps the chaser it
+            had then.
     """
 
     slide: frozenset[str] = frozenset()
@@ -124,6 +127,7 @@ class RoundDrops:
     byes_out: dict[str, str] = field(default_factory=dict)
     pending_promotions: tuple[str, ...] = ()
     replacement_games: tuple[str, ...] = ()
+    slide_order: tuple[str, ...] = ()
 
     @property
     def promotions(self) -> int:
@@ -265,7 +269,7 @@ def round_drops(plan: TournamentPlan, dropouts: Sequence[Dropout]) -> list[Round
         One :class:`RoundDrops` per round of ``plan``.
     """
     names = [bracket_round.name for bracket_round in plan.rounds]
-    slide: list[set[str]] = [set() for _ in names]
+    slide: list[list[str]] = [[] for _ in names]
     extra = [0] * len(names)
     byes_out: list[dict[str, str]] = [{} for _ in names]
     replacements: list[list[str]] = [[] for _ in names]
@@ -275,7 +279,8 @@ def round_drops(plan: TournamentPlan, dropouts: Sequence[Dropout]) -> list[Round
             continue
         index = names.index(dropout.round_name)
         if dropout.choice == DROP_SLIDE:
-            slide[index].add(dropout.player_id)
+            if dropout.player_id not in slide[index]:
+                slide[index].append(dropout.player_id)
         elif dropout.choice == DROP_VOID:
             if index > 0:
                 extra[index - 1] += 1
@@ -294,6 +299,7 @@ def round_drops(plan: TournamentPlan, dropouts: Sequence[Dropout]) -> list[Round
             byes_out[index],
             tuple(pending[index]),
             tuple(replacements[index]),
+            tuple(slide[index]),
         )
         for index in range(len(names))
     ]

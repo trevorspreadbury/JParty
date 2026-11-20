@@ -936,7 +936,12 @@ QCheckBox {{
         self.tournament_start_button.setEnabled(enabled)
         if problem is None and not board_ready:
             problem = "Loading the board..."
-        self.tournament_panel.show_status(problem or "Ready to start.", not enabled)
+        # Keep the panel's note on why the game's save can't be resumed;
+        # HOST.md promises the status line says why.
+        self.tournament_panel.show_status(
+            self.tournament_panel.with_resume_note(problem or "Ready to start."),
+            not enabled,
+        )
         self.summary_label.setText(self._tournament_summary_text)
 
     def _check_tournament_resume(self) -> None:
@@ -1832,6 +1837,24 @@ QCheckBox {{
                 f"Saved players: {len(saved_players)}",
             ]
         )
+        problem = getattr(loaded, "tournament_problem", None)
+        if problem:
+            # The game resumes as a regular game, so nothing is logged over
+            # the tournament's results; see Game.apply_saved_game.
+            logging.warning(
+                "Tournament save %s resumes as a regular game: %s",
+                selected_dir,
+                problem,
+            )
+            self._base_summary_text += (
+                "\n\nThis tournament game's results won't be saved: " + problem
+            )
+            QMessageBox.warning(
+                self,
+                "Tournament Results Won't Be Saved",
+                f"{problem}\n\nThis save resumes as a regular game, so its "
+                "results won't be saved to the tournament.",
+            )
         self.check_start()
 
     def check_start(self) -> None:
