@@ -152,6 +152,8 @@ WINDOWPAL.setColor(
 )
 JBLUE = QColor("#1010a1")
 DARKBLUE = QColor("#0b0b74")
+# Host-only category hints (J-Archive's category comments) under a category name.
+CATEGORY_COMMENT_STYLE = "color: #ffcc00; font-style: italic;"
 CARDPAL = QPalette()
 CARDPAL.setColor(QPalette.ColorRole.Window, JBLUE)
 CARDPAL.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))

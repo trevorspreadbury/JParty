@@ -26,6 +26,16 @@ class GameParser:
             return str(comment_node.get_text(" ", strip=True))
         return str(comment_node).strip()
 
+    def category_comment(self, category_node: object) -> str:
+        """Return the host comment shown beneath one category, or ``""``.
+
+        J-Archive puts these in a ``category_comments`` cell next to the
+        category name, for example ``(Ken: Each answer ends in "-ing".)``.
+        """
+        if category_node is None:
+            return ""
+        return self.normalize_comments(category_node.find(class_="category_comments"))
+
     def list_to_game(self, rows: list[list[str]]) -> GameData:
         """Convert a Google Sheets CSV matrix into ``GameData``."""
         alpha = "BCDEFG"
@@ -132,9 +142,13 @@ class GameParser:
         boards = []
         rounds = soup.find_all(class_="round")
         for round_index, round_node in enumerate(rounds):
+            category_nodes = round_node.find_all(class_="category")
             categories = [
                 category.find(class_="category_name").text
-                for category in round_node.find_all(class_="category")
+                for category in category_nodes
+            ]
+            category_comments = [
+                self.category_comment(category) for category in category_nodes
             ]
             questions = []
             daily_double_count = 0
@@ -174,17 +188,25 @@ class GameParser:
                         image=image_likely,
                         image_url=image_url,
                         actual_results=self.get_actual_player_results(clue, value),
+                        category_comment=category_comments[index[0]],
                     )
                 )
-            boards.append(Board(categories, questions, dj=round_index == 1))
+            boards.append(
+                Board(
+                    categories,
+                    questions,
+                    dj=round_index == 1,
+                    category_comments=category_comments,
+                )
+            )
 
         final_rounds = soup.find_all(class_="final_round")
         if not final_rounds:
             return None
         final_round = final_rounds[0]
-        category = (
-            final_round.find_all(class_="category")[0].find(class_="category_name").text
-        )
+        final_category_node = final_round.find_all(class_="category")[0]
+        category = final_category_node.find(class_="category_name").text
+        final_category_comment = self.category_comment(final_category_node)
         clue = final_round.find_all(class_="clue")[0]
         text_obj = clue.find(class_="clue_text")
         if text_obj is None:
@@ -196,8 +218,9 @@ class GameParser:
             self.findanswer(final_round),
             category,
             actual_results=self.get_actual_player_final(clue),
+            category_comment=final_category_comment,
         )
-        boards.append(FinalBoard(category, question))
+        boards.append(FinalBoard(category, question, final_category_comment))
         return GameData(boards, date, comments)
 
     def get_game_sum(self, soup: object) -> tuple[str, object]:

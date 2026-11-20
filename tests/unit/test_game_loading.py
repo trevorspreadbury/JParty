@@ -10,6 +10,7 @@ from jparty.services.game_loader import (
     RANDOM_GAME_MAX_ATTEMPTS,
     advanced_standard_board_selection,
     build_game_from_board_selection_configs,
+    clone_round,
     describe_source_round,
     final_board_selection,
     find_random_game,
@@ -607,3 +608,35 @@ def test_load_tiebreaker_clues_uses_entered_or_random_game() -> None:
     # The cancel check reaches the random-game search, so Close Game can
     # stop it fetching more games.
     assert searches == [is_cancelled]
+
+
+def test_board_pads_category_comments_to_its_categories() -> None:
+    """Boards without hints, or with too few, get an empty hint per category."""
+    assert Board(["A", "B"], []).category_comments == ["", ""]
+    assert Board(["A", "B"], [], category_comments=["hint"]).category_comments == [
+        "hint",
+        "",
+    ]
+    assert Board(["A"], [], category_comments=["x", "y"]).category_comments == ["x"]
+    final = FinalBoard("Final", Question((0, 0), "clue", "answer", "Final"))
+    assert final.category_comments == [""]
+
+
+def test_clone_round_keeps_category_comments() -> None:
+    """Composed boards keep each category's host hint from the source board."""
+    question = Question((0, 0), "clue", "answer", "A", 200, category_comment="hint")
+    board = Board(["A", "B"], [question], dj=True, category_comments=["hint", ""])
+    final = FinalBoard(
+        "Final",
+        Question((0, 0), "clue", "answer", "Final", category_comment="final hint"),
+        category_comment="final hint",
+    )
+
+    board_copy = clone_round(board)
+    final_copy = clone_round(final)
+
+    assert board_copy.category_comments == ["hint", ""]
+    assert board_copy.category_comments is not board.category_comments
+    assert board_copy.get_question(0, 0).category_comment == "hint"
+    assert final_copy.category_comments == ["final hint"]
+    assert final_copy.question.category_comment == "final hint"

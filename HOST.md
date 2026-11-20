@@ -767,6 +767,12 @@ Back to [Table of Contents](#table-of-contents).
 6. Continue until the clue is resolved.
 7. Advance with `Space` whenever prompted.
 
+Some J-Archive categories come with a hint from the TV host, such as
+"(Ken: Each response ends in -ing.)". The host screen shows it in gold
+italics under the category name, so you can read it out when the category
+comes up. The audience screen doesn't show it. Final Jeopardy and
+tiebreaker categories show their hint too, until you reveal the clue.
+
 ### Keyboard flow
 
 The main host keys are:
