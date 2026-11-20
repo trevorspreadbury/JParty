@@ -3,7 +3,8 @@
 :class:`TournamentEditor` puts the roster (:mod:`.tournament_roster`), the
 bracket designer (:mod:`.tournament`), and board assignments
 (:mod:`.tournament_games`) on tabs, and saves them together to the
-tournament's folder.
+tournament's folder. A fourth tab shows the rankings so far
+(:mod:`.tournament_rankings`).
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from jparty.domain.tournament_dropouts import (
     field_size,
 )
 from jparty.domain.tournament_play import played_game_keys
+from jparty.domain.tournament_rankings import tournament_rankings
 from jparty.domain.tournament_setup import TournamentBoard, forget_removed_players
 from jparty.domain.tournament_store import (
     LOGO_SUFFIXES,
@@ -44,6 +46,7 @@ from jparty.domain.tournament_store import (
     TournamentSettings,
     load_dropouts,
     load_results,
+    load_tiebreaks,
     logo_problem,
     save_tournament,
     tournament_name_problem,
@@ -55,6 +58,7 @@ from jparty.ui.widgets.tournament_games import (
     dropped_played_games_problem,
     missing_media_ids,
 )
+from jparty.ui.widgets.tournament_rankings import RankingsTable
 from jparty.ui.widgets.tournament_roster import RosterEditor
 
 LAYOUT_SPACING = 8
@@ -62,6 +66,7 @@ LOGO_PREVIEW_SIZE = 48
 TAB_PLAYERS = 0
 TAB_BRACKET = 1
 TAB_GAMES = 2
+TAB_RANKINGS = 3
 PROBLEM_STYLE = "QLabel { color: #b00020; }"
 
 
@@ -153,7 +158,10 @@ class TournamentEditor(QWidget):
         )
         self.bracket = BracketDesigner(self, roster_sets_players=True)
         games_options = {} if pick_board is None else {"pick_board": pick_board}
-        self.games = GamesEditor(self, missing_media=missing_media, **games_options)
+        self.games = GamesEditor(
+            self, missing_media=missing_media, run_async=run_async, **games_options
+        )
+        self.rankings = RankingsTable(self)
         self.tabs = QTabWidget(self)
         # JParty's app style draws tabs as plain text with no sign of the
         # current one, so use Fusion for the tab bar and its frame only.
@@ -165,6 +173,8 @@ class TournamentEditor(QWidget):
         self.tabs.addTab(self.roster, "Players")
         self.tabs.addTab(self.bracket, "Bracket")
         self.tabs.addTab(self.games, "Games")
+        self.tabs.addTab(self.rankings, "Rankings")
+        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         self.status_label = QLabel(self)
         self.status_label.setWordWrap(True)
@@ -314,6 +324,7 @@ class TournamentEditor(QWidget):
             if answer != QMessageBox.StandardButton.Discard:
                 return False
         self.roster.drop_pending_fetch()
+        self.games.cancel_prepare()
         return True
 
     def choose_logo(self) -> None:
@@ -378,6 +389,39 @@ class TournamentEditor(QWidget):
             ``None``.
         """
         self.games.set_played(self._played_game_keys())
+        self.refresh_rankings()
+
+    def refresh_rankings(self) -> None:
+        """Rank the roster from the saved results.
+
+        The roster and bracket shown are used, so unsaved roster edits show
+        up too; results, tiebreakers, and dropouts come from the folder.
+
+        Returns:
+            ``None``.
+        """
+        results, tiebreaks = [], []
+        if not self.creating:
+            folder = self.root / self.settings.name
+            try:
+                results = load_results(folder)
+                tiebreaks = load_tiebreaks(folder)
+            except TournamentFileError as exc:
+                logging.error("Couldn't read tournament results: %s", exc)
+        self.rankings.show_rankings(
+            tournament_rankings(
+                self._played_plan(),
+                self.roster.slots,
+                results,
+                tiebreaks,
+                self.dropouts,
+            )
+        )
+
+    def _on_tab_changed(self, index: int) -> None:
+        """Rank the players again when the Rankings tab is shown."""
+        if index == TAB_RANKINGS:
+            self.refresh_rankings()
 
     def _played_game_keys(self) -> set[str]:
         """Return the keys of games with saved results, so their boards lock."""

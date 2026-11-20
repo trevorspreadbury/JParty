@@ -8,10 +8,16 @@ the players who must not play a board; they stay with the board wherever it
 goes. Boards can be swapped between games, and boards whose game leaves the
 bracket wait in the pool. The rules live in
 :mod:`jparty.domain.tournament_setup`.
+
+"Download All Games" builds every board on a worker thread, saving its
+J-Archive games to the local cache so game day doesn't need the network
+(see :mod:`jparty.services.board_prep`). "Preview All Media..." does the
+same, then shows every board's question media.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -43,8 +49,11 @@ from jparty.domain.tournament_setup import (
     unassign_board,
     with_cant_play,
 )
+from jparty.services.board_prep import PreparedBoard, prepare_boards
 from jparty.services.question_media import detect_question_media
+from jparty.ui.welcome_loader import LatestRequest, WelcomeLoader
 from jparty.ui.widgets.board_setup import pick_board
+from jparty.ui.widgets.tournament_prep import show_board_media_preview
 
 LAYOUT_SPACING = 8
 COLUMN_GAME = 0
@@ -57,6 +66,7 @@ PLAYED_SUFFIX = " (played)"
 NO_BOARD_TEXT = "Unassigned"
 NEW_POOL_BOARD_TARGET = "New unassigned board"
 SWAP_GAME_COUNT = 2
+POOL_BOARD_KEY = "Unassigned board {number}"
 PROBLEM_STYLE = "QLabel { color: #b00020; }"
 
 # (player_id, name) for each named player on the roster, in roster order.
@@ -188,6 +198,10 @@ class GamesEditor(QWidget):
     """
 
     games_changed = pyqtSignal()
+    # (request id, boards done, boards) while boards are prepared.
+    prepare_progress_trigger = pyqtSignal(int, int, int)
+    # (request id, prepared boards, whether to preview their media).
+    prepare_result_trigger = pyqtSignal(int, object, bool)
 
     def __init__(
         self,
@@ -199,6 +213,11 @@ class GamesEditor(QWidget):
         choose_cant_play: Callable[
             [str, RosterPlayers, Sequence[str], QWidget | None], list[str] | None
         ] = choose_cant_play,
+        run_async: Callable[[Callable[[], None]], object] | None = None,
+        prepare: Callable[..., list[PreparedBoard]] = prepare_boards,
+        preview_media: Callable[
+            [Sequence[PreparedBoard], QWidget | None], None
+        ] = show_board_media_preview,
     ) -> None:
         """Build the games table and the unassigned pool.
 
@@ -211,6 +230,13 @@ class GamesEditor(QWidget):
                 media; tests pass a fake.
             choose_cant_play: Asks the host which players can't play a
                 board; returns ``None`` if cancelled. Tests pass a fake.
+            run_async: Runs a callable off the UI thread; tests pass one that
+                runs it inline.
+            prepare: Builds and caches boards, as
+                :func:`jparty.services.board_prep.prepare_boards` does;
+                tests pass a fake.
+            preview_media: Shows prepared boards' question media; tests pass
+                a fake.
 
         Returns:
             ``None``.
@@ -219,6 +245,11 @@ class GamesEditor(QWidget):
         self.pick_board = pick_board
         self.missing_media = missing_media
         self.choose_cant_play = choose_cant_play
+        self.run_async = run_async or WelcomeLoader().run_async
+        self.prepare = prepare
+        self.preview_media = preview_media
+        # The newest Download All Games or Preview All Media run.
+        self._prepare_request = LatestRequest()
         self.boards: dict[str, TournamentBoard] = {}
         self.unassigned: list[TournamentBoard] = []
         self._players: list[tuple[str, str]] = []
@@ -295,6 +326,25 @@ class GamesEditor(QWidget):
         pool_buttons.addWidget(self.delete_pool_button)
         pool_buttons.addStretch(1)
 
+        self.download_button = QPushButton("Download All Games", self)
+        self.download_button.setToolTip(
+            "Load every board now and save its J-Archive games on this computer,"
+            " so playing doesn't need the internet."
+        )
+        self.download_button.clicked.connect(self.download_all)
+        self.preview_button = QPushButton("Preview All Media...", self)
+        self.preview_button.setToolTip(
+            "Load every board, then show each one's question media with its"
+            " correct response."
+        )
+        self.preview_button.clicked.connect(self.preview_all_media)
+        self.prepare_label = QLabel(self)
+        self.prepare_label.setWordWrap(True)
+        prepare_buttons = QHBoxLayout()
+        prepare_buttons.addWidget(self.download_button)
+        prepare_buttons.addWidget(self.preview_button)
+        prepare_buttons.addWidget(self.prepare_label, 1)
+
         layout = QVBoxLayout(self)
         layout.setSpacing(LAYOUT_SPACING)
         # The app style sets layout margins to zero, so set them here.
@@ -305,6 +355,9 @@ class GamesEditor(QWidget):
         layout.addWidget(self.pool_label)
         layout.addWidget(self.pool_list)
         layout.addLayout(pool_buttons)
+        layout.addLayout(prepare_buttons)
+        self.prepare_progress_trigger.connect(self._on_prepare_progress)
+        self.prepare_result_trigger.connect(self._on_prepare_result)
         self._redraw()
 
     def set_boards(
@@ -586,6 +639,133 @@ class GamesEditor(QWidget):
         if 0 <= pool_index < len(self.unassigned):
             del self.unassigned[pool_index]
             self._changed()
+
+    def boards_to_prepare(self) -> list[tuple[str, str, list[dict]]]:
+        """Return ``(key, label, board_selections)`` for every board.
+
+        Games' boards come first, in playing order, then the unassigned
+        boards, which may still be swapped in.
+        """
+        boards = [
+            (key, self.boards[key].label, list(self.boards[key].board_selections))
+            for key in self._game_keys
+            if key in self.boards
+        ]
+        boards += [
+            (
+                POOL_BOARD_KEY.format(number=index + 1),
+                board.label,
+                list(board.board_selections),
+            )
+            for index, board in enumerate(self.unassigned)
+        ]
+        return boards
+
+    def download_all(self) -> None:
+        """Load every board and cache its games, off the UI thread.
+
+        Returns:
+            ``None``.
+        """
+        self._start_prepare(preview=False)
+
+    def preview_all_media(self) -> None:
+        """Load every board, then show its question media.
+
+        Returns:
+            ``None``.
+        """
+        self._start_prepare(preview=True)
+
+    def cancel_prepare(self) -> None:
+        """Stop any board loading still running and drop its result.
+
+        Returns:
+            ``None``.
+        """
+        self._prepare_request.cancel()
+        self._set_preparing(False)
+
+    def _start_prepare(self, preview: bool) -> None:
+        """Prepare every board on a worker thread."""
+        boards = self.boards_to_prepare()
+        if not boards:
+            self._show_prepare_status("No boards to load yet.", problem=True)
+            return
+        request_id = self._prepare_request.begin()
+        self._set_preparing(True)
+        self._show_prepare_status(f"Loading boards: 0 of {len(boards)}...")
+        logging.info("Preparing %d tournament boards", len(boards))
+
+        def emit(signal: object, *args: object) -> None:
+            """Hand a result to the UI thread, unless the tab has closed."""
+            try:
+                signal.emit(*args)
+            except RuntimeError:
+                logging.debug("Games tab closed while boards loaded")
+
+        def work() -> None:
+            """Build and cache the boards, reporting progress."""
+            try:
+                prepared = self.prepare(
+                    boards,
+                    on_progress=lambda done, total: emit(
+                        self.prepare_progress_trigger, request_id, done, total
+                    ),
+                    is_cancelled=lambda: (
+                        not self._prepare_request.is_current(request_id)
+                    ),
+                )
+            except Exception:  # noqa: BLE001 - shown to the host
+                logging.exception("Couldn't prepare tournament boards")
+                prepared = None
+            emit(self.prepare_result_trigger, request_id, prepared, preview)
+
+        self.run_async(work)
+
+    def _on_prepare_progress(self, request_id: int, done: int, total: int) -> None:
+        """Show how many boards have loaded."""
+        if self._prepare_request.is_current(request_id):
+            self._show_prepare_status(f"Loading boards: {done} of {total}...")
+
+    def _on_prepare_result(
+        self, request_id: int, prepared: list[PreparedBoard] | None, preview: bool
+    ) -> None:
+        """Report the loaded boards, and preview their media if asked."""
+        if not self._prepare_request.is_current(request_id):
+            return
+        self._set_preparing(False)
+        if prepared is None:
+            self._show_prepare_status("Couldn't load the boards.", problem=True)
+            return
+        problems = [f"{board.key}: {board.error}" for board in prepared if board.error]
+        ready = sum(1 for board in prepared if board.ready)
+        message = f"{ready} of {len(prepared)} boards ready to play offline."
+        self._show_prepare_status(
+            "\n".join([message, *problems]), problem=bool(problems)
+        )
+        if not preview:
+            return
+        if not self.window().isVisible():
+            # The host closed the Tournament window or went to Play Games
+            # while the boards loaded. Opening the preview now could cover a
+            # game, so leave it for when they come back.
+            self._show_prepare_status(
+                f"{message} Click Preview All Media... to see the media.",
+                problem=bool(problems),
+            )
+            return
+        self.preview_media(prepared, self)
+
+    def _set_preparing(self, preparing: bool) -> None:
+        """Turn the download and preview buttons off while boards load."""
+        self.download_button.setEnabled(not preparing)
+        self.preview_button.setEnabled(not preparing)
+
+    def _show_prepare_status(self, message: str, problem: bool = False) -> None:
+        """Show ``message`` next to the download buttons, in red for problems."""
+        self.prepare_label.setStyleSheet(PROBLEM_STYLE if problem else "")
+        self.prepare_label.setText(message)
 
     def cant_play_text(self, board: TournamentBoard) -> str:
         """Return the names of the roster players who can't play ``board``."""

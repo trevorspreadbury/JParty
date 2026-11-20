@@ -13,6 +13,12 @@ game.
 The panel's Drop Player button marks the selected player as dropped out
 (see :mod:`jparty.domain.tournament_dropouts`), and Undo Drop takes a
 dropout back.
+
+A game that stopped part way shows as in progress, and Resume Saved Game
+asks the welcome screen to resume its save (see
+:mod:`jparty.domain.tournament_saves`). Rankings shows every player's
+place so far, and Edit Tournament opens the tournament in the Tournament
+window.
 """
 
 from __future__ import annotations
@@ -44,6 +50,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from jparty.app.paths import GAME_STATES_DIR
 from jparty.domain.models import SIGNATURE_NAME_PREFIX
 from jparty.domain.roster import PlayerSlot
 from jparty.domain.tournament import PLAYERS_PER_GAME, TournamentPlan
@@ -84,6 +91,8 @@ from jparty.domain.tournament_play import (
     results_by_game,
     slots_by_id,
 )
+from jparty.domain.tournament_rankings import PlayerRanking, tournament_rankings
+from jparty.domain.tournament_saves import TournamentSave, find_tournament_saves
 from jparty.domain.tournament_setup import TournamentBoard, plan_games
 from jparty.domain.tournament_store import (
     TournamentFileError,
@@ -96,7 +105,9 @@ from jparty.domain.tournament_store import (
     save_results,
     save_tournament_data,
 )
+from jparty.ui.board_sources import composed_session_game_id
 from jparty.ui.widgets.tournament_dropouts import ask_drop, ask_undo
+from jparty.ui.widgets.tournament_rankings import RankingsDialog
 
 LAYOUT_SPACING = 8
 PLAYED_COLOR = QColor("#8a8a8a")
@@ -105,6 +116,11 @@ PROBLEM_COLOR = "#b00020"
 NO_PHONE_TEXT = "no phone yet"
 SIGNED_NAME_TEXT = "signed name"
 CHOOSE_PLAYER_TEXT = "Choose a player"
+IN_PROGRESS_TEXT = "in progress"
+RESUME_TOOLTIP = (
+    "Pick up the selected game where it stopped. The players' phones claim"
+    " their saved players."
+)
 # A podium's signature is this many lines of text tall.
 SIGNATURE_LINES = 3
 
@@ -179,10 +195,18 @@ class TournamentPlayPanel(QWidget):
             tests replace it.
         ask_undo: Asks the host which dropout to take back; tests replace
             it.
+        states_dir: The saved games folder, searched for half-played games.
+        saves: The newest save of each unplayed game that has one, by game
+            key.
+        rankings_dialog: The open Rankings window, or ``None``.
     """
 
     selection_changed = pyqtSignal()
     leave_requested = pyqtSignal()
+    # The host wants to change the tournament in the Tournament window.
+    edit_requested = pyqtSignal()
+    # The TournamentSave of the selected game, to resume.
+    resume_requested = pyqtSignal(object)
     results_changed = pyqtSignal()
     # A dropout changed the roster, boards, or bracket on disk.
     tournament_changed = pyqtSignal()
@@ -217,6 +241,9 @@ class TournamentPlayPanel(QWidget):
         self._eligibility = Eligibility()
         self._phone_names: list[object] = []
         self._font_pixels = 16
+        self.states_dir = GAME_STATES_DIR
+        self.saves: dict[str, TournamentSave] = {}
+        self.rankings_dialog: RankingsDialog | None = None
 
         self.title_label = QLabel(self)
         title_font = QFont()
@@ -225,11 +252,21 @@ class TournamentPlayPanel(QWidget):
         self.fix_results_button = QPushButton("Fix Results...", self)
         self.fix_results_button.setToolTip("Change a played game's scores or winner.")
         self.fix_results_button.clicked.connect(self.fix_results)
+        self.rankings_button = QPushButton("Rankings...", self)
+        self.rankings_button.setToolTip("Show every player's place so far.")
+        self.rankings_button.clicked.connect(self.show_rankings)
+        self.edit_button = QPushButton("Edit Tournament...", self)
+        self.edit_button.setToolTip(
+            "Change the players, bracket, or boards in the Tournament window."
+        )
+        self.edit_button.clicked.connect(self.edit_requested)
         self.leave_button = QPushButton("Leave Tournament", self)
         self.leave_button.setToolTip("Go back to choosing a regular game.")
         self.leave_button.clicked.connect(self.leave_requested)
         header = QHBoxLayout()
         header.addWidget(self.title_label, 1)
+        header.addWidget(self.rankings_button)
+        header.addWidget(self.edit_button)
         header.addWidget(self.fix_results_button)
         header.addWidget(self.leave_button)
 
@@ -287,6 +324,17 @@ class TournamentPlayPanel(QWidget):
             self.phone_labels.append(phone)
         podiums.setColumnStretch(1, 2)
         podiums.setColumnStretch(3, 1)
+        self.resume_button = QPushButton("Resume Saved Game", self)
+        self.resume_button.setToolTip(RESUME_TOOLTIP)
+        self.resume_button.clicked.connect(self.resume_selected)
+        podiums.addWidget(
+            self.resume_button,
+            PLAYERS_PER_GAME,
+            0,
+            1,
+            4,
+            Qt.AlignmentFlag.AlignLeft,
+        )
 
         self.status_label = QLabel(self)
         self.status_label.setWordWrap(True)
@@ -330,8 +378,100 @@ class TournamentPlayPanel(QWidget):
         self.dropouts = dropouts
         self.load_error = None
         self.plan = effective_plan(settings.bracket, slots, dropouts)
+        self.saves = self._find_saves()
         self.title_label.setText(f"Tournament: {settings.name}")
         self._redraw()
+
+    def _find_saves(self) -> dict[str, TournamentSave]:
+        """Return the newest save of each unplayed game with a board."""
+        if self.settings is None:
+            return {}
+        played = played_game_keys(self.results)
+        game_ids = {
+            key: composed_session_game_id(list(board.board_selections)) or board.label
+            for key, board in self.settings.boards.items()
+            if key not in played
+        }
+        return find_tournament_saves(self.states_dir, self.settings.name, game_ids)
+
+    def selected_save(self) -> TournamentSave | None:
+        """Return the selected game's save, if it was started and not finished."""
+        key = self.selected_key()
+        return self.saves.get(key) if key is not None else None
+
+    def resume_problem(self) -> str | None:
+        """Return why the selected game's save can't be resumed, or ``None``.
+
+        A save can't be resumed once one of its players has dropped out or
+        can no longer play the game, since its results would be logged for
+        them. Starting the game again with new players still works.
+
+        Returns:
+            A message for the host, or ``None``.
+        """
+        save = self.selected_save()
+        if save is None:
+            return "This game has no saved game to resume."
+        if self.load_error:
+            return self.load_error
+        names = self._names()
+        players = [
+            (player_id, names.get(player_id) or name)
+            for player_id, name in zip(save.player_ids, save.players, strict=False)
+        ]
+        if len(players) != len(save.players) or not all(p for p, _ in players):
+            return "This save doesn't say which tournament players it has."
+        dropped = dropped_ids(self.dropouts)
+        gone = [name for player_id, name in players if player_id in dropped]
+        if gone:
+            return (
+                f"{', '.join(gone)} dropped out, so this game can't be resumed. "
+                "Start it again with new players, or undo the drop."
+            )
+        if self._eligibility.waiting:
+            return self._eligibility.waiting
+        allowed = set(self._eligibility.player_ids)
+        barred = [name for player_id, name in players if player_id not in allowed]
+        if barred:
+            return (
+                f"{', '.join(barred)} can no longer play {save.game_key}, so this "
+                "game can't be resumed. Start it again with new players."
+            )
+        return None
+
+    def resume_selected(self) -> None:
+        """Ask the welcome screen to resume the selected game's save.
+
+        Returns:
+            ``None``.
+        """
+        save = self.selected_save()
+        if save is not None and self.resume_problem() is None:
+            logging.info(
+                "Resuming tournament game %s from %s", save.game_key, save.path
+            )
+            self.resume_requested.emit(save)
+
+    def rankings(self) -> list[PlayerRanking]:
+        """Return every player's place so far, best first."""
+        return tournament_rankings(
+            self.plan, self.slots, self.results, self.tiebreaks, self.dropouts
+        )
+
+    def show_rankings(self) -> None:
+        """Open the Rankings window, replacing one already open.
+
+        Returns:
+            ``None``.
+        """
+        if self.rankings_dialog is not None:
+            self.rankings_dialog.close()
+            self.rankings_dialog.deleteLater()
+        name = self.settings.name if self.settings is not None else ""
+        self.rankings_dialog = RankingsDialog(
+            f"Rankings: {name}", self.rankings(), self
+        )
+        self.rankings_dialog.show()
 
     def reload(self) -> None:
         """Read the tournament again, for example after a game ends.
@@ -613,8 +753,14 @@ class TournamentPlayPanel(QWidget):
                 text = f"{key}: {board.label}"
                 if key in chasers:
                     text += f" (chaser: {names.get(chasers[key]) or chasers[key]})"
+                if key in self.saves:
+                    text += f" ({IN_PROGRESS_TEXT})"
                 item.setText(text)
-            item.setToolTip("Players: " + ", ".join(game.seats))
+            tooltip = "Players: " + ", ".join(game.seats)
+            save = self.saves.get(key) if key not in played_games else None
+            if save is not None:
+                tooltip += "\nStarted with " + ", ".join(save.players)
+            item.setToolTip(tooltip)
         self.games_list.setCurrentRow(-1)
         self.games_list.blockSignals(False)
         previous_player = self.selected_player_id()
@@ -809,8 +955,15 @@ class TournamentPlayPanel(QWidget):
 
     def _on_podium_changed(self, *_args: object) -> None:
         """Report a change in the chosen game or players."""
+        save = self.selected_save()
+        resume_problem = self.resume_problem() if save is not None else None
+        self.resume_button.setEnabled(save is not None and resume_problem is None)
+        self.resume_button.setToolTip(resume_problem or RESUME_TOOLTIP)
         problem = self.problem(len(self._phone_names))
-        self.show_status(problem or "Ready to start.", problem is not None)
+        message = problem or "Ready to start."
+        if resume_problem:
+            message += f"\nCan't resume: {resume_problem}"
+        self.show_status(message, problem is not None)
         self.selection_changed.emit()
 
     def show_status(self, message: str, problem: bool = False) -> None:

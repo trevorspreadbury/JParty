@@ -220,6 +220,8 @@ class Welcome(StartWidget):
     saved_game_result_trigger = pyqtSignal(int, str, object, object)
     # (request_id, game_key, data, error) for a tournament game's board
     tournament_board_result_trigger = pyqtSignal(int, str, object, object)
+    # (request_id, game_key, loaded_save, error) for a tournament game's save
+    tournament_resume_result_trigger = pyqtSignal(int, str, object, object)
 
     def __init__(self, game: object, parent: object = None) -> None:
         """Initialize the welcome screen and its lobby controls.
@@ -373,10 +375,19 @@ class Welcome(StartWidget):
         self.tournament_panel.results_changed.connect(self.check_start)
         self.tournament_panel.before_change = self._tournament_change_problem
         self.tournament_panel.tournament_changed.connect(self._on_tournament_changed)
-        # Newest board load for the chosen tournament game.
+        self.tournament_panel.edit_requested.connect(self.edit_tournament)
+        self.tournament_panel.resume_requested.connect(self.resume_tournament_game)
+        # Newest board or save load for the chosen tournament game.
         self._tournament_request = LatestRequest()
         # Key of the tournament game whose board is in ``game.data``, or None.
         self._tournament_board_key = None
+        # Key of the tournament game whose save is ready to resume, or None.
+        self._tournament_resume_key = None
+        # Key of the tournament game whose save is being read, or None.
+        self._tournament_resume_loading = None
+        # Whether a tournament game or tiebreaker has started and not come
+        # back to this screen yet.
+        self._tournament_game_running = False
         self._tournament_summary_text = ""
         # Whether the chosen tournament game can start; see
         # _check_tournament_start.
@@ -409,6 +420,9 @@ class Welcome(StartWidget):
         self.saved_game_result_trigger.connect(self.handle_saved_game_result)
         self.tournament_board_result_trigger.connect(
             self.handle_tournament_board_result
+        )
+        self.tournament_resume_result_trigger.connect(
+            self.handle_tournament_resume_result
         )
         self.setLayout(main_layout)
         self.update_reveal_answers_after_triple_stumper(
@@ -444,9 +458,43 @@ class Welcome(StartWidget):
         if self.tournament_window is None:
             self.tournament_window = TournamentWindow(TOURNAMENTS_DIR, self)
             self.tournament_window.play_requested.connect(self.enter_tournament_mode)
+            self.tournament_window.tournament_saved.connect(self._on_tournament_saved)
         self.tournament_window.show()
         self.tournament_window.raise_()
         self.tournament_window.activateWindow()
+
+    def edit_tournament(self) -> None:
+        """Open the tournament being played in the Tournament window.
+
+        Returns:
+            ``None``.
+        """
+        settings = self.tournament_panel.settings
+        if settings is None:
+            return
+        logging.info("Editing tournament %s from the play screen", settings.name)
+        self.show_tournament_window()
+        self.tournament_window.open_tournament(settings.name)
+
+    def _on_tournament_saved(self, folder: object) -> None:
+        """Show a saved change to the tournament being played.
+
+        A game in progress keeps its board; the panel catches up when the
+        game comes back to this screen.
+        """
+        settings = self.tournament_panel.settings
+        if (
+            not self.tournament_mode
+            or self._tournament_game_running
+            or settings is None
+            or Path(folder).name != settings.name
+        ):
+            return
+        logging.info("Showing the saved changes to tournament %s", settings.name)
+        self._tournament_request.cancel()
+        self._clear_tournament_board()
+        self.tournament_panel.reload()
+        self.on_tournament_selection_changed()
 
     def resizeEvent(self, event: object) -> None:
         """Resize the game-id textbox to match the current layout.
@@ -639,7 +687,12 @@ QCheckBox {{
             button.setMinimumHeight(height)
 
     def _clear_tournament_board(self) -> None:
-        """Forget any tournament board pushed into the game."""
+        """Forget any tournament board or save pushed into the game."""
+        self._tournament_resume_loading = None
+        if self._tournament_resume_key is not None:
+            self._tournament_resume_key = None
+            self.game.clear_resume_state()
+        self.tournament_start_button.setText("Start!")
         self._tournament_board_key = None
         self._tournament_summary_text = ""
         self.game.data = None
@@ -659,13 +712,22 @@ QCheckBox {{
         """
         if not self.tournament_mode:
             return
+        key = self.tournament_panel.selected_key()
+        resuming = self._tournament_resume_key or self._tournament_resume_loading
+        if resuming is not None:
+            if key == resuming:
+                # Picking players doesn't change a resumed game, or one
+                # whose save is still being read.
+                self.check_start()
+                return
+            self._tournament_request.cancel()
+            self._clear_tournament_board()
         if self.tournament_panel.selected_tie() is not None:
             # A tiebreaker has no board.
             self._tournament_request.cancel()
             self._clear_tournament_board()
             self.check_start()
             return
-        key = self.tournament_panel.selected_key()
         board = self.tournament_panel.selected_board()
         if key is None or board is None:
             self._tournament_request.cancel()
@@ -737,6 +799,95 @@ QCheckBox {{
         )
         self.check_start()
 
+    def resume_tournament_game(self, save: object) -> None:
+        """Read a half-played tournament game's save, to resume it.
+
+        The save is read on a worker thread, since its board may come from
+        the network. Once it is applied, Start becomes Resume! and the
+        players' phones claim their saved players.
+
+        Args:
+            save: The game's :class:`TournamentSave`.
+
+        Returns:
+            ``None``.
+        """
+        if not self.tournament_mode:
+            return
+        key = save.game_key
+        self._clear_tournament_board()
+        self._tournament_resume_loading = key
+        self._tournament_summary_text = "Loading the saved game..."
+        request_id = self._tournament_request.begin()
+        self.check_start()
+        self.loader.run_async(
+            partial(self._read_tournament_save, request_id, key, str(save.path))
+        )
+
+    def _read_tournament_save(self, request_id: int, key: str, path: str) -> None:
+        """Read a tournament game's save on a worker thread."""
+        loaded, error = None, None
+        try:
+            loaded = self.game.read_saved_game(path)
+        except Exception as exc:  # noqa: BLE001 - shown to the host
+            logging.error("Couldn't read the save of %s: %s", key, exc)
+            error = exc
+        self.tournament_resume_result_trigger.emit(request_id, key, loaded, error)
+
+    def handle_tournament_resume_result(
+        self, request_id: int, key: str, loaded: object, error: object
+    ) -> None:
+        """Make a read save the game to resume, if it's still wanted.
+
+        Args:
+            request_id: The read's request id.
+            key: The game the save belongs to.
+            loaded: The save read by ``Game.read_saved_game``, or ``None``.
+            error: The error, if reading raised one.
+
+        Returns:
+            ``None``.
+        """
+        if not self.tournament_mode or not self._tournament_request.is_current(
+            request_id
+        ):
+            return
+        self._tournament_resume_loading = None
+        if self.tournament_panel.selected_key() != key:
+            return
+        resume_state = None
+        if error is None:
+            try:
+                resume_state = self.game.apply_saved_game(loaded)
+            except Exception as exc:  # noqa: BLE001 - shown to the host
+                logging.error("Couldn't resume %s: %s", key, exc)
+                error = exc
+        ref = getattr(self.game, "tournament_game", None)
+        if error is None and ref != self.tournament_panel.game_ref():
+            error = "The save is for a different tournament game."
+        if error is not None:
+            if resume_state is not None:
+                self.game.clear_resume_state()
+            QMessageBox.warning(self, "Couldn't resume the game", str(error))
+            # Load the board again, so the game can still start fresh.
+            self._tournament_summary_text = ""
+            self.on_tournament_selection_changed()
+            return
+        self._tournament_resume_key = key
+        self.tournament_start_button.setText("Resume!")
+        general_state = resume_state.get("general_state", {}) if resume_state else {}
+        saved_players = general_state.get("players", [])
+        names = [
+            str(player.get("tournament_player_name") or player.get("name") or "")
+            for player in saved_players
+            if isinstance(player, dict)
+        ]
+        lines = [f"Resume {key} from:", str(resume_state.get("path", ""))]
+        if names:
+            lines += ["", "Saved players: " + ", ".join(names)]
+        self._tournament_summary_text = "\n".join(lines)
+        self.check_start()
+
     def _tournament_phone_names(self) -> list[object]:
         """Return each connected phone's player name, in podium order."""
         players = sorted(
@@ -749,6 +900,20 @@ QCheckBox {{
         """Enable Start once the chosen game, board, and phones are ready."""
         names = self._tournament_phone_names()
         self.tournament_panel.set_phones(names)
+        selected = self.tournament_panel.selected_key()
+        if self._tournament_resume_key is not None and (
+            self._tournament_resume_key == selected
+        ):
+            self._check_tournament_resume()
+            return
+        if self._tournament_resume_loading is not None and (
+            self._tournament_resume_loading == selected
+        ):
+            self._tournament_ready = False
+            self.tournament_start_button.setEnabled(False)
+            self.tournament_panel.show_status("Loading the saved game...", True)
+            self.summary_label.setText(self._tournament_summary_text)
+            return
         problem = self.tournament_panel.problem(len(names))
         if self.tournament_panel.selected_tie() is not None:
             self._tournament_ready = problem is None
@@ -772,6 +937,27 @@ QCheckBox {{
         if problem is None and not board_ready:
             problem = "Loading the board..."
         self.tournament_panel.show_status(problem or "Ready to start.", not enabled)
+        self.summary_label.setText(self._tournament_summary_text)
+
+    def _check_tournament_resume(self) -> None:
+        """Enable Resume! once every saved player has been claimed.
+
+        The save is checked again first: a player who dropped out since it
+        was prepared would otherwise have results logged for them.
+        """
+        problem = self.tournament_panel.resume_problem()
+        if problem is None:
+            claimed, total = self.game.resume_claim_status()
+            if not self.game.startable():
+                problem = (
+                    "Each player's phone claims their saved player to resume "
+                    f"({claimed} of {total} so far)."
+                )
+        self._tournament_ready = problem is None
+        self.tournament_start_button.setEnabled(self._tournament_ready)
+        self.tournament_panel.show_status(
+            problem or "Ready to resume.", problem is not None
+        )
         self.summary_label.setText(self._tournament_summary_text)
 
     def start_tournament_game(self) -> None:
@@ -806,6 +992,7 @@ QCheckBox {{
             self.tournament_panel.game_ref(), self.tournament_panel.chosen_players()
         )
         self.update_reveal_answers_after_triple_stumper(True)
+        self._tournament_game_running = True
         self.game.start_game()
 
     def _tournament_still_ready(self) -> bool:
@@ -1446,7 +1633,13 @@ QCheckBox {{
             session = self.tournament_panel.tiebreaker_session()
             if session is not None:
                 self.update_reveal_answers_after_triple_stumper(True)
+                self._tournament_game_running = True
                 self.game.start_tiebreaker_session(session)
+                return
+            if self._tournament_resume_key is not None:
+                # A resumed game has had its introduction already.
+                self._tournament_game_running = True
+                self.game.start_game()
                 return
             parent = self.parent()
             if hasattr(parent, "load_contestant_intro"):
@@ -1675,6 +1868,7 @@ QCheckBox {{
         self.clear_round_selector()
         if self.tournament_mode:
             # Back from a tournament game: show what's been played since.
+            self._tournament_game_running = False
             self._clear_tournament_board()
             self.tournament_panel.reload()
             self.on_tournament_selection_changed()
