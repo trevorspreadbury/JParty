@@ -213,6 +213,7 @@ Standard clues and Final Jeopardy use the same top-level shape:
       ]
     }
   ],
+  "responses_open_times": [1700000100.6],
   "answer_attempts": [
     {
       "player_index": 1,
@@ -240,6 +241,11 @@ Field notes:
 - `is_daily_double`: whether the clue was a Daily Double
 - `buzz_phases`: response-window breakdown for standard buzzed clues; `[]`
   for Daily Doubles and Final Jeopardy, which have no buzzer race
+- `responses_open_times`: Unix timestamps of each time buzzing unlocked on
+  the clue, in order: first when the host opened responses after reading
+  the clue, then once for each rebound after an incorrect response. `[]` for
+  Daily Doubles, Final Jeopardy, and clues that never opened for buzzing.
+  Saves from before this field was added don't have it.
 - `answer_attempts`: every judged answer attempt for the clue, in order
 - `completed_at`: Unix timestamp for when the clue finished
 
@@ -297,6 +303,7 @@ It uses the same top-level schema, with these important differences:
 - `is_daily_double` is always `false`
 - `buzz_phases` is always `[]` because Final Jeopardy has no buzzer race
   windows
+- `responses_open_times` is always `[]` for the same reason
 - `answer_attempts` contains one record per player that was judged in Final
   Jeopardy order
 
@@ -311,6 +318,7 @@ Example Final Jeopardy entry:
   "value": -1,
   "is_daily_double": false,
   "buzz_phases": [],
+  "responses_open_times": [],
   "answer_attempts": [
     {
       "player_index": 2,
@@ -358,7 +366,25 @@ a tied player answers it correctly or nobody does:
   "text": "This river flows through Baghdad",
   "answer": "the Tigris",
   "contenders": [0, 1],
-  "buzz_phases": [],
+  "buzz_phases": [
+    {
+      "phase_type": "main",
+      "start_time": 1700001098.0,
+      "end_time": 1700001101.0,
+      "buzz_attempts": [
+        {"player_index": 1, "question_index": null, "timestamp": 1700001100.0, "is_early": false, "is_success": true, "is_rebound": false, "in_timeout": false}
+      ]
+    },
+    {
+      "phase_type": "rebound",
+      "start_time": 1700001101.0,
+      "end_time": 1700001105.0,
+      "buzz_attempts": [
+        {"player_index": 0, "question_index": null, "timestamp": 1700001104.0, "is_early": false, "is_success": true, "is_rebound": false, "in_timeout": false}
+      ]
+    }
+  ],
+  "responses_open_times": [1700001099.0, 1700001102.0],
   "answer_attempts": [
     {"player_index": 1, "answer_correct": false, "timestamp": 1700001101.0},
     {"player_index": 0, "answer_correct": true, "timestamp": 1700001106.0}
@@ -381,6 +407,7 @@ Field notes:
   players who could buzz
 - `buzz_phases`: the same shape as on a clue line. Each buzz attempt's
   `question_index` is `null`, because the clue is not on this game's boards.
+- `responses_open_times`: the same as on a clue line
 - `answer_attempts`: each ruling, with no `score_before` or `score_after`
 - `winner`: player number of the player who answered correctly, or `null`
   when nobody did and the host moved on to another clue

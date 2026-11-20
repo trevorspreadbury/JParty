@@ -24,6 +24,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - HOST.md has a new "Setting Up Lecterns" section: showing only the external
   monitor, kiosk-mode commands and keeping the laptop awake, for Windows,
   macOS and Ubuntu.
+- Clue and tiebreaker clue lines in `question_history.jsonl` have a new
+  `responses_open_times` field (#136): the time buzzing unlocked, then one
+  more time for each rebound after an incorrect response. Daily Doubles,
+  Final Jeopardy and clues that never opened for buzzing log `[]`.
+  docs/game-logging.md describes it.
 
 ### Changed
 - `/lectern` with no `player` no longer opens lectern 1. It opens the seat

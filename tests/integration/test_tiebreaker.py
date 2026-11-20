@@ -389,9 +389,11 @@ def test_each_tiebreaker_clue_is_saved_to_history(
     game = tied_game
     game.question_number = 62
     _start_first_clue(game)
+    first_unlock = time_controller.time()
     time_controller.advance(2)
     game.buzz(0)
     time_controller.advance(2)
+    rebound_unlock = time_controller.time()
     game.incorrect_answer()
     time_controller.advance(2)
     game.buzz(1)
@@ -399,6 +401,8 @@ def test_each_tiebreaker_clue_is_saved_to_history(
     game.incorrect_answer()
     _space(game)  # Next clue.
     _space(game)
+    time_controller.advance(3)
+    won_unlock = time_controller.time()
     _space(game)
     game.buzz(1)
     game.correct_answer()
@@ -422,9 +426,14 @@ def test_each_tiebreaker_clue_is_saved_to_history(
         "rebound",
     ]
     assert missed["buzz_phases"][0]["buzz_attempts"][0]["question_index"] is None
+    assert missed["responses_open_times"] == [first_unlock, rebound_unlock]
+
+    # The winning clue's line has only its own unlock, so the missed clue's
+    # times were cleared when the next clue started.
 
     assert won["question_number"] == 63
     assert won["winner"] == 1
+    assert won["responses_open_times"] == [won_unlock]
     assert won["answer_attempts"][0]["answer_correct"] is True
 
 
