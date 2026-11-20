@@ -110,8 +110,8 @@ from jparty.domain.tournament.store import (
     save_tournament_data,
 )
 from jparty.ui.board_sources import composed_session_game_id
-from jparty.ui.widgets.tournament_dropouts import ask_drop, ask_undo
-from jparty.ui.widgets.tournament_rankings import RankingsDialog
+from jparty.ui.widgets.tournament.dropouts import ask_drop, ask_undo
+from jparty.ui.widgets.tournament.rankings import RankingsDialog
 
 LAYOUT_SPACING = 8
 PLAYED_COLOR = QColor("#8a8a8a")

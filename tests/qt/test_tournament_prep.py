@@ -16,16 +16,16 @@ from jparty.domain.tournament.dropouts import DROP_REPLACE, Dropout
 from jparty.domain.tournament.play import GameResult, TournamentGameRef
 from jparty.domain.tournament.store import load_tournament, save_tournament
 from jparty.services.board_prep import PreparedBoard
-from jparty.ui.widgets.tournament_editor import TAB_RANKINGS
-from jparty.ui.widgets.tournament_games import POOL_BOARD_KEY
-from jparty.ui.widgets.tournament_play import IN_PROGRESS_TEXT
-from jparty.ui.widgets.tournament_prep import (
+from jparty.ui.widgets.tournament.editor import TAB_RANKINGS
+from jparty.ui.widgets.tournament.games import POOL_BOARD_KEY
+from jparty.ui.widgets.tournament.play import IN_PROGRESS_TEXT
+from jparty.ui.widgets.tournament.prep import (
     NO_MEDIA_TEXT,
     BoardMediaPreviewDialog,
     media_summary,
 )
-from jparty.ui.widgets.tournament_rankings import COLUMN_PLAYER, COLUMN_RANK
-from jparty.ui.widgets.tournament_window import TournamentWindow
+from jparty.ui.widgets.tournament.rankings import COLUMN_PLAYER, COLUMN_RANK
+from jparty.ui.widgets.tournament.window import TournamentWindow
 from tests.qt import test_welcome_tournament
 from tests.qt.test_tournament_games import board, make_games
 from tests.qt.test_tournament_roster import run_inline

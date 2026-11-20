@@ -1,7 +1,7 @@
 """A tournament's Games tab: which board each bracket game plays.
 
 "Set Board..." (or double-clicking a game) opens the board picker
-(:mod:`jparty.ui.widgets.board_setup`), which uses the same advanced board
+(:mod:`jparty.ui.widgets.tournament.board_setup`), which uses the same advanced board
 editor as the welcome screen, to choose or edit a game's board. With no game
 selected, the new board goes to the unassigned pool. "Can't Play..." picks
 the players who must not play a board; they stay with the board wherever it
@@ -52,8 +52,8 @@ from jparty.domain.tournament.setup import (
 from jparty.services.board_prep import PreparedBoard, prepare_boards
 from jparty.services.question_media import detect_question_media
 from jparty.ui.welcome_loader import LatestRequest, WelcomeLoader
-from jparty.ui.widgets.board_setup import pick_board
-from jparty.ui.widgets.tournament_prep import show_board_media_preview
+from jparty.ui.widgets.tournament.board_setup import pick_board
+from jparty.ui.widgets.tournament.prep import show_board_media_preview
 
 LAYOUT_SPACING = 8
 COLUMN_GAME = 0

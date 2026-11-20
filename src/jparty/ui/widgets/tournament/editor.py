@@ -52,14 +52,14 @@ from jparty.domain.tournament.store import (
     tournament_name_problem,
 )
 from jparty.services.game_sources import GameSourceFetcher
-from jparty.ui.widgets.tournament import BracketDesigner
-from jparty.ui.widgets.tournament_games import (
+from jparty.ui.widgets.tournament.bracket import BracketDesigner
+from jparty.ui.widgets.tournament.games import (
     GamesEditor,
     dropped_played_games_problem,
     missing_media_ids,
 )
-from jparty.ui.widgets.tournament_rankings import RankingsTable
-from jparty.ui.widgets.tournament_roster import RosterEditor
+from jparty.ui.widgets.tournament.rankings import RankingsTable
+from jparty.ui.widgets.tournament.roster import RosterEditor
 
 LAYOUT_SPACING = 8
 LOGO_PREVIEW_SIZE = 48

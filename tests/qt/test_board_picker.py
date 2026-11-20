@@ -13,7 +13,7 @@ from jparty.ui.widgets.advanced_boards import (
     AdvancedBoardSetup,
     snapshots_from_board_selections,
 )
-from jparty.ui.widgets.board_setup import INCOMPLETE_TEXT, BoardPickerDialog
+from jparty.ui.widgets.tournament.board_setup import INCOMPLETE_TEXT, BoardPickerDialog
 from tests.qt.test_welcome_widget import StubGame
 
 pytestmark = pytest.mark.qt

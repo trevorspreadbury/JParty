@@ -80,8 +80,8 @@ Important behaviors in `welcome.py` include:
 board rows: source-board row caching and async loading, per-row Random and
 media import, and composing the board. It never touches a game object; it
 emits `setup_changed` and callers read `current_setup()`. The welcome screen
-and the tournament board picker (`ui/widgets/board_setup.py`) both use it, so
-change board-slot behavior there, not in either caller. Helpers both the
+and the tournament board picker (`ui/widgets/tournament/board_setup.py`)
+both use it, so change board-slot behavior there, not in either caller. Helpers both the
 single-game and advanced setups share (Random's search, warnings, summaries)
 live in `src/jparty/ui/board_sources.py`.
 
@@ -136,11 +136,10 @@ Modules in `domain/tournament/`:
 - `store.py`: reading and writing the tournament folder
 
 Elsewhere: `services/board_prep.py` builds and caches every board ahead of
-time; `ui/widgets/tournament_window.py` (with `tournament_editor.py`,
-`tournament_roster.py`, `tournament.py`, `tournament_games.py`,
-`board_setup.py`, `tournament_prep.py`, and `tournament_rankings.py`) is the
-setup window; `ui/widgets/tournament_play.py` and `tournament_dropouts.py`
-are the welcome screen's play panel and dropout dialogs; and
+time; in `ui/widgets/tournament/`, `window.py` (with `editor.py`,
+`roster.py`, `bracket.py`, `games.py`, `board_setup.py`, `prep.py`, and
+`rankings.py`) is the setup window, and `play.py` and `dropouts.py` are the
+welcome screen's play panel and dropout dialogs; and
 `web/handlers.py` with `assets/buzzer/templates/host.html` serves `/host`.
 `Game` in `domain/game_engine.py` records a tournament game's results when it
 ends.

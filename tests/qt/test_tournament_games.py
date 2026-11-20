@@ -13,9 +13,9 @@ from jparty.domain.tournament.store import (
     load_tournament,
     save_tournament,
 )
-from jparty.ui.widgets import tournament_editor
-from jparty.ui.widgets.tournament_editor import TAB_BRACKET, TAB_GAMES
-from jparty.ui.widgets.tournament_games import (
+from jparty.ui.widgets.tournament import editor as editor_module
+from jparty.ui.widgets.tournament.editor import TAB_BRACKET, TAB_GAMES
+from jparty.ui.widgets.tournament.games import (
     COLUMN_BOARD,
     COLUMN_CANT_PLAY,
     COLUMN_GAME,
@@ -26,7 +26,7 @@ from jparty.ui.widgets.tournament_games import (
     PlayerChecklistDialog,
     choose_cant_play,
 )
-from jparty.ui.widgets.tournament_roster import COLUMN_ACTUAL_NAME
+from jparty.ui.widgets.tournament.roster import COLUMN_ACTUAL_NAME
 from tests.qt.test_tournament_roster import FakeFetcher, make_editor
 
 pytestmark = pytest.mark.qt
@@ -303,7 +303,7 @@ def test_logo_preview_and_save(
     image.fill(0)
     image.save(str(png))
     monkeypatch.setattr(
-        tournament_editor.QFileDialog,
+        editor_module.QFileDialog,
         "getOpenFileName",
         lambda *_args: (str(png), ""),
     )

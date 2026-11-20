@@ -18,9 +18,9 @@ from jparty.domain.tournament.store import (
     save_tournament,
 )
 from jparty.services.game_sources import SheetAccessError
-from jparty.ui.widgets.tournament_editor import TournamentEditor
-from jparty.ui.widgets.tournament_roster import COLUMN_ACTUAL_NAME, SignUpMatchDialog
-from jparty.ui.widgets.tournament_window import TournamentWindow
+from jparty.ui.widgets.tournament.editor import TournamentEditor
+from jparty.ui.widgets.tournament.roster import COLUMN_ACTUAL_NAME, SignUpMatchDialog
+from jparty.ui.widgets.tournament.window import TournamentWindow
 
 pytestmark = pytest.mark.qt
 

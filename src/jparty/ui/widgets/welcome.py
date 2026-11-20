@@ -65,8 +65,8 @@ from jparty.ui.widgets.common import (
     choose_question_media_path,
     resource_path,
 )
-from jparty.ui.widgets.tournament_play import TournamentPlayPanel
-from jparty.ui.widgets.tournament_window import TournamentWindow
+from jparty.ui.widgets.tournament.play import TournamentPlayPanel
+from jparty.ui.widgets.tournament.window import TournamentWindow
 
 ROUND_CHECKBOX_STYLE = """
 QCheckBox {

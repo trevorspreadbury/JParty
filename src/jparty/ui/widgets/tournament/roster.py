@@ -4,7 +4,7 @@
 fills it from the Google Form sign-up sheet. :class:`SignUpMatchDialog` steps
 the host through placing new sign-ups after a refresh. Roster rules live in
 :mod:`jparty.domain.tournament.roster`; saving is done by
-:class:`jparty.ui.widgets.tournament_editor.TournamentEditor`.
+:class:`jparty.ui.widgets.tournament.editor.TournamentEditor`.
 """
 
 from __future__ import annotations

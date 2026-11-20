@@ -4,8 +4,8 @@ import pytest
 from PyQt6.QtWidgets import QLabel
 
 from jparty.domain.tournament.setup import BracketSettings
-from jparty.ui.widgets.tournament import BracketDesigner
-from jparty.ui.widgets.tournament_window import TournamentWindow
+from jparty.ui.widgets.tournament.bracket import BracketDesigner
+from jparty.ui.widgets.tournament.window import TournamentWindow
 from jparty.ui.widgets.welcome import Welcome
 from tests.qt.test_welcome_widget import StubGame
 

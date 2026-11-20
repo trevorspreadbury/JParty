@@ -16,8 +16,8 @@ from jparty.domain.tournament.store import (
     save_tournament,
 )
 from jparty.ui.widgets import welcome as welcome_module
-from jparty.ui.widgets.tournament_games import PLAYED_SUFFIX
-from jparty.ui.widgets.tournament_play import (
+from jparty.ui.widgets.tournament.games import PLAYED_SUFFIX
+from jparty.ui.widgets.tournament.play import (
     COLUMN_RESULT,
     COLUMN_SCORE,
     NO_PHONE_TEXT,

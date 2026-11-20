@@ -32,9 +32,9 @@ from jparty.domain.tournament.store import (
     load_tournament,
 )
 from jparty.services.game_sources import GameSourceFetcher
-from jparty.ui.widgets.tournament import BracketDesigner
-from jparty.ui.widgets.tournament_editor import TournamentEditor
-from jparty.ui.widgets.tournament_games import missing_media_ids
+from jparty.ui.widgets.tournament.bracket import BracketDesigner
+from jparty.ui.widgets.tournament.editor import TournamentEditor
+from jparty.ui.widgets.tournament.games import missing_media_ids
 
 LAYOUT_SPACING = 8
 WINDOW_TITLE = "Tournament"

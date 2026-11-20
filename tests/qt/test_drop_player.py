@@ -18,8 +18,8 @@ from jparty.domain.tournament.store import (
     load_tournament,
     load_voided_results,
 )
-from jparty.ui.widgets.tournament_dropouts import DropPlayerDialog
-from jparty.ui.widgets.tournament_play import PLAYED_COLOR
+from jparty.ui.widgets.tournament.dropouts import DropPlayerDialog
+from jparty.ui.widgets.tournament.play import PLAYED_COLOR
 from tests.qt.test_tournament_roster import FakeFetcher, make_editor
 from tests.qt.test_welcome_tournament import (
     SF1,
