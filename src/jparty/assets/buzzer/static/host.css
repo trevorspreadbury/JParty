@@ -1,8 +1,12 @@
-/* The host's phone page: a scrolling list of tournament players. */
+/* The host's phone page: one tournament player at a time. */
+
+[hidden] {
+    display: none !important;
+}
 
 body {
     margin: 0;
-    padding: 0 12px 24px;
+    padding: 0 12px 96px;
     background: #060ce9;
     color: #ffffff;
     font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -11,27 +15,16 @@ body {
 }
 
 header {
-    position: sticky;
-    top: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 12px 0;
-    background: #060ce9;
+    padding: 12px 0 4px;
 }
 
 h1 {
     margin: 0;
-    font-size: 22px;
-}
-
-h2 {
-    margin: 20px 0 8px;
-    font-size: 16px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #ffcc00;
+    font-size: 20px;
 }
 
 .refresh {
@@ -44,58 +37,96 @@ h2 {
     font-weight: bold;
 }
 
-.filter {
-    box-sizing: border-box;
-    width: 100%;
-    padding: 10px;
-    border: 0;
-    border-radius: 6px;
-    font-size: 18px;
-}
-
-.player {
-    margin: 8px 0;
-    padding: 10px 12px;
-    border-radius: 8px;
-    background: rgba(0, 0, 0, 0.3);
-}
-
-.player summary {
-    cursor: pointer;
-}
-
-.name {
-    font-weight: bold;
-    font-size: 20px;
-}
-
-.status {
-    margin-left: 8px;
+.where {
+    margin: 0 0 8px;
     font-size: 14px;
     color: #c8ccff;
 }
 
-.intro-label {
-    margin-top: 10px;
+.player {
+    padding: 14px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.3);
+}
+
+.count {
+    font-size: 14px;
+    color: #c8ccff;
+}
+
+.name {
+    margin: 4px 0 8px;
+    font-size: 30px;
+}
+
+.label {
+    margin-top: 12px;
     font-size: 13px;
     text-transform: uppercase;
+    letter-spacing: 0.04em;
     color: #ffcc00;
 }
 
 .intro {
-    font-size: 20px;
+    font-size: 22px;
 }
 
 .prompts {
-    padding-left: 22px;
+    margin: 6px 0 0;
+    padding: 0;
+    list-style: none;
 }
 
 .prompts li {
-    margin: 8px 0;
+    margin: 10px 0;
 }
 
-.empty,
-.problem {
+.prompts label {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.prompts input {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    margin: 2px 0 0;
+}
+
+.prompts .used span {
+    color: #9da3e6;
+    text-decoration: line-through;
+}
+
+.pager {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+    gap: 12px;
+    padding: 12px;
+    background: #060ce9;
+}
+
+.pager button {
+    flex: 1;
+    padding: 14px;
+    border: 0;
+    border-radius: 8px;
+    background: #ffcc00;
+    color: #000000;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+.pager button:disabled {
+    background: #5a5fd6;
+    color: #c8ccff;
+}
+
+.empty {
     color: #c8ccff;
 }
 

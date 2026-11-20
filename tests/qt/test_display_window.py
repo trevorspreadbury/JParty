@@ -488,3 +488,24 @@ def test_tournament_tiebreaker_session_through_real_windows(
 
     game.keystroke_manager.call(Qt.Key.Key_Space)  # Back to the lobby.
     _assert_back_in_lobby(board_window, host_window)
+
+
+def test_host_code_replaces_the_board_until_hidden(qtbot: object) -> None:
+    """The /host QR code sits where the board was, then gives it back."""
+    from jparty.ui.widgets.welcome import QRWidget
+
+    host_window = StubHostDisplayWindow(_stub_game())
+    qtbot.addWidget(host_window)
+    host_window.load_host_code("192.168.1.20:8080")
+    code = host_window.host_code_widget
+    assert isinstance(code, QRWidget)
+    assert code.url == "http://192.168.1.20:8080/host"
+    assert code.hint_label.text() == "Scan for the players' prompts:"
+    assert host_window.board_layout.indexOf(code) == 1
+    assert host_window.board_widget.isHidden()
+
+    host_window.hide_host_code()
+    assert host_window.host_code_widget is None
+    assert host_window.board_layout.indexOf(host_window.board_widget) == 1
+    assert not host_window.board_widget.isHidden()
+    host_window.hide_host_code()  # Nothing to hide; no error.

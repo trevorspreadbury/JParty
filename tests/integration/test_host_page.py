@@ -76,14 +76,48 @@ class HostPageTest(AsyncHTTPTestCase):
         assert "<script>alert(1)</script>" not in body
         assert "&lt;script&gt;alert(1)&lt;/script&gt;" in body
         assert "No sign-up answers." in body  # Bob
+        assert "No game in progress: every player" in body
 
-    def test_resumed_tournament_game_shows_its_players_on_stage(self) -> None:
+    def test_resumed_tournament_game_shows_only_its_players(self) -> None:
         """With no tournament chosen, the game in progress's tournament is used."""
         player = Player("bob", None, 0)
         player.tournament_player = ("p1", "Bob")
         self.game.players = [player]
         self.game.tournament_game = TournamentGameRef("Fun", "Semifinals: SF 1")
         body = self.fetch("/host").body.decode()
-        assert "Playing now" in body
-        assert body.index("Bob") < body.index("Ziggy")
-        assert "Everyone else" in body
+        assert "This game's players, last podium first" in body
+        assert "Podium 1" in body
+        assert "Bob" in body
+        assert "Ziggy" not in body
+
+    def test_ticking_a_prompt_saves_it(self) -> None:
+        """POST /host/prompt marks the prompt, and the page shows it ticked."""
+        import json
+
+        from jparty.domain.tournament_store import load_used_prompts
+
+        self.controller.host_tournament = self.folder
+        response = self.fetch(
+            "/host/prompt",
+            method="POST",
+            body=json.dumps({"player_id": "p0", "prompt": 2, "used": True}),
+        )
+        assert response.code == 200
+        assert json.loads(response.body) == {"ok": True}
+        assert load_used_prompts(self.folder) == [("p0", 2, "Plays the oboe")]
+        assert 'data-prompt="2" checked' in self.fetch("/host").body.decode()
+
+    def test_bad_ticks_are_refused(self) -> None:
+        """A malformed body, or a prompt that isn't there, gets a 400."""
+        import json
+
+        self.controller.host_tournament = self.folder
+        bad = self.fetch("/host/prompt", method="POST", body="not json")
+        assert bad.code == 400
+        missing = self.fetch(
+            "/host/prompt",
+            method="POST",
+            body=json.dumps({"player_id": "p1", "prompt": 1, "used": True}),
+        )
+        assert missing.code == 400
+        assert json.loads(missing.body) == {"error": "That player has no such prompt."}

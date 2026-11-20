@@ -15,6 +15,7 @@ from jparty.app.paths import web_asset_path
 from jparty.web.handlers import (
     BuzzerSocketHandler,
     HostHandler,
+    HostPromptHandler,
     LecternHandler,
     LecternSocketHandler,
     WelcomeHandler,
@@ -45,6 +46,7 @@ class Application(tornado.web.Application):
             ("/", WelcomeHandler),
             ("/buzzersocket", BuzzerSocketHandler),
             ("/host", HostHandler),
+            ("/host/prompt", HostPromptHandler),
             ("/lectern", LecternHandler),
             ("/lecternsocket", LecternSocketHandler),
         ]

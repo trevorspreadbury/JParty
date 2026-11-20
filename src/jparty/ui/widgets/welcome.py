@@ -2002,14 +2002,27 @@ QScrollBar::sub-page:vertical {
 
 
 class QRWidget(StartWidget):
-    """Audience-side startup screen that shows the buzzer join QR code."""
+    """A QR code for a page on the buzzer server, with its address.
 
-    def __init__(self, host: object, parent: object = None) -> None:
-        """Initialize the QR join screen.
+    The audience screen's lobby shows the buzzer page's code. The host's
+    screen also shows the ``/host`` page's code once in a tournament game.
+    """
+
+    def __init__(
+        self,
+        host: object,
+        parent: object = None,
+        path: str = "",
+        hint: str = "Scan for Buzzer:",
+    ) -> None:
+        """Initialize the QR screen.
 
         Args:
             host: Hostname or address players should visit to join.
             parent: Optional parent widget.
+            path: The page on the server, such as ``"/host"``; ``""`` for
+                the buzzer page.
+            hint: Text above the code.
 
         Returns:
             ``None``.
@@ -2018,12 +2031,12 @@ class QRWidget(StartWidget):
         self.font = QFont()
         self.font.setPointSize(30)
         main_layout = QVBoxLayout()
-        self.hint_label = DynamicLabel("Scan for Buzzer:", self.start_fontsize, self)
+        self.hint_label = DynamicLabel(hint, self.start_fontsize, self)
         self.hint_label.setFont(self.font)
         self.hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.qrlabel = QLabel(self)
         self.qrlabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.url = "http://" + host
+        self.url = "http://" + host + path
         self.url_label = DynamicLabel(self.url, self.start_fontsize, self)
         self.url_label.setFont(self.font)
         self.url_label.setAlignment(Qt.AlignmentFlag.AlignCenter)

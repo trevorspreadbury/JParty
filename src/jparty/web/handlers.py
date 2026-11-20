@@ -471,6 +471,35 @@ class HostHandler(tornado.web.RequestHandler):
         self.render("host.html", page=page)
 
 
+class HostPromptHandler(tornado.web.RequestHandler):
+    """Save a tick on the host's page: a prompt used, or not, for good."""
+
+    def post(self) -> None:
+        """Mark the prompt in the JSON body as used or not.
+
+        The body is ``{"player_id": ..., "prompt": <number>, "used": <bool>}``.
+        The reply is ``{"ok": true}``, or ``{"error": ...}`` with status 400.
+
+        Returns:
+            ``None``.
+        """
+        try:
+            body = tornado.escape.json_decode(self.request.body)
+            player_id = str(body["player_id"])
+            number = int(body["prompt"])
+            used = bool(body["used"])
+        except (ValueError, KeyError, TypeError):
+            self.set_status(400)
+            self.write({"error": "Bad request."})
+            return
+        problem = self.application.controller.mark_host_prompt(player_id, number, used)
+        if problem:
+            self.set_status(400)
+            self.write({"error": problem})
+            return
+        self.write({"ok": True})
+
+
 class LecternSocketHandler(tornado.websocket.WebSocketHandler):
     """Handle live websocket traffic for host-side lectern displays."""
 

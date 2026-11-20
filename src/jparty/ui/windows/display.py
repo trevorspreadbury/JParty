@@ -413,6 +413,8 @@ class HostDisplayWindow(DisplayWindow):
         self.on_image_question = False
         self.image_question_widget = None
         self.preview_widget = None
+        # The /host page's QR code, shown in place of the board.
+        self.host_code_widget = None
 
     def host(self) -> bool:
         """Return whether this is the host display.
@@ -574,6 +576,42 @@ class HostDisplayWindow(DisplayWindow):
         self.preview_widget.setGeometry(self.welcome_widget.geometry())
         self.preview_widget.setVisible(True)
         self.preview_widget.raise_()
+
+    def load_host_code(self, host: str) -> None:
+        """Show the ``/host`` page's QR code in place of the board.
+
+        A tournament game shows it after the first board, so the host can
+        open the players' prompts on their phone. Only the host sees it.
+
+        Args:
+            host: The buzzer server's address, such as ``"192.168.1.20:8080"``.
+
+        Returns:
+            ``None``.
+        """
+        self.hide_host_code()
+        self.host_code_widget = QRWidget(
+            host,
+            self,
+            path="/host",
+            hint="Scan for the players' prompts:",
+        )
+        self.board_widget.setVisible(False)
+        self.board_layout.replaceWidget(self.board_widget, self.host_code_widget)
+
+    def hide_host_code(self) -> None:
+        """Put the board back in place of the ``/host`` QR code, if shown."""
+        if self.host_code_widget is None:
+            return
+        self.board_layout.replaceWidget(self.host_code_widget, self.board_widget)
+        self.board_widget.setVisible(True)
+        self.host_code_widget.deleteLater()
+        self.host_code_widget = None
+
+    def restart(self) -> None:
+        """Reset to the lobby, dropping the ``/host`` QR code if shown."""
+        self.hide_host_code()
+        super().restart()
 
     def load_contestant_intro(self, lines: list[str], on_start: object) -> None:
         """Show the host's introduction of a tournament game's players.

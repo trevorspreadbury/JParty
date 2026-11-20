@@ -24,7 +24,7 @@ from jparty.app.config import PORT
 from jparty.app.paths import TOURNAMENTS_DIR
 from jparty.domain.input import index_to_key
 from jparty.domain.models import Player
-from jparty.domain.tournament_host import HostPage, host_page
+from jparty.domain.tournament_host import HostPage, host_page, mark_prompt
 from jparty.web.app import Application
 
 if TYPE_CHECKING:
@@ -959,25 +959,44 @@ class BuzzerController:
                     f"Error broadcasting to lectern {player_number}", exc_info=True
                 )
 
+    def _host_folder(self) -> Path | None:
+        """Return the tournament the ``/host`` page is for, or ``None``.
+
+        It's the one the welcome screen is playing, or else the one the game
+        in progress belongs to (for example a resumed tournament game).
+        """
+        folder = self.host_tournament
+        ref = getattr(self.game, "tournament_game", None)
+        if folder is None and ref is not None:
+            folder = Path(self.tournaments_dir) / ref.tournament
+        return folder
+
     def host_page(self) -> HostPage:
         """Return what the host's ``/host`` page shows.
 
-        The tournament is the one the welcome screen is playing, or else the
-        one the game in progress belongs to (for example a resumed
-        tournament game). Its players on stage come first.
+        During a tournament game, its players are shown in reverse seat
+        order.
 
         Returns:
             The page, read fresh from the tournament folder.
         """
-        game = self.game
-        folder = self.host_tournament
-        ref = getattr(game, "tournament_game", None)
-        if folder is None and ref is not None:
-            folder = Path(self.tournaments_dir) / ref.tournament
-        on_stage = []
-        if ref is not None:
-            for player in list(getattr(game, "players", [])):
+        on_stage: list[str | None] = []
+        if getattr(self.game, "tournament_game", None) is not None:
+            for player in list(getattr(self.game, "players", [])):
                 tournament_player = getattr(player, "tournament_player", None)
-                if tournament_player is not None:
-                    on_stage.append(tournament_player[0])
-        return host_page(folder, on_stage)
+                # Keep a podium with no tournament player, so seats count true.
+                on_stage.append(tournament_player[0] if tournament_player else None)
+        return host_page(self._host_folder(), on_stage)
+
+    def mark_host_prompt(self, player_id: str, number: int, used: bool) -> str:
+        """Tick or untick a player's prompt on the ``/host`` page.
+
+        Args:
+            player_id: The player.
+            number: The prompt's number, from 1.
+            used: Whether it's used.
+
+        Returns:
+            Why it couldn't be saved, or ``""``.
+        """
+        return mark_prompt(self._host_folder(), player_id, number, used)

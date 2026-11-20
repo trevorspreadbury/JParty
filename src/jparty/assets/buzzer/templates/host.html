@@ -17,54 +17,95 @@
         {% elif not page.players %}
             <p class="empty">This tournament has no players yet.</p>
         {% else %}
-            <input id="filter" class="filter" type="search" placeholder="Find a player" autocomplete="off">
-            {% set stage = [player for player in page.players if player.on_stage] %}
-            {% set others = [player for player in page.players if not player.on_stage] %}
-            {% for heading, group in (("Playing now", stage), ("Players" if not stage else "Everyone else", others)) %}
-                {% if group %}
-                    <section class="group">
-                    <h2>{{ heading }}</h2>
-                    {% for player in group %}
-                        <details class="player" data-name="{{ player.name.lower() }}"{% if player.on_stage %} open{% end %}>
-                            <summary>
-                                <span class="name">{{ player.name }}</span>
-                                {% if player.status %}<span class="status">{{ player.status }}</span>{% end %}
-                            </summary>
-                            <div class="intro-label">Introduce them as</div>
-                            <div class="intro">{{ player.introduction }}</div>
-                            {% if player.prompts %}
-                                <ol class="prompts">
-                                    {% for prompt in player.prompts %}
-                                        <li>{{ prompt }}</li>
-                                    {% end %}
-                                </ol>
-                            {% else %}
-                                <p class="empty">No sign-up answers.</p>
+            <p class="where">{% if page.in_game %}This game's players, last podium first{% else %}No game in progress: every player{% end %}</p>
+            {% for index, player in enumerate(page.players) %}
+                <section class="player" data-player="{{ player.player_id }}" hidden>
+                    <div class="count">{% if player.seat %}Podium {{ player.seat }} &middot; {% end %}{{ index + 1 }} of {{ len(page.players) }}</div>
+                    <h2 class="name">{{ player.name }}</h2>
+                    <div class="label">Introduce them as</div>
+                    <div class="intro">{{ player.introduction }}</div>
+                    {% if player.prompts %}
+                        <div class="label">Anecdotes (tick one once you've used it)</div>
+                        <ul class="prompts">
+                            {% for prompt in player.prompts %}
+                                <li>
+                                    <label{% if prompt.used %} class="used"{% end %}>
+                                        <input type="checkbox" data-prompt="{{ prompt.number }}"{% if prompt.used %} checked{% end %}>
+                                        <span>{{ prompt.text }}</span>
+                                    </label>
+                                </li>
                             {% end %}
-                        </details>
+                        </ul>
+                    {% else %}
+                        <p class="empty">No sign-up answers.</p>
                     {% end %}
-                    </section>
-                {% end %}
+                </section>
             {% end %}
+            <p class="problem" id="save-problem" hidden></p>
+            <nav class="pager">
+                <button type="button" id="previous">&larr; Previous</button>
+                <button type="button" id="next">Next &rarr;</button>
+            </nav>
         {% end %}
         <script>
-            // Show only players whose name contains what's typed.
-            var filter = document.getElementById("filter");
-            if (filter) {
-                filter.addEventListener("input", function () {
-                    var text = filter.value.trim().toLowerCase();
-                    document.querySelectorAll(".group").forEach(function (group) {
-                        var shown = 0;
-                        group.querySelectorAll(".player").forEach(function (player) {
-                            var match = player.dataset.name.indexOf(text) !== -1;
-                            player.style.display = match ? "" : "none";
-                            shown += match ? 1 : 0;
+            (function () {
+                var cards = Array.prototype.slice.call(document.querySelectorAll(".player"));
+                if (!cards.length) {
+                    return;
+                }
+                var problem = document.getElementById("save-problem");
+                var previous = document.getElementById("previous");
+                var next = document.getElementById("next");
+                // Come back to the same player after Refresh.
+                var key = "jparty-host-player";
+                var shown = cards.findIndex(function (card) {
+                    return card.dataset.player === sessionStorage.getItem(key);
+                });
+                function show(index) {
+                    shown = Math.max(0, Math.min(cards.length - 1, index));
+                    cards.forEach(function (card, i) {
+                        card.hidden = i !== shown;
+                    });
+                    previous.disabled = shown === 0;
+                    next.disabled = shown === cards.length - 1;
+                    sessionStorage.setItem(key, cards[shown].dataset.player);
+                    window.scrollTo(0, 0);
+                }
+                previous.addEventListener("click", function () { show(shown - 1); });
+                next.addEventListener("click", function () { show(shown + 1); });
+                show(shown < 0 ? 0 : shown);
+
+                // A tick is saved straight away, for the rest of the tournament.
+                document.querySelectorAll(".prompts input").forEach(function (box) {
+                    box.addEventListener("change", function () {
+                        var card = box.closest(".player");
+                        var label = box.closest("label");
+                        var used = box.checked;
+                        label.classList.toggle("used", used);
+                        problem.hidden = true;
+                        fetch("/host/prompt", {
+                            method: "POST",
+                            headers: {"Content-Type": "application/json"},
+                            body: JSON.stringify({
+                                player_id: card.dataset.player,
+                                prompt: Number(box.dataset.prompt),
+                                used: used
+                            })
+                        }).then(function (response) {
+                            return response.json().then(function (reply) {
+                                if (!response.ok) {
+                                    throw new Error(reply.error || "Couldn't save.");
+                                }
+                            });
+                        }).catch(function (error) {
+                            box.checked = !used;
+                            label.classList.toggle("used", !used);
+                            problem.textContent = "Couldn't save that tick: " + error.message;
+                            problem.hidden = false;
                         });
-                        // Hide a heading whose players are all filtered out.
-                        group.style.display = shown ? "" : "none";
                     });
                 });
-            }
+            })();
         </script>
     </body>
 </html>
