@@ -161,6 +161,7 @@ def get_current_game_state(game: object) -> object:
         "reveal_answers_after_triple_stumper": (
             game.reveal_answers_after_triple_stumper_enabled()
         ),
+        "read_clues_aloud": game.read_clues_aloud_enabled(),
         "started_at": game._game_started_at or current_time,
         "last_updated": current_time,
     }

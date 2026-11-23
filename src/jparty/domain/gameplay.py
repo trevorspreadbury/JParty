@@ -159,7 +159,12 @@ class ClueFlow:
         self.game = game
 
     def open_responses(self) -> None:
-        """Open the buzz window for the active clue."""
+        """Open the buzz window for the active clue.
+
+        Any reading still going is stopped: a host who presses Space early
+        has decided the clue has been read.
+        """
+        self.game.clue_reader.stop()
         self.game.responses_open_time = time.time()
         self.game._open_responses_times.append(self.game.responses_open_time)
         self.game.dc.borders.lights(True)
@@ -246,6 +251,7 @@ class ClueFlow:
     def back_to_board(self) -> None:
         """Return from a clue view to the board and advance question tracking."""
         logging.info("back_to_board")
+        self.game.clue_reader.stop()
         self.game._awaiting_stumped_answer_reveal = False
         self.game.score_recorder.flush_question_history()
         self.game.question_number += 1
@@ -324,6 +330,7 @@ class ClueFlow:
             return
         self.game._awaiting_stumped_answer_reveal = False
         self.game.dc.question_widget.reveal_answer()
+        self.game.clue_reader.answer_revealed(self.game.active_question)
         self.game.keystroke_manager.activate("BACK_TO_BOARD")
 
     def load_question(self, q: object) -> None:
@@ -355,6 +362,9 @@ class ClueFlow:
             self.game.keystroke_manager.activate("OPEN_RESPONSES")
         self.game.dc.load_question(q)
         self.game.dc.remove_card(q)
+        if not q.dd:
+            # A Daily Double is read once its wager is in (get_dd_wager).
+            self.game.clue_reader.clue_shown(q)
         self.game._refresh_score_edit_controls()
 
 
@@ -367,6 +377,7 @@ class FinalJeopardyFlow:
 
     def open_responses(self) -> None:
         """Open Final Jeopardy answer entry and start the music timer."""
+        self.game.clue_reader.stop()
         self.game._all_buzz_attempts = []
         self.game._answer_attempts = []
         self.game._open_responses_times = []
@@ -713,6 +724,7 @@ class TiebreakerFlow:
 
     def _clear_clue(self) -> None:
         """Clear the buzzer state left by the last tiebreaker clue."""
+        self.game.clue_reader.stop()
         if self.game.timer:
             self.game.timer.cancel()
         self.game.timer = None
@@ -766,6 +778,7 @@ class TiebreakerFlow:
         """Replace the category with the clue, ready for the host to read."""
         self.game.dc.question_widget.show_question()
         self.game.keystroke_manager.activate("OPEN_RESPONSES")
+        self.game.clue_reader.clue_shown(self.game.active_question)
 
     def correct_answer(self) -> None:
         """End the tiebreaker with the answering player as the winner."""
@@ -865,6 +878,7 @@ class TiebreakerFlow:
     def reveal_answer(self) -> None:
         """Show the missed clue's answer before the next clue."""
         self.game.dc.question_widget.reveal_answer()
+        self.game.clue_reader.answer_revealed(self.game.active_question)
         self.game.keystroke_manager.activate("TIEBREAKER_NEXT_CLUE")
 
     def finish(self, winner: object) -> None:

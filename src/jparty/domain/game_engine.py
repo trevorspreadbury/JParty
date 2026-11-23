@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import QApplication, QInputDialog, QMessageBox, QWidget
 
 from jparty import __version__
 from jparty.app.paths import GAME_STATES_DIR, TOURNAMENTS_DIR
+from jparty.domain.clue_reader import ClueReader
 from jparty.domain.gameplay import (
     ClueFlow,
     FinalJeopardyFlow,
@@ -386,6 +387,8 @@ class Game(QObject):
         self.player_state_broadcaster = PlayerStateBroadcaster(self)
         self.score_recorder = ScoreRecorder(self)
         self.clue_flow = ClueFlow(self)
+        # Off until the welcome screen or a resumed save turns it on.
+        self.clue_reader = ClueReader(self)
         self.final_jeopardy_flow = FinalJeopardyFlow(self)
         self.tiebreaker_flow = TiebreakerFlow(self)
         # Player who won a tiebreaker, or None. The scores stay tied; the
@@ -744,6 +747,22 @@ class Game(QObject):
         """
         self._reveal_answers_after_triple_stumper = bool(enabled)
 
+    def set_read_clues_aloud(self, enabled: bool) -> None:
+        """Choose whether the computer reads clues aloud.
+
+        When on, each clue is read with the system's text-to-speech voice and
+        responses open once it has been read, so the host no longer presses
+        Space for that. The host can still press Space to open early.
+
+        Args:
+            enabled: Whether to read clues aloud.
+        """
+        self.clue_reader.set_enabled(enabled)
+
+    def read_clues_aloud_enabled(self) -> bool:
+        """Return whether the computer reads clues aloud."""
+        return self.clue_reader.enabled
+
     def reveal_answers_after_triple_stumper_enabled(self) -> bool:
         """Return whether triple-stumper clues reveal the answer first."""
         return self._reveal_answers_after_triple_stumper
@@ -865,6 +884,7 @@ class Game(QObject):
         self.set_reveal_answers_after_triple_stumper(
             general_state.get("reveal_answers_after_triple_stumper", False)
         )
+        self.set_read_clues_aloud(general_state.get("read_clues_aloud", False))
         self.set_session_game_id(general_state.get("game_id", loaded.game_id))
         # A tournament game keeps logging its results when resumed; the
         # player ids are on the saved players list. A save that can no
@@ -2222,6 +2242,7 @@ class Game(QObject):
             ``None``.
         """
         self._finish_pending_history()
+        self.clue_reader.stop()
         self.buzzer_controller.restart()
         if self.buzzer_controller:
             for player_number in list(
@@ -2301,6 +2322,7 @@ class Game(QObject):
         self.active_question.value = wager
         self.keystroke_manager.activate("CORRECT_ANSWER", "INCORRECT_ANSWER")
         self.dc.question_widget.show_question()
+        self.clue_reader.daily_double_shown(self.active_question)
         self._refresh_score_edit_controls()
 
     def load_image_review_screen(self, q: object) -> None:
@@ -2335,6 +2357,7 @@ class Game(QObject):
         self.final_wagers_open = False
         self.dc.question_widget.show_question()
         self.keystroke_manager.activate("FINAL_OPEN_RESPONSES")
+        self.clue_reader.final_shown(self.active_question)
 
     def correct_answer(self) -> None:
         """Apply a correct ruling to the active player's clue response.
@@ -2490,6 +2513,7 @@ class Game(QObject):
         if self.timer:
             self.timer.cancel()
         self.timer = None
+        self.clue_reader.stop()
         self.song_player.stop()
         self.song_player.let_output_sleep()
         QApplication.quit()

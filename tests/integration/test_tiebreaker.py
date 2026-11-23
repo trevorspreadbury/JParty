@@ -633,3 +633,20 @@ def test_prompt_shows_seats_for_signed_names(
     assert prompts[0].startswith("Alice and Player 2 are tied for first.")
     assert "base64" not in prompts[0]
     assert len(prompts[0]) < 300
+
+
+def test_tiebreaker_clue_is_read_aloud_then_opens(tied_game: object) -> None:
+    """With reading aloud on, a tiebreaker clue opens once it has been read."""
+    game = tied_game
+    game.set_read_clues_aloud(True)
+    _space(game)  # Load the clues; the category shows first.
+    assert game.clue_reader.speaker.said == []
+    _space(game)  # Show the clue, which is read aloud.
+    assert game.clue_reader.speaker.said == ["Tiebreaker clue 1"]
+    assert game.accepting_responses is False
+
+    game.clue_reader.speaker.finish()
+
+    assert game.accepting_responses is True
+    game.buzz(2)  # Not tied, so locked out.
+    assert game.answering_player is None

@@ -76,6 +76,7 @@ goes into `question_history.jsonl`. A new save looks like this:
     }
   ],
   "reveal_answers_after_triple_stumper": false,
+  "read_clues_aloud": false,
   "started_at": 1700000000.0,
   "last_updated": 1700000000.0,
   "history_format": 2,
@@ -130,6 +131,9 @@ Field notes:
     get a category of their own.
 - `reveal_answers_after_triple_stumper`: whether the host chose to show the
   correct response after a clue nobody gets right. Resume restores it.
+- `read_clues_aloud`: whether the computer reads clues aloud and opens
+  responses once each clue has been read. Resume restores it; saves from
+  before this option read as `false`.
 - `started_at`: Unix timestamp for when the game session started. Resume
   keeps it.
 - `last_updated`: Unix timestamp for when `general.json` was last written,
