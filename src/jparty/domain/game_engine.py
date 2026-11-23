@@ -35,6 +35,7 @@ from jparty.domain.input import (
     index_to_key,
 )
 from jparty.domain.models import FinalBoard
+from jparty.domain.robot_host import RobotHost
 from jparty.domain.state import (
     HISTORY_FORMAT,
     NO_ANSWER_RESULT,
@@ -389,6 +390,9 @@ class Game(QObject):
         self.clue_flow = ClueFlow(self)
         # Off until the welcome screen or a resumed save turns it on.
         self.clue_reader = ClueReader(self)
+        # Has no speech-to-text listener yet, so it can't be turned on
+        # outside tests.
+        self.robot_host = RobotHost(self)
         self.final_jeopardy_flow = FinalJeopardyFlow(self)
         self.tiebreaker_flow = TiebreakerFlow(self)
         # Player who won a tiebreaker, or None. The scores stay tied; the
@@ -762,6 +766,28 @@ class Game(QObject):
     def read_clues_aloud_enabled(self) -> bool:
         """Return whether the computer reads clues aloud."""
         return self.clue_reader.enabled
+
+    def set_robot_host(self, enabled: bool) -> bool:
+        """Choose whether the robot host listens to responses and rules.
+
+        The robot host needs the clue reader, so turning it on turns reading
+        clues aloud on too. Turning it off leaves reading aloud as it is.
+
+        Args:
+            enabled: Whether the robot host should run.
+
+        Returns:
+            Whether the robot host is now on. It stays off without a
+            speech-to-text listener.
+        """
+        on = self.robot_host.set_enabled(enabled)
+        if on:
+            self.set_read_clues_aloud(True)
+        return on
+
+    def robot_host_enabled(self) -> bool:
+        """Return whether the robot host listens to responses and rules."""
+        return self.robot_host.enabled
 
     def reveal_answers_after_triple_stumper_enabled(self) -> bool:
         """Return whether triple-stumper clues reveal the answer first."""
@@ -2243,6 +2269,7 @@ class Game(QObject):
         """
         self._finish_pending_history()
         self.clue_reader.stop()
+        self.robot_host.stop()
         self.buzzer_controller.restart()
         if self.buzzer_controller:
             for player_number in list(
@@ -2322,7 +2349,10 @@ class Game(QObject):
         self.active_question.value = wager
         self.keystroke_manager.activate("CORRECT_ANSWER", "INCORRECT_ANSWER")
         self.dc.question_widget.show_question()
-        self.clue_reader.daily_double_shown(self.active_question)
+        question = self.active_question
+        self.clue_reader.daily_double_shown(
+            question, lambda: self.robot_host.daily_double_read(question)
+        )
         self._refresh_score_edit_controls()
 
     def load_image_review_screen(self, q: object) -> None:
@@ -2514,6 +2544,7 @@ class Game(QObject):
             self.timer.cancel()
         self.timer = None
         self.clue_reader.stop()
+        self.robot_host.stop()
         self.song_player.stop()
         self.song_player.let_output_sleep()
         QApplication.quit()

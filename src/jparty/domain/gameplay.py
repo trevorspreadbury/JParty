@@ -67,22 +67,29 @@ class ScoreRecorder:
     def __init__(self, game: object) -> None:
         """Store the owning game facade."""
         self.game = game
+        # Extra fields for the next answer attempt, such as the robot host's
+        # transcript; cleared once used or when the ruling is over.
+        self.pending_details = None
 
     def append_answer_attempt(
         self, player: object, answer_correct: bool, score_before: int, score_after: int
     ) -> None:
-        """Append one judged answer attempt for the active clue."""
+        """Append one judged answer attempt for the active clue.
+
+        Any ``pending_details`` are added to the record and then cleared.
+        """
         if player is None:
             return
-        self.game._answer_attempts.append(
-            {
-                "player_index": player.player_number,
-                "answer_correct": answer_correct,
-                "timestamp": time.time(),
-                "score_before": score_before,
-                "score_after": score_after,
-            }
-        )
+        attempt = {
+            "player_index": player.player_number,
+            "answer_correct": answer_correct,
+            "timestamp": time.time(),
+            "score_before": score_before,
+            "score_after": score_after,
+        }
+        attempt.update(self.pending_details or {})
+        self.pending_details = None
+        self.game._answer_attempts.append(attempt)
 
     def apply_manual_score_override(self, player: object, new_score: int) -> bool:
         """Log and apply a host-entered manual player score override."""
@@ -236,9 +243,14 @@ class ClueFlow:
                 in_timeout=in_timeout,
             )
         )
+        if successful_buzz:
+            # Last, so the buzz is recorded before the robot can rule on it.
+            self.game.robot_host.buzz_accepted(player)
 
     def answer_given(self) -> None:
         """Clear answer-resolution UI state after a judgment."""
+        self.game.robot_host.stop()
+        self.game.score_recorder.pending_details = None
         self.game.keystroke_manager.deactivate("CORRECT_ANSWER", "INCORRECT_ANSWER")
         self.game.dc.player_widget(self.game.answering_player).stop_lights()
         answering_player = self.game.answering_player
@@ -252,6 +264,7 @@ class ClueFlow:
         """Return from a clue view to the board and advance question tracking."""
         logging.info("back_to_board")
         self.game.clue_reader.stop()
+        self.game.robot_host.stop()
         self.game._awaiting_stumped_answer_reveal = False
         self.game.score_recorder.flush_question_history()
         self.game.question_number += 1
@@ -317,9 +330,10 @@ class ClueFlow:
         if self.game.reveal_answers_after_triple_stumper_enabled():
             self.game._awaiting_stumped_answer_reveal = True
             self.game.keystroke_manager.activate("REVEAL_STUMPED_ANSWER")
-            return
-        self.game._awaiting_stumped_answer_reveal = False
-        self.game.keystroke_manager.activate("BACK_TO_BOARD")
+        else:
+            self.game._awaiting_stumped_answer_reveal = False
+            self.game.keystroke_manager.activate("BACK_TO_BOARD")
+        self.game.robot_host.clue_stumped(self.game.active_question)
 
     def reveal_stumped_answer(self) -> None:
         """Reveal the current clue answer before returning to the board."""
@@ -329,9 +343,12 @@ class ClueFlow:
         ):
             return
         self.game._awaiting_stumped_answer_reveal = False
+        question = self.game.active_question
         self.game.dc.question_widget.reveal_answer()
-        self.game.clue_reader.answer_revealed(self.game.active_question)
         self.game.keystroke_manager.activate("BACK_TO_BOARD")
+        self.game.clue_reader.answer_revealed(
+            question, lambda: self.game.robot_host.answer_read(question)
+        )
 
     def load_question(self, q: object) -> None:
         """Load a clue into the displays and initialize per-question tracking."""
