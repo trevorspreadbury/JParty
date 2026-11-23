@@ -246,6 +246,24 @@ When enabled, a clue that nobody gets correct will pause on the answer before re
 
 When disabled, a triple stumper returns directly to the board after the stumped flow finishes.
 
+### `Read Clues Aloud`
+
+When enabled, the computer reads each clue aloud with the system's
+text-to-speech voice (on Windows, the voices under Settings > Time & language >
+Speech). Responses open on their own once a clue has been read, so you don't
+press space for that. Press space while a clue is still being read to open
+responses early and stop the reading.
+
+The other steps are unchanged: you still pick clues, enter Daily Double wagers
+and rule on answers. A Daily Double is read once its wager is in, and you rule
+on it as usual. The Final clue is read when you show it, and the think music
+starts once it has been read. With `Reveal Answers after Triple Stumper` on,
+the correct response is read when you reveal it. Tiebreaker clues are read
+too.
+
+If the computer has no working voice, nothing is read and you press space as
+usual. Resume restores the setting.
+
 ### Summary warnings
 
 The summary is worth reading before you start. It can warn about content problems in the loaded boards.

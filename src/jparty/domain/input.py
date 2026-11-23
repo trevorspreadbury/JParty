@@ -189,6 +189,34 @@ class KeystrokeManager:
             else:
                 event.func()
 
+    def is_active(self, ident: object) -> bool:
+        """Return whether the event named ``ident`` is waiting for its key."""
+        return self._events[ident].active
+
+    def trigger(self, ident: object) -> bool:
+        """Fire one event as if its key were pressed, if it is active.
+
+        The event is deactivated like a key press would, unless it is
+        persistent. Other events bound to the same key are left alone.
+
+        Args:
+            ident: Identifier of the event to fire.
+
+        Returns:
+            ``True`` when the event was active and fired; otherwise ``False``.
+        """
+        event = self._events[ident]
+        if not event.active:
+            return False
+        logging.info("Triggering %s", ident)
+        if not event.persistent:
+            self._deactivate(ident)
+        if event.func_args is not None:
+            event.func(event.func_args)
+        else:
+            event.func()
+        return True
+
     def _activate(self, ident: object) -> None:
         """Activate a registered event and update any associated hint UI.
 

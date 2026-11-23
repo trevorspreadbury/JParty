@@ -75,11 +75,20 @@ class StubGame:
         self._composed_game_data = None
         self._session_game_id = ""
         self._reveal_answers_after_triple_stumper = False
+        self._read_clues_aloud = False
         self.resume_claimed = 0
 
     def start_game(self) -> None:
         """Test start game."""
         self.start_game_calls += 1
+
+    def set_read_clues_aloud(self, enabled: bool) -> None:
+        """Test storing the read-clues-aloud option."""
+        self._read_clues_aloud = bool(enabled)
+
+    def read_clues_aloud_enabled(self) -> bool:
+        """Test reading the read-clues-aloud option."""
+        return self._read_clues_aloud
 
     def clear_resume_state(self) -> None:
         """Test clear resume state."""
@@ -98,6 +107,7 @@ class StubGame:
                 "players": [{"name": "Alice"}, {"name": "Bob"}],
                 "selected_round_indices": [0, 2],
                 "reveal_answers_after_triple_stumper": True,
+                "read_clues_aloud": True,
             },
         }
 
@@ -229,6 +239,8 @@ def test_load_saved_game_requires_matching_player_count(
     ]
     assert all(checkbox.isEnabled() for checkbox in widget.round_checkboxes)
     assert widget.reveal_answers_radio.isChecked() is True
+    assert widget.read_clues_aloud_radio.isChecked() is True
+    assert game.read_clues_aloud_enabled() is True
     assert "Claimed 0 of 2 saved players" in widget.summary_label.text()
     assert (
         "Claim every saved player profile to resume (0/2)."
@@ -2841,3 +2853,19 @@ def test_failed_advanced_row_random_message_survives_later_changes(
     widget.advanced_boards.refresh_row(0)
 
     assert "Kept game" not in row["status_label"].text()
+
+
+def test_welcome_radio_updates_read_clues_aloud_option(qtbot: object) -> None:
+    """The option toggles on and off, independent of the reveal option."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    widget.reveal_answers_radio.setChecked(True)
+    assert widget.read_clues_aloud_radio.isChecked() is False
+
+    widget.read_clues_aloud_radio.click()
+    assert game.read_clues_aloud_enabled() is True
+    assert widget.reveal_answers_radio.isChecked() is True
+
+    widget.read_clues_aloud_radio.click()
+    assert game.read_clues_aloud_enabled() is False

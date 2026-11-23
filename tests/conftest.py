@@ -161,6 +161,42 @@ class FakeLabel:
         self.text = text
 
 
+class FakeSpeaker:
+    """Stand-in for ``Speaker`` that records text instead of reading it."""
+
+    def __init__(self) -> None:
+        """Start with nothing said."""
+        self.said = []
+        self.stop_calls = 0
+        self._on_finished = None
+
+    def say(self, text: str, on_finished: object = None) -> bool:
+        """Record ``text`` and hold ``on_finished`` until ``finish``."""
+        self._on_finished = None
+        if not text:
+            return False
+        self.said.append(text)
+        self._on_finished = on_finished
+        return True
+
+    def prepare(self) -> bool:
+        """Report a working voice without starting one."""
+        self.prepare_calls = getattr(self, "prepare_calls", 0) + 1
+        return True
+
+    def stop(self) -> None:
+        """Drop the pending callback, as stopping a real reading does."""
+        self.stop_calls += 1
+        self._on_finished = None
+
+    def finish(self) -> None:
+        """Pretend the current text has been read in full."""
+        callback = self._on_finished
+        self._on_finished = None
+        if callback is not None:
+            callback()
+
+
 class FakeQuestionWidget:
     """Test helper for fakequestionwidget."""
 
@@ -660,6 +696,8 @@ def game(
     monkeypatch.setattr(game_module, "QuestionTimer", FakeTimer)
     patch_jparty_clock(monkeypatch, time_controller)
     game = Game()
+    # Like SongPlayer, never let a test read aloud through the real voice.
+    game.clue_reader.speaker = FakeSpeaker()
     game._game_state_dir = temp_dir / "game_state"
     game._game_state_dir.mkdir()
     game._game_started_at = time_controller.time()

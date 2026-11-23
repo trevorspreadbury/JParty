@@ -350,6 +350,23 @@ class Welcome(StartWidget):
         self.reveal_answers_radio.toggled.connect(
             self.update_reveal_answers_after_triple_stumper
         )
+        self.read_clues_aloud_radio = QRadioButton("Read Clues Aloud", self)
+        # Not exclusive with the reveal option, which shares this parent.
+        self.read_clues_aloud_radio.setAutoExclusive(False)
+        self.read_clues_aloud_radio.setToolTip(
+            "The computer reads each clue aloud and opens responses when it "
+            "has finished. Press Space to open them sooner."
+        )
+        self.read_clues_aloud_radio.setChecked(
+            bool(getattr(self.game, "read_clues_aloud_enabled", lambda: False)())
+        )
+        self.read_clues_aloud_radio.toggled.connect(self.update_read_clues_aloud)
+        self.options_layout = QHBoxLayout()
+        self.options_layout.addStretch(1)
+        self.options_layout.addWidget(self.reveal_answers_radio)
+        self.options_layout.addSpacing(40)
+        self.options_layout.addWidget(self.read_clues_aloud_radio)
+        self.options_layout.addStretch(1)
         self.quit_button = DynamicButton("Quit", self)
         self.quit_button.clicked.connect(self.game.close)
         self.help_button = DynamicButton("Show help", self)
@@ -412,7 +429,7 @@ class Welcome(StartWidget):
         main_layout.addWidget(self.rounds_widget, 4)
         main_layout.addWidget(self.advanced_options_checkbox, 1)
         main_layout.addWidget(self.advanced_boards, 7)
-        main_layout.addWidget(self.reveal_answers_radio, 2)
+        main_layout.addLayout(self.options_layout, 2)
         main_layout.addLayout(footer_layout, 3)
         main_layout.addStretch(3)
         self.summary_trigger.connect(self.set_summary)
@@ -535,15 +552,15 @@ QLabel {{
 }}
 """
         radio_font_size = max(int(self.height() * 0.024), 18)
-        self.reveal_answers_radio.setStyleSheet(
-            f"""
+        radio_style = f"""
 QRadioButton {{
     color: black;
     font-size: {radio_font_size}px;
     font-weight: 600;
 }}
 """
-        )
+        self.reveal_answers_radio.setStyleSheet(radio_style)
+        self.read_clues_aloud_radio.setStyleSheet(radio_style)
         self.advanced_options_checkbox.setStyleSheet(
             f"""
 QCheckBox {{
@@ -1822,6 +1839,9 @@ QCheckBox {{
                 )
             )
         )
+        self.read_clues_aloud_radio.setChecked(
+            bool(resume_state["general_state"].get("read_clues_aloud", False))
+        )
         # Use the indices the game loaded, which point into its rounds.
         self.configure_round_selector(
             selected_indices=self.game.selected_round_indices(), enabled=True
@@ -1901,6 +1921,12 @@ QCheckBox {{
     def update_reveal_answers_after_triple_stumper(self, checked: bool) -> None:
         """Push the triple-stumper reveal option into the active game object."""
         setter = getattr(self.game, "set_reveal_answers_after_triple_stumper", None)
+        if setter is not None:
+            setter(checked)
+
+    def update_read_clues_aloud(self, checked: bool) -> None:
+        """Push the read-clues-aloud option into the active game object."""
+        setter = getattr(self.game, "set_read_clues_aloud", None)
         if setter is not None:
             setter(checked)
 
