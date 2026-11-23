@@ -361,11 +361,20 @@ class Welcome(StartWidget):
             bool(getattr(self.game, "read_clues_aloud_enabled", lambda: False)())
         )
         self.read_clues_aloud_radio.toggled.connect(self.update_read_clues_aloud)
+        self.robot_host_radio = QRadioButton("Robot Host", self)
+        self.robot_host_radio.setAutoExclusive(False)
+        self.robot_host_radio.setChecked(
+            bool(getattr(self.game, "robot_host_enabled", lambda: False)())
+        )
+        self.robot_host_radio.toggled.connect(self.update_robot_host)
+        self._refresh_robot_host_availability()
         self.options_layout = QHBoxLayout()
         self.options_layout.addStretch(1)
         self.options_layout.addWidget(self.reveal_answers_radio)
         self.options_layout.addSpacing(40)
         self.options_layout.addWidget(self.read_clues_aloud_radio)
+        self.options_layout.addSpacing(40)
+        self.options_layout.addWidget(self.robot_host_radio)
         self.options_layout.addStretch(1)
         self.quit_button = DynamicButton("Quit", self)
         self.quit_button.clicked.connect(self.game.close)
@@ -561,6 +570,7 @@ QRadioButton {{
 """
         self.reveal_answers_radio.setStyleSheet(radio_style)
         self.read_clues_aloud_radio.setStyleSheet(radio_style)
+        self.robot_host_radio.setStyleSheet(radio_style)
         self.advanced_options_checkbox.setStyleSheet(
             f"""
 QCheckBox {{
@@ -1842,6 +1852,11 @@ QCheckBox {{
         self.read_clues_aloud_radio.setChecked(
             bool(resume_state["general_state"].get("read_clues_aloud", False))
         )
+        # The game already tried to turn the robot host back on; show whether
+        # it could.
+        self._set_robot_host_radio(
+            bool(getattr(self.game, "robot_host_enabled", lambda: False)())
+        )
         # Use the indices the game loaded, which point into its rounds.
         self.configure_round_selector(
             selected_indices=self.game.selected_round_indices(), enabled=True
@@ -1925,10 +1940,50 @@ QCheckBox {{
             setter(checked)
 
     def update_read_clues_aloud(self, checked: bool) -> None:
-        """Push the read-clues-aloud option into the active game object."""
+        """Push the read-clues-aloud option into the active game object.
+
+        Turning it off turns the robot host off too, which needs it.
+        """
         setter = getattr(self.game, "set_read_clues_aloud", None)
         if setter is not None:
             setter(checked)
+        if not checked:
+            self._set_robot_host_radio(False)
+
+    def update_robot_host(self, checked: bool) -> None:
+        """Turn the robot host on or off in the game.
+
+        Turning it on also turns on reading clues aloud. If the robot host
+        can't run, the option goes back off and says why.
+        """
+        setter = getattr(self.game, "set_robot_host", None)
+        on = bool(setter(checked)) if setter is not None else False
+        if checked and not on:
+            self._set_robot_host_radio(False)
+            self._refresh_robot_host_availability()
+            return
+        if on:
+            self.read_clues_aloud_radio.setChecked(True)
+
+    def _set_robot_host_radio(self, checked: bool) -> None:
+        """Show the robot host option as on or off without acting on it."""
+        self.robot_host_radio.blockSignals(True)
+        self.robot_host_radio.setChecked(checked)
+        self.robot_host_radio.blockSignals(False)
+
+    def _refresh_robot_host_availability(self) -> None:
+        """Disable the robot host option, with the reason, when it can't run."""
+        reason = getattr(
+            self.game,
+            "robot_host_unavailable_reason",
+            lambda: "The robot host isn't available.",
+        )()
+        self.robot_host_radio.setEnabled(reason is None)
+        self.robot_host_radio.setToolTip(
+            reason
+            or "The computer listens to each response with the microphone and "
+            "rules on it. Use the arrow keys to rule yourself at any time."
+        )
 
     def clear_round_selector(self) -> None:
         """Remove any existing round-selection checkboxes.

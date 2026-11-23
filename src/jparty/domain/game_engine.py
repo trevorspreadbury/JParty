@@ -83,6 +83,10 @@ from jparty.services.game_loader import (
     build_game_from_board_selection_configs,
     load_tiebreaker_clues,
 )
+from jparty.services.listening import (
+    create_microphone_listener,
+    listening_unavailable_reason,
+)
 from jparty.ui.widgets.common import CompoundObject, SongPlayer
 
 DEFAULT_DAILY_DOUBLE_WAGER_CAP = 1000
@@ -390,9 +394,11 @@ class Game(QObject):
         self.clue_flow = ClueFlow(self)
         # Off until the welcome screen or a resumed save turns it on.
         self.clue_reader = ClueReader(self)
-        # Has no speech-to-text listener yet, so it can't be turned on
-        # outside tests.
+        # Its microphone listener is created the first time it is turned on.
         self.robot_host = RobotHost(self)
+        # Replaced in tests so no microphone or speech model is touched.
+        self.create_listener = create_microphone_listener
+        self.listening_unavailable_reason = listening_unavailable_reason
         self.final_jeopardy_flow = FinalJeopardyFlow(self)
         self.tiebreaker_flow = TiebreakerFlow(self)
         # Player who won a tiebreaker, or None. The scores stay tied; the
@@ -758,10 +764,15 @@ class Game(QObject):
         responses open once it has been read, so the host no longer presses
         Space for that. The host can still press Space to open early.
 
+        The robot host relies on the clue reader to open responses, so
+        turning reading off turns the robot host off too.
+
         Args:
             enabled: Whether to read clues aloud.
         """
         self.clue_reader.set_enabled(enabled)
+        if not enabled and self.robot_host.enabled:
+            self.robot_host.set_enabled(False)
 
     def read_clues_aloud_enabled(self) -> bool:
         """Return whether the computer reads clues aloud."""
@@ -777,9 +788,12 @@ class Game(QObject):
             enabled: Whether the robot host should run.
 
         Returns:
-            Whether the robot host is now on. It stays off without a
-            speech-to-text listener.
+            Whether the robot host is now on. It stays off without
+            speech-to-text or a microphone; see
+            :meth:`robot_host_unavailable_reason`.
         """
+        if enabled and self.robot_host.listener is None:
+            self.robot_host.listener = self.create_listener()
         on = self.robot_host.set_enabled(enabled)
         if on:
             self.set_read_clues_aloud(True)
@@ -788,6 +802,12 @@ class Game(QObject):
     def robot_host_enabled(self) -> bool:
         """Return whether the robot host listens to responses and rules."""
         return self.robot_host.enabled
+
+    def robot_host_unavailable_reason(self) -> str | None:
+        """Return why the robot host can't be turned on, or ``None``."""
+        if self.robot_host.listener is not None:
+            return None
+        return self.listening_unavailable_reason()
 
     def reveal_answers_after_triple_stumper_enabled(self) -> bool:
         """Return whether triple-stumper clues reveal the answer first."""
@@ -911,6 +931,7 @@ class Game(QObject):
             general_state.get("reveal_answers_after_triple_stumper", False)
         )
         self.set_read_clues_aloud(general_state.get("read_clues_aloud", False))
+        self.set_robot_host(general_state.get("robot_host", False))
         self.set_session_game_id(general_state.get("game_id", loaded.game_id))
         # A tournament game keeps logging its results when resumed; the
         # player ids are on the saved players list. A save that can no

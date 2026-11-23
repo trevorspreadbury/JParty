@@ -264,6 +264,39 @@ too.
 If the computer has no working voice, nothing is read and you press space as
 usual. Resume restores the setting.
 
+### `Robot Host`
+
+When enabled, the computer also listens to each response through the
+microphone and rules on it, so a clue runs from reading to ruling on its own.
+Turning it on turns on `Read Clues Aloud` too.
+
+- After a buzz, the player has 5 seconds to start answering. Saying nothing in
+  time is ruled wrong, as on the show.
+- A response that matches the correct response is ruled right. One that has
+  nothing to do with it is ruled wrong. The computer says "Correct." or "No."
+- When the computer can't tell (a partial answer, extra words, or an answer
+  the game data doesn't list), it doesn't rule. Use the arrow keys as usual.
+- You can rule with the arrow keys at any time, even while it is listening.
+- A clue nobody gets returns to the board by itself. With `Reveal Answers
+  after Triple Stumper` on, the correct response is shown and read first.
+
+You still pick clues and enter Daily Double wagers; the robot host listens to
+the Daily Double player once their clue has been read. Final Jeopardy is
+ruled by you as usual.
+
+The robot host needs the optional speech-to-text add-on and a microphone. When
+either is missing, the option is greyed out and its tooltip says why. To add
+speech-to-text to a source install, run `uv sync --extra robot` (or
+`pip install -e .[robot]`). The packaged app doesn't include it yet. The first
+time the robot host is turned on, it downloads its speech model (about 140 MB)
+in the background.
+
+One microphone near the players is enough: the buzzers already say who is
+answering. If responses are cut off or not heard, set `JPARTY_SPEECH_RMS`
+(default `0.01`) lower for a quiet microphone or higher for a noisy room; the
+log records each response's loudness. `JPARTY_WHISPER_MODEL` picks a different
+Whisper model, such as `small.en` for better accuracy on a fast computer.
+
 ### Summary warnings
 
 The summary is worth reading before you start. It can warn about content problems in the loaded boards.

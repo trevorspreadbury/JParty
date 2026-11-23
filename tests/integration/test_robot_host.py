@@ -29,10 +29,15 @@ class FakeListener:
         """Whether a response is being waited for."""
         return self.on_heard is not None
 
-    def listen(self, on_heard: object) -> None:
+    def listen(self, on_heard: object, hint: str = "") -> None:
         """Wait for a response."""
         self.listen_calls += 1
         self.on_heard = on_heard
+        self.hint = hint
+
+    def prepare(self) -> None:
+        """Record that the listener was readied."""
+        self.prepare_calls = getattr(self, "prepare_calls", 0) + 1
 
     def cancel(self) -> None:
         """Stop waiting."""
@@ -313,3 +318,65 @@ def test_turning_the_robot_host_off_stops_listening(robot_game: object) -> None:
     late("Who is Abraham Lincoln?")
     assert game.answering_player is game.players[0]
     assert game.players[0].score == 0
+
+
+def test_listener_gets_the_answer_as_a_hint(robot_game: object) -> None:
+    """Whisper is told the correct response so it spells names that way."""
+    game = robot_game
+    _show_and_open(game, _clue(game, "(Pyotr) <i>Tchaikovsky</i>"))
+    game.buzz(0)
+    assert game.listener.hint == "Pyotr Tchaikovsky"
+
+
+def test_turning_the_robot_host_on_readies_the_listener(robot_game: object) -> None:
+    """The speech model starts loading before the first buzz."""
+    assert robot_game.listener.prepare_calls == 1
+
+
+def test_robot_host_creates_its_listener_when_first_turned_on(
+    game_with_players: object,
+) -> None:
+    """The microphone listener is made on demand, not at startup."""
+    game = game_with_players
+    made = []
+    game.create_listener = lambda: made.append(FakeListener()) or made[-1]
+    assert game.robot_host_unavailable_reason() == "No microphone in tests."
+
+    assert game.set_robot_host(True) is True
+    game.set_robot_host(False)
+    game.set_robot_host(True)
+
+    assert len(made) == 1
+    assert game.robot_host.listener is made[0]
+    assert game.robot_host_unavailable_reason() is None
+
+
+def test_turning_reading_off_turns_the_robot_host_off(robot_game: object) -> None:
+    """The robot host can't run without the clue reader."""
+    robot_game.set_read_clues_aloud(False)
+    assert robot_game.robot_host_enabled() is False
+
+
+def test_robot_host_option_is_saved_and_restored(
+    robot_game: object, sample_saved_game_dir: object, monkeypatch: object
+) -> None:
+    """general.json records the option; resume turns it back on if it can."""
+    from jparty.services import game_loader
+
+    game = robot_game
+    game._save_general_state()
+    saved = json.loads((game._game_state_dir / "general.json").read_text())
+    assert saved["robot_host"] is True
+
+    restored_data = game.data
+    monkeypatch.setattr(game_loader, "get_game", lambda game_id: restored_data)
+    general_file = sample_saved_game_dir / "general.json"
+    state = json.loads(general_file.read_text())
+    assert "robot_host" not in state
+    game.prepare_resume_from_dir(sample_saved_game_dir)
+    assert game.robot_host_enabled() is False
+
+    state["robot_host"] = True
+    general_file.write_text(json.dumps(state))
+    game.prepare_resume_from_dir(sample_saved_game_dir)
+    assert game.robot_host_enabled() is True

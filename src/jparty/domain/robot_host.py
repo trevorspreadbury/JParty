@@ -10,13 +10,18 @@ The host can always step in. An arrow key pressed while the robot is
 listening rules as usual and the robot stops listening. When the judge is
 unsure, nothing is ruled and the host decides.
 
-Speech-to-text is not part of this module. It is the injected ``listener``,
-which must provide:
+Speech-to-text is not part of this module. It is the injected ``listener``
+(``jparty.services.listening.MicrophoneListener`` in the app), which must
+provide:
 
-- ``listen(on_heard)``: start listening for one response, then call
+- ``listen(on_heard, hint)``: start listening for one response, then call
   ``on_heard(transcript)`` on the Qt thread with what was heard, or with
-  ``None`` or ``""`` when nothing was said before its time limit.
+  ``None`` or ``""`` when nothing was said before its time limit. ``hint`` is
+  the clue's correct response, so names are spelled the way the judge
+  expects.
 - ``cancel()``: stop listening; ``on_heard`` must then not be called.
+- ``prepare()`` (optional): get ready to listen, for example by loading a
+  speech model, without blocking.
 
 Without a listener the robot host can't be turned on.
 
@@ -30,6 +35,7 @@ from collections.abc import Callable
 from PyQt6.QtCore import QTimer
 
 from jparty.domain.judging import Ruling, judge_response
+from jparty.services.speech import speakable_text
 
 # How long a clue nobody got stays on screen before the board returns, when
 # the correct response is not revealed.
@@ -88,7 +94,11 @@ class RobotHost:
             logging.warning("Robot host needs speech-to-text; it stays off")
             enabled = False
         self.enabled = bool(enabled)
-        if not self.enabled:
+        if self.enabled:
+            prepare = getattr(self.listener, "prepare", None)
+            if prepare is not None:
+                prepare()
+        else:
             self.stop()
         return self.enabled
 
@@ -141,7 +151,8 @@ class RobotHost:
         question = self.game.active_question
         logging.info("Robot host listening to %s", player)
         self.listener.listen(
-            lambda transcript: self._heard(token, question, player, transcript)
+            lambda transcript: self._heard(token, question, player, transcript),
+            speakable_text(getattr(question, "answer", "")),
         )
 
     def _heard(

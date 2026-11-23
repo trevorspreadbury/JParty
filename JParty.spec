@@ -23,7 +23,10 @@ a = Analysis(['src/jparty/__main__.py'],
              hiddenimports=["qrcode"],
              hookspath=[],
              runtime_hooks=[],
-             excludes=[],
+             # The robot host's optional speech-to-text (the "robot" extra) is
+             # not shipped yet. Leave it out even when the build environment
+             # has it, so every build is the same. numpy is only used by it.
+             excludes=["faster_whisper", "ctranslate2", "onnxruntime", "av", "numpy"],
              win_no_prefer_redirects=False,
              win_private_assemblies=False,
              cipher=None,

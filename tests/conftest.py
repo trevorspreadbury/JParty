@@ -698,6 +698,9 @@ def game(
     game = Game()
     # Like SongPlayer, never let a test read aloud through the real voice.
     game.clue_reader.speaker = FakeSpeaker()
+    # Never open the real microphone or load a speech model.
+    game.create_listener = lambda: None
+    game.listening_unavailable_reason = lambda: "No microphone in tests."
     game._game_state_dir = temp_dir / "game_state"
     game._game_state_dir.mkdir()
     game._game_started_at = time_controller.time()

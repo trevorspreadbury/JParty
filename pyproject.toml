@@ -31,6 +31,9 @@ test = [
     "playwright",
     "ruff",
 ]
+robot = [
+    "faster-whisper>=1.1,<2",
+]
 
 [project.scripts]
 jparty = "jparty.app.bootstrap:main"
