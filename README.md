@@ -70,6 +70,13 @@ uv venv
 uv sync --extra test
 ```
 
+To use the robot host, which listens to responses with the microphone (see
+`HOST.md`), add the optional speech-to-text extra:
+
+```
+uv sync --extra test --extra robot
+```
+
 Install the Playwright browser runtime if you want to run the browser smoke tests:
 
 ```

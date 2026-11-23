@@ -77,6 +77,7 @@ goes into `question_history.jsonl`. A new save looks like this:
   ],
   "reveal_answers_after_triple_stumper": false,
   "read_clues_aloud": false,
+  "robot_host": false,
   "started_at": 1700000000.0,
   "last_updated": 1700000000.0,
   "history_format": 2,
@@ -134,6 +135,9 @@ Field notes:
 - `read_clues_aloud`: whether the computer reads clues aloud and opens
   responses once each clue has been read. Resume restores it; saves from
   before this option read as `false`.
+- `robot_host`: whether the robot host listens to responses and rules on
+  them. Resume turns it back on when the computer has speech-to-text and a
+  microphone; saves from before this option read as `false`.
 - `started_at`: Unix timestamp for when the game session started. Resume
   keeps it.
 - `last_updated`: Unix timestamp for when `general.json` was last written,

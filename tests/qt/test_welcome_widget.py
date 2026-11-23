@@ -90,6 +90,25 @@ class StubGame:
         """Test reading the read-clues-aloud option."""
         return self._read_clues_aloud
 
+    # None when the robot host can run; otherwise why it can't.
+    robot_host_reason = None
+    _robot_host = False
+
+    def set_robot_host(self, enabled: bool) -> bool:
+        """Test turning the robot host on, as the game does."""
+        self._robot_host = bool(enabled) and self.robot_host_reason is None
+        if self._robot_host:
+            self._read_clues_aloud = True
+        return self._robot_host
+
+    def robot_host_enabled(self) -> bool:
+        """Test reading the robot host option."""
+        return self._robot_host
+
+    def robot_host_unavailable_reason(self) -> object:
+        """Test why the robot host can't run."""
+        return self.robot_host_reason
+
     def clear_resume_state(self) -> None:
         """Test clear resume state."""
         self.resume_expected = None
@@ -2869,3 +2888,42 @@ def test_welcome_radio_updates_read_clues_aloud_option(qtbot: object) -> None:
 
     widget.read_clues_aloud_radio.click()
     assert game.read_clues_aloud_enabled() is False
+
+
+def test_robot_host_option_turns_on_reading_aloud(qtbot: object) -> None:
+    """Choosing the robot host also ticks Read Clues Aloud."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    assert widget.robot_host_radio.isEnabled()
+
+    widget.robot_host_radio.click()
+
+    assert game.robot_host_enabled() is True
+    assert widget.read_clues_aloud_radio.isChecked() is True
+    widget.read_clues_aloud_radio.click()
+    assert widget.robot_host_radio.isChecked() is False
+
+
+def test_robot_host_option_is_greyed_out_with_the_reason(qtbot: object) -> None:
+    """Without speech-to-text or a microphone, the tooltip says why."""
+    game = StubGame()
+    game.robot_host_reason = "No microphone was found."
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    assert widget.robot_host_radio.isEnabled() is False
+    assert widget.robot_host_radio.toolTip() == "No microphone was found."
+
+
+def test_robot_host_option_goes_back_off_when_it_cannot_run(qtbot: object) -> None:
+    """If turning it on fails, the option is unticked and greyed out."""
+    game = StubGame()
+    widget = Welcome(game)
+    qtbot.addWidget(widget)
+    game.robot_host_reason = "Speech-to-text isn't installed."
+
+    widget.robot_host_radio.click()
+
+    assert widget.robot_host_radio.isChecked() is False
+    assert widget.robot_host_radio.isEnabled() is False
+    assert widget.read_clues_aloud_radio.isChecked() is False
