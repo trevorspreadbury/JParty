@@ -9,6 +9,8 @@ can always step in first. Pressing Space before a clue has been read opens
 responses as usual and stops the reading.
 """
 
+from collections.abc import Callable
+
 from jparty.services.speech import Speaker, speakable_text
 
 
@@ -56,13 +58,20 @@ class ClueReader:
             lambda: self._trigger_for(question, "OPEN_RESPONSES"),
         )
 
-    def daily_double_shown(self, question: object) -> None:
+    def daily_double_shown(
+        self, question: object, on_finished: Callable[[], None] | None = None
+    ) -> None:
         """Read a Daily Double clue once its wager is in.
 
         Only the player who found it answers, so there is no buzzer to open.
+
+        Args:
+            question: The Daily Double clue.
+            on_finished: Called once the clue has been read; not called when
+                it isn't read.
         """
         if self.enabled:
-            self._say(question.text)
+            self._say(question.text, on_finished)
 
     def final_shown(self, question: object) -> None:
         """Read the Final clue, then start the think music."""
@@ -73,13 +82,26 @@ class ClueReader:
             lambda: self._trigger_for(question, "FINAL_OPEN_RESPONSES"),
         )
 
-    def answer_revealed(self, question: object) -> None:
-        """Read the correct response the host just revealed."""
+    def answer_revealed(
+        self, question: object, on_finished: Callable[[], None] | None = None
+    ) -> None:
+        """Read the correct response the host just revealed.
+
+        Args:
+            question: The clue whose answer was revealed.
+            on_finished: Called once the answer has been read; not called when
+                it isn't read.
+        """
         if not self.enabled:
             return
         answer = speakable_text(question.answer)
         if answer:
-            self.speaker.say(f"The correct response is {answer}.")
+            self.speaker.say(f"The correct response is {answer}.", on_finished)
+
+    def say(self, text: str) -> None:
+        """Read a short line such as a ruling, cutting off any reading."""
+        if self.enabled:
+            self._say(text)
 
     def _say(self, text: object, on_finished: object = None) -> None:
         """Read ``text`` once cleaned up, if anything is left to read."""

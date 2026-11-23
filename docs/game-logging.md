@@ -291,6 +291,12 @@ Each judged response appends an `answer_attempts[]` record:
 - `timestamp`: Unix timestamp of the ruling
 - `score_before`: player score before the ruling
 - `score_after`: player score after the ruling
+- `transcript` (optional): what the robot host heard the player say. It is
+  `""` when the player said nothing in time. Only present when the robot host
+  listened to the response.
+- `ruled_by` (optional): `"robot"` when the robot host made the ruling. When
+  it is missing, the host ruled, including on a response the robot heard but
+  couldn't judge.
 
 ## How Final Jeopardy Is Logged
 
