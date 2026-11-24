@@ -1404,6 +1404,7 @@ class Game(QObject):
             # a session closed on a finished board would otherwise be stuck.
             if self._round_is_complete(self.current_round):
                 self.keystroke_manager.activate("NEXT_ROUND")
+                self.robot_host.round_over()
             self.player_in_control = control_from_history(
                 raw_history, self.data.rounds.index(self.current_round), self.players
             )
@@ -2104,6 +2105,7 @@ class Game(QObject):
             self.host_display.hide_host_code()
         elif self._show_host_code():
             self.keystroke_manager.activate("NEXT_ROUND")
+            self.robot_host.step_ready("NEXT_ROUND")
             return
         playable_round_indices = self._playable_round_indices()
         i = self.data.rounds.index(self.current_round)
@@ -2171,6 +2173,7 @@ class Game(QObject):
         self.buzzer_controller.open_wagers()
         # Lets the host open Final without waiting on a missing wager.
         self.keystroke_manager.activate("FORCE_OPEN_FINAL")
+        self.robot_host.final_started(self.current_round)
         self._refresh_score_edit_controls()
 
     def wager(self, i_player: object, amount: object) -> None:
@@ -2202,6 +2205,7 @@ class Game(QObject):
             )
             self.keystroke_manager.deactivate("FORCE_OPEN_FINAL")
             self.keystroke_manager.activate("OPEN_FINAL")
+            self.robot_host.final_wagers_in()
 
     def force_open_final(self) -> None:
         """Open the Final clue now, counting any missing wager as 0.

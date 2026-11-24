@@ -296,8 +296,24 @@ Players also pick clues and wager on Daily Doubles from their phones:
 You can still click the board to pick a clue, which takes it back from the
 phone. If a phone goes dark during a Daily Double, click that player's podium
 to enter the wager as usual. Clue images aren't searched for: a clue whose
-image wasn't found ahead of time is played as text. Moving to the next round
-(space) and Final Jeopardy are still yours to run.
+image wasn't found ahead of time is played as text.
+
+The robot host also moves the game on. Each step comes after a short pause and
+uses the same key you would press, so pressing it first just moves on sooner:
+
+- A cleared board: it says "That's the end of the round" and starts the next
+  round a few seconds later.
+- Final Jeopardy: it reads the category and asks for wagers on the phones. The
+  clue opens once every wager is in, or after 60 seconds with any missing
+  wager counted as $0 (as pressing Enter does). The clue is read and the think
+  music plays.
+- Final answers: from the lowest score up, each player's typed answer is
+  revealed and ruled with the same judge as spoken responses. When it can't
+  tell, it waits for your arrow key.
+- The end of the game: it shows the summary, or the next Final when the game
+  has more than one.
+
+A tie for first still offers you a tiebreaker as usual, which you start.
 
 The robot host needs the optional speech-to-text add-on and a microphone. When
 either is missing, the option is greyed out and its tooltip says why. To add

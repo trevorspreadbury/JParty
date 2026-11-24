@@ -285,6 +285,7 @@ class ClueFlow:
         if all(q.complete for q in self.game.current_round.questions):
             logging.info("NEXT ROUND")
             self.game.keystroke_manager.activate("NEXT_ROUND")
+            self.game.robot_host.round_over()
         else:
             self.game.offer_pick()
         self.game._refresh_score_edit_controls()
@@ -463,6 +464,7 @@ class FinalJeopardyFlow:
             self.game.answering_player, show_final_answer=False
         )
         self.game.keystroke_manager.activate("FINAL_SHOW_ANSWER")
+        self.game.robot_host.step_ready("FINAL_SHOW_ANSWER")
 
     def show_answer(self) -> None:
         """Reveal the current player's Final Jeopardy response."""
@@ -475,6 +477,9 @@ class FinalJeopardyFlow:
         )
         self.game.keystroke_manager.activate(
             "FINAL_CORRECT_ANSWER", "FINAL_INCORRECT_ANSWER"
+        )
+        self.game.robot_host.final_answer_shown(
+            self.game.active_question, self.game.answering_player
         )
 
     def correct_answer(self) -> None:
@@ -509,6 +514,7 @@ class FinalJeopardyFlow:
         )
         self.game.keystroke_manager.activate("FINAL_NEXT_PLAYER")
         self.game._judgement_round += 1
+        self.game.robot_host.step_ready("FINAL_NEXT_PLAYER")
 
     def finish_final(self) -> None:
         """Close out a judged Final so a later round can be played.
@@ -541,6 +547,7 @@ class FinalJeopardyFlow:
         self.game.accepting_responses = False
         self.game.dc.borders.flash()
         self.game.keystroke_manager.activate("FINAL_NEXT_PLAYER")
+        self.game.robot_host.step_ready("FINAL_NEXT_PLAYER")
         self.game._refresh_score_edit_controls()
 
     def end_game(self) -> None:
@@ -571,6 +578,7 @@ class FinalJeopardyFlow:
             # The winner is known; a tie offered a tiebreaker records it there.
             self.game.record_tournament_results()
             self.game.keystroke_manager.activate("GENERATE_GRAPHS")
+            self.game.robot_host.step_ready("GENERATE_GRAPHS")
         # A tie offer locks Edit Score (see TiebreakerFlow.locks_scores).
         self.game._refresh_score_edit_controls()
 
