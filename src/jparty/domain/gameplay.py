@@ -8,6 +8,7 @@ import time
 from PyQt6.QtWidgets import QApplication
 
 from jparty.app.config import EARLY_BUZZ_PENALTY, FJTIME, QUESTIONTIME
+from jparty.domain.board_control import control_after_ruling
 from jparty.domain.models import BuzzAttempt, FinalBoard
 from jparty.domain.state import (
     MANUAL_SCORE_ADJUSTMENT_TYPE,
@@ -284,10 +285,19 @@ class ClueFlow:
         if all(q.complete for q in self.game.current_round.questions):
             logging.info("NEXT ROUND")
             self.game.keystroke_manager.activate("NEXT_ROUND")
+            self.game.robot_host.round_over()
+        else:
+            self.game.offer_pick()
         self.game._refresh_score_edit_controls()
 
     def correct_answer(self) -> None:
-        """Apply a correct ruling to the active player's clue response."""
+        """Apply a correct ruling to the active player's clue response.
+
+        The player gets control of the board.
+        """
+        self.game.player_in_control = control_after_ruling(
+            self.game.player_in_control, self.game.answering_player, True
+        )
         old_score = self.game.answering_player.score
         new_score = old_score + self.game.active_question.value
         self.game.score_recorder.append_answer_attempt(
@@ -352,6 +362,8 @@ class ClueFlow:
 
     def load_question(self, q: object) -> None:
         """Load a clue into the displays and initialize per-question tracking."""
+        # However the clue was picked, no phone is offered the board now.
+        self.game.withdraw_pick()
         self.game.active_question = q
         self.game._awaiting_stumped_answer_reveal = False
         self.game._question_start_time = time.time()
@@ -374,7 +386,10 @@ class ClueFlow:
         if q.dd:
             logging.info("Daily double!")
             self.game.song_player.daily_double()
-            self.game.soliciting_player = True
+            if self.game.phones_run_board() and self.game.player_in_control:
+                self.game.request_phone_dd_wager(self.game.player_in_control)
+            else:
+                self.game.soliciting_player = True
         else:
             self.game.keystroke_manager.activate("OPEN_RESPONSES")
         self.game.dc.load_question(q)
@@ -449,6 +464,7 @@ class FinalJeopardyFlow:
             self.game.answering_player, show_final_answer=False
         )
         self.game.keystroke_manager.activate("FINAL_SHOW_ANSWER")
+        self.game.robot_host.step_ready("FINAL_SHOW_ANSWER")
 
     def show_answer(self) -> None:
         """Reveal the current player's Final Jeopardy response."""
@@ -461,6 +477,9 @@ class FinalJeopardyFlow:
         )
         self.game.keystroke_manager.activate(
             "FINAL_CORRECT_ANSWER", "FINAL_INCORRECT_ANSWER"
+        )
+        self.game.robot_host.final_answer_shown(
+            self.game.active_question, self.game.answering_player
         )
 
     def correct_answer(self) -> None:
@@ -495,6 +514,7 @@ class FinalJeopardyFlow:
         )
         self.game.keystroke_manager.activate("FINAL_NEXT_PLAYER")
         self.game._judgement_round += 1
+        self.game.robot_host.step_ready("FINAL_NEXT_PLAYER")
 
     def finish_final(self) -> None:
         """Close out a judged Final so a later round can be played.
@@ -527,6 +547,7 @@ class FinalJeopardyFlow:
         self.game.accepting_responses = False
         self.game.dc.borders.flash()
         self.game.keystroke_manager.activate("FINAL_NEXT_PLAYER")
+        self.game.robot_host.step_ready("FINAL_NEXT_PLAYER")
         self.game._refresh_score_edit_controls()
 
     def end_game(self) -> None:
@@ -557,6 +578,7 @@ class FinalJeopardyFlow:
             # The winner is known; a tie offered a tiebreaker records it there.
             self.game.record_tournament_results()
             self.game.keystroke_manager.activate("GENERATE_GRAPHS")
+            self.game.robot_host.step_ready("GENERATE_GRAPHS")
         # A tie offer locks Edit Score (see TiebreakerFlow.locks_scores).
         self.game._refresh_score_edit_controls()
 

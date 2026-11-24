@@ -94,6 +94,44 @@ button:active {
 .wager-page {
     display: None;
 }
+.pick-page {
+    display: None;
+}
+.pick-board {
+    display: grid;
+    grid-template-columns: repeat(var(--pick-columns, 6), 1fr);
+    gap: 4px;
+    margin-top: 10px;
+}
+.pick-category {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 52px;
+    font-family: Helvetica;
+    font-size: 11px;
+    font-weight: bold;
+    color: white;
+    text-transform: uppercase;
+    overflow-wrap: anywhere;
+}
+.pick-value {
+    font-family: Anton;
+    font-size: 22px;
+    color: #ffcc00;
+    background-color: #1010a1;
+    border: 2px solid black;
+    border-radius: 4px;
+    padding: 12px 0;
+    touch-action: manipulation;
+}
+.pick-value:disabled {
+    visibility: hidden;
+}
+.dd-hint {
+    font-size: 24px;
+    margin-bottom: 12px;
+}
 .chooser-page {
     display: None;
 }

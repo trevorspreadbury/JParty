@@ -135,6 +135,65 @@ function renderSavedPlayerChoices(payload) {
     });
 }
 
+function renderPickBoard(board) {
+    // Draw the clues left on the board; a played clue leaves a gap.
+    var container = document.getElementById("pick-board");
+    container.innerHTML = "";
+    if (!board) {
+        return;
+    }
+    var categories = board.categories || [];
+    container.style.setProperty("--pick-columns", Math.max(categories.length, 1));
+    categories.forEach(function(category) {
+        var label = document.createElement("div");
+        label.className = "pick-category";
+        label.textContent = category;
+        container.appendChild(label);
+    });
+    (board.rows || []).forEach(function(values, row) {
+        values.forEach(function(value, column) {
+            var button = document.createElement("button");
+            button.type = "button";
+            button.className = "pick-value";
+            if (value === null) {
+                button.disabled = true;
+                button.textContent = "";
+            } else {
+                button.textContent = "$" + value;
+                button.addEventListener("click", function() {
+                    // One pick per turn: the game offers the board again if
+                    // it can't use this one.
+                    $(".pick-value").prop("disabled", true);
+                    send("PICK", column + "," + row);
+                    load_page(null);
+                });
+            }
+            container.appendChild(button);
+        });
+    });
+}
+
+function showDailyDoubleWager(bounds) {
+    $("input[name='wager']").val("");
+    $(".wager_input").attr("min", bounds.min);
+    $(".wager_input").attr("max", bounds.max);
+    document.getElementById("dd-hint").textContent =
+        "Daily Double! Wager $" + bounds.min + " to $" + bounds.max;
+    load_page("ddwager");
+}
+
+function showPage(state) {
+    // Redraw the page a reconnecting phone was on, with what it needs.
+    if (state.page === "pick") {
+        renderPickBoard(state.page_data);
+    }
+    if (state.page === "ddwager" && state.page_data) {
+        showDailyDoubleWager(state.page_data);
+        return;
+    }
+    load_page(state.page);
+}
+
 function set_max_wager(score) {
     $(".wager_input").attr("max", Math.max(0, score));
     $(".wager_input").attr("min",0);
@@ -260,7 +319,7 @@ var updater = {
                     var claimData = JSON.parse(jsondata.text);
                     setToken(claimData.token);
                     set_max_wager(claimData.state.score);
-                    load_page(claimData.state.page);
+                    showPage(claimData.state);
                     break;
                 case "NEW":
                     setJoining(false);
@@ -277,7 +336,7 @@ var updater = {
                     console.log("Already exists" + jsondata.text);
                     state = JSON.parse(jsondata.text);
                     set_max_wager(state.score);
-                    load_page(state.page);
+                    showPage(state);
                     break;
                 case "PLAYER_TAKEN":
                     alert("That saved player has already been claimed.");
@@ -297,8 +356,16 @@ var updater = {
                     // A new prompt starts empty, so a game with several
                     // Finals never resends the previous Final's wager.
                     $("input[name='wager']").val("");
+                    document.getElementById("dd-hint").textContent = "";
                     set_max_wager(jsondata.text);
                     load_page("wager");
+                    break;
+                case "PROMPTPICK":
+                    renderPickBoard(JSON.parse(jsondata.text));
+                    load_page("pick");
+                    break;
+                case "PROMPTDDWAGER":
+                    showDailyDoubleWager(JSON.parse(jsondata.text));
                     break;
                 case "PROMPTANSWER":
                     // Likewise, clear the previous Final's answer. EXISTS

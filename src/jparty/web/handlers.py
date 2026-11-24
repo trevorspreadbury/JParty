@@ -29,6 +29,10 @@ SIGNATURE_PREFIX = "data:image/png;base64,"
 MAX_NAME_LENGTH = 100
 MAX_SIGNATURE_LENGTH = 2_000_000
 MAX_ANSWER_LENGTH = 500
+# A pick names a category and row on the board; anything larger is junk.
+MAX_PICK_INDEX = 20
+# A pick is "<category>,<row>".
+PICK_PARTS = 2
 # Websocket close code sent to a lectern page when another page takes its slot.
 # lectern.js checks for it, so keep the two in step.
 LECTERN_REPLACED_CLOSE_CODE = 4000
@@ -111,6 +115,30 @@ def parse_wager(text: object) -> int | None:
         return int(float(text))
     except (ValueError, OverflowError):
         return None
+
+
+def parse_pick(text: object) -> tuple[int, int] | None:
+    """Parse a phone's pick, ``"<category>,<row>"``, into two indexes.
+
+    Args:
+        text: Raw pick text from the phone.
+
+    Returns:
+        ``(category, row)``, or ``None`` when it isn't two small non-negative
+        whole numbers.
+    """
+    if not isinstance(text, str):
+        return None
+    parts = text.split(",")
+    if len(parts) != PICK_PARTS:
+        return None
+    try:
+        column, row = (int(part.strip()) for part in parts)
+    except ValueError:
+        return None
+    if not (0 <= column < MAX_PICK_INDEX and 0 <= row < MAX_PICK_INDEX):
+        return None
+    return column, row
 
 
 class WelcomeHandler(tornado.web.RequestHandler):
@@ -251,6 +279,8 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
             self.wager(text)
         elif msg == "ANSWER":
             self.answer(text)
+        elif msg == "PICK":
+            self.pick(text)
         else:
             logging.warning("Ignoring unknown message %.40r from %s", msg, self.player)
 
@@ -397,6 +427,21 @@ class BuzzerSocketHandler(tornado.websocket.WebSocketHandler):
             logging.warning("Ignoring invalid answer from %s", self.player)
             return
         self.application.controller.answer(self.player, guess, self)
+
+    def pick(self, text: object) -> None:
+        """Forward the clue the connected player picked on their phone.
+
+        Args:
+            text: ``"<category>,<row>"``, both zero-based.
+
+        Returns:
+            ``None``.
+        """
+        position = parse_pick(text)
+        if position is None:
+            logging.warning("Ignoring invalid pick %.40r from %s", text, self.player)
+            return
+        self.application.controller.pick(self.player, *position)
 
     def toolate(self) -> None:
         """Send a too-late notification to this player client.

@@ -1,4 +1,4 @@
-"""Run the answer loop of a clue without a host: listen, rule, move on.
+"""Run a game without a host: listen, rule, and move the game on.
 
 ``ClueReader`` reads a clue and opens responses. Then ``RobotHost`` takes over:
 when a player buzzes it listens to their response, has it judged, and rules
@@ -25,8 +25,20 @@ provide:
 
 Without a listener the robot host can't be turned on.
 
-Daily Double wagers, picking clues, Final Jeopardy rulings and tiebreaker
-clues nobody gets are still the host's.
+It also moves the game on between clues, each step after a short pause and
+through the host's own key events, so a host who presses the key first is
+never overridden:
+
+- the next round once a board is cleared (``NEXT_ROUND``);
+- Final Jeopardy: it reads the category, opens the clue once every wager is
+  in (or after ``FINAL_WAGER_TIMEOUT_MS``, counting a missing wager as $0),
+  then reveals and rules on each player's typed answer in turn with the same
+  judge, waiting for the host when the judge is unsure;
+- the end-of-game summary.
+
+Players pick clues and wager on Daily Doubles from their phones (see
+``Game.phones_run_board``). A tiebreaker, which starts by asking for a game,
+is still the host's, as are tiebreaker clues nobody gets.
 """
 
 import logging
@@ -40,6 +52,16 @@ from jparty.services.speech import speakable_text
 # How long a clue nobody got stays on screen before the board returns, when
 # the correct response is not revealed.
 STUMPED_PAUSE_MS = 2500
+# Pause after a cleared board before the next round.
+ROUND_PAUSE_MS = 3000
+# The end of the round is announced this long after the board is cleared,
+# so the ruling on the last clue ("Correct.") isn't cut off.
+ROUND_ANNOUNCE_DELAY_MS = 1000
+# Pause between steps of Final Jeopardy (opening the clue, revealing each
+# answer, moving to the next player) and before the end-of-game summary.
+FINAL_STEP_PAUSE_MS = 2500
+# Final opens without a wager that hasn't come in by then, counted as $0.
+FINAL_WAGER_TIMEOUT_MS = 60_000
 
 
 def _qt_later(delay_ms: int, callback: Callable[[], None]) -> None:
@@ -75,6 +97,10 @@ class RobotHost:
         # Bumped whenever listening starts or stops, so a response heard for
         # an earlier buzz is recognised as stale and dropped.
         self._token = 0
+        # Bumped by every scheduled step, and when the robot host is turned
+        # off, so only the latest step can fire. A step left over from before
+        # the host moved things on is dropped.
+        self._step = 0
 
     @property
     def available(self) -> bool:
@@ -100,6 +126,7 @@ class RobotHost:
                 prepare()
         else:
             self.stop()
+            self._step += 1
         return self.enabled
 
     def stop(self) -> None:
@@ -141,6 +168,92 @@ class RobotHost:
         """Return to the board once a revealed answer has been read."""
         if self.enabled:
             self._trigger_for(question, "BACK_TO_BOARD")
+
+    def round_over(self) -> None:
+        """Move to the next round after a cleared board, following a pause."""
+        if not self.enabled:
+            return
+        self._advance_later("NEXT_ROUND", ROUND_PAUSE_MS)
+        step = self._step
+
+        def announce() -> None:
+            if step == self._step and self.enabled:
+                self.game.clue_reader.say("That's the end of the round.")
+
+        self.later(ROUND_ANNOUNCE_DELAY_MS, announce)
+
+    def final_started(self, board: object) -> None:
+        """Read the Final category and stop waiting for wagers in time.
+
+        Args:
+            board: The ``FinalBoard`` being played.
+        """
+        if not self.enabled:
+            return
+        category = speakable_text(getattr(board, "category", ""))
+        if category:
+            self.game.clue_reader.say(
+                f"The Final Jeopardy category is {category}. Make your wagers."
+            )
+        self._advance_later("FORCE_OPEN_FINAL", FINAL_WAGER_TIMEOUT_MS)
+
+    def final_wagers_in(self) -> None:
+        """Show the Final clue once every wager is in."""
+        if self.enabled:
+            self._advance_later("OPEN_FINAL", FINAL_STEP_PAUSE_MS)
+
+    def step_ready(self, ident: str) -> None:
+        """Take the next step, event ``ident``, after a pause.
+
+        Called when the game activates ``FINAL_NEXT_PLAYER``,
+        ``FINAL_SHOW_ANSWER`` or ``GENERATE_GRAPHS``, or ``NEXT_ROUND`` again
+        after a tournament's host code.
+        """
+        if self.enabled:
+            self._advance_later(ident, FINAL_STEP_PAUSE_MS)
+
+    def final_answer_shown(self, question: object, player: object) -> None:
+        """Rule on a player's typed Final answer once it is shown.
+
+        A blank answer is wrong. When the judge is unsure, the host rules.
+        """
+        if not self.enabled:
+            return
+        answer = str(getattr(player, "finalanswer", "") or "").strip()
+        ruling = self.judge(question, answer) if answer else Ruling.INCORRECT
+        logging.info(
+            "Robot host ruled %s's Final answer %r: %s", player, answer, ruling
+        )
+        if ruling is Ruling.UNSURE:
+            return
+        self.game.score_recorder.pending_details = {"ruled_by": "robot"}
+        if ruling is Ruling.CORRECT:
+            self.game.keystroke_manager.trigger("FINAL_CORRECT_ANSWER")
+            self.game.clue_reader.say("Correct.")
+        else:
+            self.game.keystroke_manager.trigger("FINAL_INCORRECT_ANSWER")
+            self.game.clue_reader.say("No.")
+
+    def _advance_later(self, ident: str, delay_ms: int) -> None:
+        """Fire event ``ident`` after ``delay_ms``, if it is still the next step.
+
+        It fires only if no later step was scheduled meanwhile, the robot
+        host is still on, the same round is being played, and the event is
+        still waiting for its key.
+        """
+        self._step += 1
+        step = self._step
+        round_ = self.game.current_round
+
+        def advance() -> None:
+            if (
+                step == self._step
+                and self.enabled
+                and self.game.current_round is round_
+            ):
+                self.game.keystroke_manager.trigger(ident)
+
+        self.later(delay_ms, advance)
 
     def _listen_to(self, player: object) -> None:
         """Start listening for ``player``'s response to the clue on screen."""

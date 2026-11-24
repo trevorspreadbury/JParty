@@ -254,6 +254,9 @@ class Player:
         self.wager = None
         self.finalanswer = ""
         self.page = "buzz"
+        # What the phone needs to redraw ``page`` after reconnecting: the
+        # board while picking, the wager limits for a Daily Double.
+        self.page_data = None
         self.player_number = player_number
         self.key = index_to_key[player_number]
         self.connected = True
@@ -303,6 +306,10 @@ class Player:
         """Return a minimal serializable view of the player's current state.
 
         Returns:
-            A dictionary containing the current page and score.
+            A dictionary containing the current page, score and, for the
+            board and Daily Double pages, ``page_data``.
         """
-        return {"page": self.page, "score": self.score}
+        state = {"page": self.page, "score": self.score}
+        if self.page_data is not None:
+            state["page_data"] = self.page_data
+        return state

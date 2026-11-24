@@ -1982,7 +1982,9 @@ QCheckBox {{
         self.robot_host_radio.setToolTip(
             reason
             or "The computer listens to each response with the microphone and "
-            "rules on it. Use the arrow keys to rule yourself at any time."
+            "rules on it, and players pick clues and wager on Daily Doubles "
+            "from their phones. Use the arrow keys or click the board to step "
+            "in at any time."
         )
 
     def clear_round_selector(self) -> None:

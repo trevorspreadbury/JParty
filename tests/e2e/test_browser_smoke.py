@@ -1,6 +1,7 @@
 """Test browser smoke module."""
 
 import asyncio
+import json
 import threading
 import time
 from dataclasses import dataclass
@@ -215,3 +216,56 @@ def test_lectern_browser_smoke(
     score.wait_for(state="visible")
     assert name.text_content() == "Alice"
     assert score.text_content() == "$1,200"
+
+
+def test_phone_picks_a_clue_and_wagers_on_a_daily_double(
+    live_browser_server: object, browser_page: object
+) -> None:
+    """The board shows on the picking phone; a tap picks, then it can buzz."""
+    controller = live_browser_server.controller
+    browser_page.goto(f"{live_browser_server.url}/")
+    browser_page.wait_for_function(
+        "window.updater && window.updater.socket && window.updater.socket.readyState === 1"
+    )
+    browser_page.evaluate("nameForm('Alice')")
+    wait_until(lambda: len(controller.connected_players) == 1)
+    player = controller.connected_players[0]
+    current_page = "page => current_page === page"
+    board = {"categories": ["Potpourri", "Rivers"], "rows": [[200, None], [400, 400]]}
+
+    live_browser_server.loop.add_callback(controller.prompt_pick, player, board)
+    browser_page.wait_for_function(current_page, arg="pick")
+    labels = browser_page.locator(".pick-category").all_text_contents()
+    values = browser_page.evaluate(
+        "Array.from(document.querySelectorAll('.pick-value'))"
+        ".map(b => b.disabled ? null : b.textContent)"
+    )
+    assert labels == ["Potpourri", "Rivers"]
+    assert values == ["$200", None, "$400", "$400"]
+
+    # Rivers for $400: category 1, row 1.
+    browser_page.evaluate("document.querySelectorAll('.pick-value')[3].click()")
+    wait_until(lambda: controller.picks == [(1, 1)])
+    browser_page.wait_for_function(current_page, arg="buzz")
+
+    live_browser_server.loop.add_callback(controller.prompt_dd_wager, player, 5, 1000)
+    browser_page.wait_for_function(current_page, arg="ddwager")
+    hint = browser_page.evaluate("document.getElementById('dd-hint').textContent")
+    assert hint == "Daily Double! Wager $5 to $1000"
+    assert browser_page.locator("input[name='wager']").get_attribute("max") == "1000"
+    browser_page.evaluate(
+        "document.querySelector(\"input[name='wager']\").value = '600'; wagerForm();"
+    )
+    wait_until(lambda: controller.dd_wagers == [600])
+    browser_page.wait_for_function(current_page, arg="buzz")
+
+    # A phone that reconnects mid-pick (EXISTS) redraws the board it had.
+    state = {"page": "pick", "score": 0, "page_data": board}
+    live_browser_server.loop.add_callback(
+        player.waiter.send, "EXISTS", json.dumps(state)
+    )
+    browser_page.wait_for_function(current_page, arg="pick")
+    assert browser_page.locator(".pick-category").all_text_contents() == [
+        "Potpourri",
+        "Rivers",
+    ]
