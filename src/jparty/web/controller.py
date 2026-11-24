@@ -7,6 +7,7 @@ players and lecterns, and translates websocket events into game actions.
 
 from __future__ import annotations
 
+import json
 import logging
 import socket
 import threading
@@ -640,11 +641,12 @@ class BuzzerController:
         self.game.buzz_trigger.emit(i_player)
 
     def wager(self, player: Player | None, amount: int) -> None:
-        """Forward a player's Final Jeopardy wager into the game engine.
+        """Forward a player's Final Jeopardy or Daily Double wager.
 
         The wager is ignored unless the player's wager prompt is open, so a
-        phone can wager only once. The amount is clamped to what the player
-        may bet (``Player.clamp_final_wager``) before it reaches the game.
+        phone can wager only once. A Final wager is clamped to what the
+        player may bet (``Player.clamp_final_wager``) before it reaches the
+        game; the game clamps a Daily Double wager itself.
 
         Args:
             player: Player object submitting the wager, or ``None`` for a
@@ -654,12 +656,83 @@ class BuzzerController:
         Returns:
             ``None``.
         """
+        if player is not None and player.page == "ddwager":
+            self._back_to_buzzer(player)
+            self.game.dd_wager_trigger.emit(self.game.players.index(player), amount)
+            return
         if player is None or player.page != "wager":
             logging.warning("Ignoring wager from %s outside the wager phase", player)
             return
         player.page = "null"
         i_player = self.game.players.index(player)
         self.game.wager_trigger.emit(i_player, player.clamp_final_wager(amount))
+
+    def pick(self, player: Player | None, column: int, row: int) -> None:
+        """Forward a clue a player picked on their phone into the game.
+
+        Ignored unless the player's phone is showing the board. The game
+        checks on the Qt thread that the player has control.
+
+        Args:
+            player: Player who picked, or ``None`` for a socket that never
+                joined.
+            column: Category index.
+            row: Clue row index.
+        """
+        if player is None or player.page != "pick":
+            logging.warning("Ignoring pick from %s outside their turn", player)
+            return
+        self._back_to_buzzer(player)
+        i_player = self.game.players.index(player)
+        self.game.pick_trigger.emit(i_player, column, row)
+
+    def _back_to_buzzer(self, player: Player) -> None:
+        """Show ``player``'s phone the buzz button again.
+
+        The phone hides the board or wager box as soon as it sends, so it
+        must be told to show the buzzer, or the player couldn't buzz on the
+        clue they just picked.
+        """
+        player.page = "buzz"
+        player.page_data = None
+        self.send_to(player.waiter, "SHOW_PAGE", player.page)
+
+    def prompt_pick(self, player: Player, board: dict) -> None:
+        """Show ``player``'s phone the clues left on the board to pick from.
+
+        Args:
+            player: The player in control of the board.
+            board: From ``board_for_phone``.
+        """
+        self.end_pick()
+        player.page = "pick"
+        player.page_data = board
+        self.send_to(player.waiter, "PROMPTPICK", json.dumps(board))
+
+    def end_pick(self) -> None:
+        """Put any phone showing the board back on its buzzer."""
+        for p in self.connected_players:
+            if p.page == "pick":
+                self._back_to_buzzer(p)
+
+    def end_dd_wager(self) -> None:
+        """Put any phone asked for a Daily Double wager back on its buzzer."""
+        for p in self.connected_players:
+            if p.page == "ddwager":
+                self._back_to_buzzer(p)
+
+    def prompt_dd_wager(self, player: Player, minimum: int, maximum: int) -> None:
+        """Ask ``player``'s phone for a Daily Double wager.
+
+        Args:
+            player: The player who found the Daily Double.
+            minimum: Smallest wager allowed.
+            maximum: Largest wager allowed.
+        """
+        bounds = {"min": minimum, "max": maximum}
+        player.page = "ddwager"
+        player.page_data = bounds
+        self.send_to(player.waiter, "PROMPTDDWAGER", json.dumps(bounds))
 
     def answer(
         self,

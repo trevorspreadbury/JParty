@@ -20,6 +20,11 @@ from PyQt6.QtWidgets import QApplication, QInputDialog, QMessageBox, QWidget
 
 from jparty import __version__
 from jparty.app.paths import GAME_STATES_DIR, TOURNAMENTS_DIR
+from jparty.domain.board_control import (
+    board_for_phone,
+    control_at_round_start,
+    control_from_history,
+)
 from jparty.domain.clue_reader import ClueReader
 from jparty.domain.gameplay import (
     ClueFlow,
@@ -218,6 +223,10 @@ class Game(QObject):
     stumped_trigger = pyqtSignal()
     final_finished_trigger = pyqtSignal()
     wager_trigger = pyqtSignal(int, int)
+    # A phone picked a clue: player index, category, row.
+    pick_trigger = pyqtSignal(int, int, int)
+    # A phone wagered on a Daily Double: player index, amount.
+    dd_wager_trigger = pyqtSignal(int, int)
     answer_trigger = pyqtSignal(object, str)
     toolate_trigger = pyqtSignal()
     lectern_update_trigger = pyqtSignal(int, dict)
@@ -354,6 +363,8 @@ class Game(QObject):
                 func_args=player_index,
             )
         self.wager_trigger.connect(self.wager)
+        self.pick_trigger.connect(self.phone_pick)
+        self.dd_wager_trigger.connect(self.phone_dd_wager)
         self.answer_trigger.connect(self.answer)
         self.buzz_trigger.connect(self.buzz)
         self.new_player_trigger.connect(self.new_player)
@@ -396,6 +407,10 @@ class Game(QObject):
         self.clue_reader = ClueReader(self)
         # Its microphone listener is created the first time it is turned on.
         self.robot_host = RobotHost(self)
+        # Who picks the next clue; see domain/board_control.py.
+        self.player_in_control = None
+        # The player whose phone is being asked for a Daily Double wager.
+        self._phone_dd_wager_player = None
         # Replaced in tests so no microphone or speech model is touched.
         self.create_listener = create_microphone_listener
         self.listening_unavailable_reason = listening_unavailable_reason
@@ -797,7 +812,129 @@ class Game(QObject):
         on = self.robot_host.set_enabled(enabled)
         if on:
             self.set_read_clues_aloud(True)
+        else:
+            self.withdraw_pick()
         return on
+
+    def phones_run_board(self) -> bool:
+        """Return whether players pick clues and wager on their phones.
+
+        They do whenever the robot host is on, since there is then nobody
+        at the board to click it. The host can still click it.
+        """
+        return self.robot_host.enabled and self.buzzer_controller is not None
+
+    def offer_pick(self) -> None:
+        """Offer the board to the phone of the player in control.
+
+        Does nothing unless phones run the board and a board is waiting for
+        a pick. If the player in control has left, control passes to the
+        round's first picker.
+        """
+        if (
+            not self.phones_run_board()
+            or self.active_question is not None
+            or self.soliciting_player
+            or self.tiebreaker_flow.active
+            or self.current_round is None
+            or isinstance(self.current_round, FinalBoard)
+            or self._round_is_complete(self.current_round)
+        ):
+            return
+        if self.player_in_control not in self.players:
+            self.player_in_control = control_at_round_start(self.players)
+        if self.player_in_control is None:
+            return
+        logging.info("Offering the board to %s", self.player_in_control)
+        self.buzzer_controller.prompt_pick(
+            self.player_in_control, board_for_phone(self.current_round)
+        )
+
+    def _withdraw_phone_dd_wager(self) -> None:
+        """Stop waiting for a Daily Double wager from a phone, if waiting."""
+        if self._phone_dd_wager_player is None:
+            return
+        self._phone_dd_wager_player = None
+        if self.buzzer_controller is not None:
+            self.buzzer_controller.end_dd_wager()
+
+    def withdraw_pick(self) -> None:
+        """Take the board back from any phone it was offered to."""
+        if self.buzzer_controller is not None:
+            self.buzzer_controller.end_pick()
+
+    def phone_pick(self, i_player: int, column: int, row: int) -> None:
+        """Load the clue a player picked on their phone.
+
+        Runs on the Qt thread. The pick is ignored unless that player has
+        control and the board is waiting; a clue already played gets the
+        board offered again.
+
+        Args:
+            i_player: Index of the picking player in ``players``.
+            column: Category index.
+            row: Clue row index.
+        """
+        if not 0 <= i_player < len(self.players):
+            return
+        player = self.players[i_player]
+        if (
+            player is not self.player_in_control
+            or not self.phones_run_board()
+            or self.active_question is not None
+            or self.soliciting_player
+            or isinstance(self.current_round, FinalBoard)
+        ):
+            logging.warning("Ignoring a pick from %s out of turn", player)
+            return
+        question = self.current_round.get_question(column, row)
+        if question is None or question.complete:
+            logging.warning("Ignoring a pick of a played clue from %s", player)
+            self.offer_pick()
+            return
+        logging.info("%s picked %s for %s", player, question.category, question.value)
+        if question.image and not question.image_url:
+            # There is no host to find the image, so play the clue as text.
+            question.image = False
+        self.load_question(question)
+
+    def request_phone_dd_wager(self, player: object) -> None:
+        """Ask ``player``'s phone for their Daily Double wager.
+
+        Used when phones run the board. The host can still enter the wager
+        by clicking the player's podium, for example if the phone has gone
+        dark; whichever wager comes first is used.
+        """
+        self.answering_player = player
+        # Leaves the podium click (get_dd_wager) available to the host.
+        self.soliciting_player = True
+        self._phone_dd_wager_player = player
+        minimum, maximum = dd_wager_bounds(player.score, self.current_round)
+        self.buzzer_controller.prompt_dd_wager(player, minimum, maximum)
+        self._refresh_score_edit_controls()
+
+    def phone_dd_wager(self, i_player: int, amount: int) -> None:
+        """Apply a Daily Double wager sent from a phone.
+
+        Runs on the Qt thread. The amount is clamped to the allowed range.
+
+        Args:
+            i_player: Index of the wagering player in ``players``.
+            amount: Wager from the phone.
+        """
+        if not 0 <= i_player < len(self.players):
+            return
+        player = self.players[i_player]
+        if (
+            player is not self._phone_dd_wager_player
+            or self.active_question is None
+            or not self.soliciting_player
+        ):
+            logging.warning("Ignoring a Daily Double wager from %s", player)
+            return
+        self._phone_dd_wager_player = None
+        minimum, maximum = dd_wager_bounds(player.score, self.current_round)
+        self.apply_dd_wager(max(minimum, min(int(amount), maximum)))
 
     def robot_host_enabled(self) -> bool:
         """Return whether the robot host listens to responses and rules."""
@@ -1018,6 +1155,8 @@ class Game(QObject):
             self.start_final()
         else:
             self.dc.board_widget.load_round(self.current_round)
+            self.player_in_control = control_at_round_start(self.players)
+            self.offer_pick()
         Thread(target=self._save_played_game_html, daemon=True).start()
         self._refresh_score_edit_controls()
 
@@ -1265,6 +1404,10 @@ class Game(QObject):
             # a session closed on a finished board would otherwise be stuck.
             if self._round_is_complete(self.current_round):
                 self.keystroke_manager.activate("NEXT_ROUND")
+            self.player_in_control = control_from_history(
+                raw_history, self.data.rounds.index(self.current_round), self.players
+            )
+            self.offer_pick()
         for player in self.players:
             self._update_lectern_for_player(player)
         self._save_general_state()
@@ -1982,6 +2125,8 @@ class Game(QObject):
             self.start_final()
         else:
             self.dc.board_widget.load_round(self.current_round)
+            self.player_in_control = control_at_round_start(self.players)
+            self.offer_pick()
         self._refresh_score_edit_controls()
 
     def _show_host_code(self) -> bool:
@@ -2291,6 +2436,8 @@ class Game(QObject):
         self._finish_pending_history()
         self.clue_reader.stop()
         self.robot_host.stop()
+        self.player_in_control = None
+        self._phone_dd_wager_player = None
         self.buzzer_controller.restart()
         if self.buzzer_controller:
             for player_number in list(
@@ -2349,6 +2496,9 @@ class Game(QObject):
             ``False`` when the wager prompt is canceled; otherwise the method
             returns ``None`` after applying the wager to the active clue.
         """
+        # The host is entering the wager, so the phone's prompt is withdrawn
+        # and a wager it sends while the dialog is open is ignored.
+        self._withdraw_phone_dd_wager()
         self.answering_player = player
         self.soliciting_player = False
         self._refresh_score_edit_controls()
@@ -2366,7 +2516,16 @@ class Game(QObject):
             self.soliciting_player = True
             self._refresh_score_edit_controls()
             return False
-        wager = wager_res[0]
+        self.apply_dd_wager(wager_res[0])
+
+    def apply_dd_wager(self, wager: int) -> None:
+        """Set the active Daily Double's value to ``wager`` and show the clue.
+
+        Args:
+            wager: The wager, already within the allowed range.
+        """
+        self._withdraw_phone_dd_wager()
+        self.soliciting_player = False
         self.active_question.value = wager
         self.keystroke_manager.activate("CORRECT_ANSWER", "INCORRECT_ANSWER")
         self.dc.question_widget.show_question()

@@ -8,6 +8,7 @@ import time
 from PyQt6.QtWidgets import QApplication
 
 from jparty.app.config import EARLY_BUZZ_PENALTY, FJTIME, QUESTIONTIME
+from jparty.domain.board_control import control_after_ruling
 from jparty.domain.models import BuzzAttempt, FinalBoard
 from jparty.domain.state import (
     MANUAL_SCORE_ADJUSTMENT_TYPE,
@@ -284,10 +285,18 @@ class ClueFlow:
         if all(q.complete for q in self.game.current_round.questions):
             logging.info("NEXT ROUND")
             self.game.keystroke_manager.activate("NEXT_ROUND")
+        else:
+            self.game.offer_pick()
         self.game._refresh_score_edit_controls()
 
     def correct_answer(self) -> None:
-        """Apply a correct ruling to the active player's clue response."""
+        """Apply a correct ruling to the active player's clue response.
+
+        The player gets control of the board.
+        """
+        self.game.player_in_control = control_after_ruling(
+            self.game.player_in_control, self.game.answering_player, True
+        )
         old_score = self.game.answering_player.score
         new_score = old_score + self.game.active_question.value
         self.game.score_recorder.append_answer_attempt(
@@ -352,6 +361,8 @@ class ClueFlow:
 
     def load_question(self, q: object) -> None:
         """Load a clue into the displays and initialize per-question tracking."""
+        # However the clue was picked, no phone is offered the board now.
+        self.game.withdraw_pick()
         self.game.active_question = q
         self.game._awaiting_stumped_answer_reveal = False
         self.game._question_start_time = time.time()
@@ -374,7 +385,10 @@ class ClueFlow:
         if q.dd:
             logging.info("Daily double!")
             self.game.song_player.daily_double()
-            self.game.soliciting_player = True
+            if self.game.phones_run_board() and self.game.player_in_control:
+                self.game.request_phone_dd_wager(self.game.player_in_control)
+            else:
+                self.game.soliciting_player = True
         else:
             self.game.keystroke_manager.activate("OPEN_RESPONSES")
         self.game.dc.load_question(q)

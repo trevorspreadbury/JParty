@@ -425,6 +425,33 @@ class FakeBuzzerController:
         self.restart_calls = 0
         self.lectern_connections = {}
         self.saved_player_profiles = {}
+        self.picks_offered = []
+        self.end_pick_calls = 0
+        self.dd_wagers_requested = []
+
+    def prompt_pick(self, player: object, board: dict) -> None:
+        """Record that ``player``'s phone was offered ``board``."""
+        self.picks_offered.append((player, board))
+        player.page = "pick"
+
+    def end_pick(self) -> None:
+        """Record that the board was taken back from the phones."""
+        self.end_pick_calls += 1
+        for player in self.connected_players:
+            if player.page == "pick":
+                player.page = "buzz"
+
+    def end_dd_wager(self) -> None:
+        """Record that the Daily Double wager prompt was withdrawn."""
+        self.end_dd_wager_calls = getattr(self, "end_dd_wager_calls", 0) + 1
+        for player in self.connected_players:
+            if player.page == "ddwager":
+                player.page = "buzz"
+
+    def prompt_dd_wager(self, player: object, minimum: int, maximum: int) -> None:
+        """Record a Daily Double wager prompt."""
+        self.dd_wagers_requested.append((player, minimum, maximum))
+        player.page = "ddwager"
 
     def send_to(self, socket_handler: object, msg: object, text: object = "") -> None:
         """Test send to: no loop is running, so send right away."""
@@ -762,3 +789,53 @@ def sample_saved_game_dir(
 def pytest_sessionfinish(session: object, exitstatus: object) -> None:
     """Test pytest sessionfinish."""
     _cleanup_test_temp_dir()
+
+
+class FakeListener:
+    """Stand-in for speech-to-text that hears what the test says."""
+
+    def __init__(self) -> None:
+        """Start not listening."""
+        self.on_heard = None
+        self.listen_calls = 0
+        self.cancel_calls = 0
+
+    @property
+    def listening(self) -> bool:
+        """Whether a response is being waited for."""
+        return self.on_heard is not None
+
+    def listen(self, on_heard: object, hint: str = "") -> None:
+        """Wait for a response."""
+        self.listen_calls += 1
+        self.on_heard = on_heard
+        self.hint = hint
+
+    def prepare(self) -> None:
+        """Record that the listener was readied."""
+        self.prepare_calls = getattr(self, "prepare_calls", 0) + 1
+
+    def cancel(self) -> None:
+        """Stop waiting."""
+        self.cancel_calls += 1
+        self.on_heard = None
+
+    def hear(self, transcript: object) -> None:
+        """Report ``transcript`` as the response that was heard."""
+        on_heard = self.on_heard
+        self.on_heard = None
+        on_heard(transcript)
+
+
+@pytest.fixture()
+def robot_game(game_with_players: object) -> object:
+    """Return a game with the robot host on and its delays held."""
+    game = game_with_players
+    game.listener = FakeListener()
+    game.robot_host.listener = game.listener
+    game.delayed = []
+    game.robot_host.later = lambda delay_ms, callback: game.delayed.append(
+        (delay_ms, callback)
+    )
+    assert game.set_robot_host(True) is True
+    return game

@@ -280,9 +280,24 @@ Turning it on turns on `Read Clues Aloud` too.
 - A clue nobody gets returns to the board by itself. With `Reveal Answers
   after Triple Stumper` on, the correct response is shown and read first.
 
-You still pick clues and enter Daily Double wagers; the robot host listens to
-the Daily Double player once their clue has been read. Final Jeopardy is
-ruled by you as usual.
+Players also pick clues and wager on Daily Doubles from their phones:
+
+- The player in control of the board sees the clues left on their phone
+  ("Your pick!") and taps one. Everyone else's phone stays on the buzzer.
+- A correct response gives that player control. A wrong response, or a clue
+  nobody gets, leaves control where it was.
+- Each round starts with the lowest score in control (ties go to the earlier
+  seat), so the first round starts at seat 1. A resumed game gives control to
+  whoever last got a clue right in that round.
+- A Daily Double asks its finder's phone for a wager, between $5 and their
+  score or the board's top clue value, whichever is more. The clue is read
+  once the wager is in, and the robot host listens for their response.
+
+You can still click the board to pick a clue, which takes it back from the
+phone. If a phone goes dark during a Daily Double, click that player's podium
+to enter the wager as usual. Clue images aren't searched for: a clue whose
+image wasn't found ahead of time is played as text. Moving to the next round
+(space) and Final Jeopardy are still yours to run.
 
 The robot host needs the optional speech-to-text add-on and a microphone. When
 either is missing, the option is greyed out and its tooltip says why. To add

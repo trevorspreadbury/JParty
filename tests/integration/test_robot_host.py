@@ -1,7 +1,8 @@
 """Tests for the robot host's answer loop: listen, rule, move on.
 
-The game fixture fakes the voice (``FakeSpeaker``); these tests also fake
-speech-to-text with ``FakeListener`` and hold delayed steps until run.
+The game fixture fakes the voice (``FakeSpeaker``); ``robot_game`` (in
+conftest) also fakes speech-to-text with ``FakeListener`` and holds delayed
+steps until run.
 """
 
 import json
@@ -11,58 +12,9 @@ from PyQt6.QtCore import Qt
 
 from jparty.domain.judging import Ruling
 from jparty.domain.robot_host import STUMPED_PAUSE_MS
+from tests.conftest import FakeListener
 
 pytestmark = pytest.mark.integration
-
-
-class FakeListener:
-    """Stand-in for speech-to-text that hears what the test says."""
-
-    def __init__(self) -> None:
-        """Start not listening."""
-        self.on_heard = None
-        self.listen_calls = 0
-        self.cancel_calls = 0
-
-    @property
-    def listening(self) -> bool:
-        """Whether a response is being waited for."""
-        return self.on_heard is not None
-
-    def listen(self, on_heard: object, hint: str = "") -> None:
-        """Wait for a response."""
-        self.listen_calls += 1
-        self.on_heard = on_heard
-        self.hint = hint
-
-    def prepare(self) -> None:
-        """Record that the listener was readied."""
-        self.prepare_calls = getattr(self, "prepare_calls", 0) + 1
-
-    def cancel(self) -> None:
-        """Stop waiting."""
-        self.cancel_calls += 1
-        self.on_heard = None
-
-    def hear(self, transcript: object) -> None:
-        """Report ``transcript`` as the response that was heard."""
-        on_heard = self.on_heard
-        self.on_heard = None
-        on_heard(transcript)
-
-
-@pytest.fixture()
-def robot_game(game_with_players: object) -> object:
-    """Return a game with the robot host on and its delays held."""
-    game = game_with_players
-    game.listener = FakeListener()
-    game.robot_host.listener = game.listener
-    game.delayed = []
-    game.robot_host.later = lambda delay_ms, callback: game.delayed.append(
-        (delay_ms, callback)
-    )
-    assert game.set_robot_host(True) is True
-    return game
 
 
 def _clue(game: object, answer: str = "Abraham Lincoln") -> object:

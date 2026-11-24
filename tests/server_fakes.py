@@ -2,7 +2,8 @@
 
 ``FakeServerController`` is the real ``BuzzerController`` attached to a small
 game stand-in, so joining, token login, and saved-player claims all use the
-production logic. Only buzzes are recorded instead of reaching a game.
+production logic. Buzzes, clue picks and Daily Double wagers are recorded
+instead of reaching a game.
 """
 
 from types import SimpleNamespace
@@ -20,7 +21,15 @@ class FakeServerController(BuzzerController):
 
     def __init__(self) -> None:
         """Build the controller around a stand-in game."""
+        self.picks = []
+        self.dd_wagers = []
         game = SimpleNamespace(
+            pick_trigger=SimpleNamespace(
+                emit=lambda i_player, column, row: self.picks.append((column, row))
+            ),
+            dd_wager_trigger=SimpleNamespace(
+                emit=lambda i_player, amount: self.dd_wagers.append(amount)
+            ),
             players=[],
             buzz_trigger=SimpleNamespace(emit=_ignore),
             wager_trigger=SimpleNamespace(emit=_ignore),
